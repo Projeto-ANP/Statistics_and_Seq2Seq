@@ -467,3 +467,24 @@ def fit_arima_train(train_ds, train_norm, initial_order, horizon, format):
 def print_log(message):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n[{current_time}] {message}")
+
+from statsmodels.tsa.stattools import adfuller
+
+def analyze_stationarity(series):
+    adf_result = adfuller(series, autolag='AIC')
+    p_value = adf_result[1]
+    is_stationary = p_value < 0.05
+
+    adf_values = {
+        'Test Statistic': adf_result[0],
+        'p-value': p_value,
+        'Lags Used': adf_result[2],
+        'Observations Used': adf_result[3],
+        'Critical Value (1%)': adf_result[4]['1%'],
+        'Critical Value (5%)': adf_result[4]['5%'],
+        'Critical Value (10%)': adf_result[4]['10%'],
+        'Stationary': str(is_stationary)
+    }
+    
+    
+    return adf_values

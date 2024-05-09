@@ -29,43 +29,53 @@ import pickle
 warnings.filterwarnings("ignore")
 
 colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'SAVED MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE',
-           'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12'
+           'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12',
+           'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
            ]
 df_result = pd.DataFrame(columns=colunas)
 train_v_norm = pd.Series()
 format_v = "UNKNOWN"
-train_v = pd.Series()
-test_v = pd.Series()
+train_tf_v = pd.Series()
+train_v_real = pd.Series()
+test_v_real = pd.Series()
 horizon = 12
 format_v = pd.Series()
 
 
 def objfun(params):
+    global train_tf_v
+    global train_v_real
+    global test_v_real
+    global horizon
+    global format_v
+    global train_v_norm
+
     p,d,q = params['p'],params['d'], params['q']
     model = ARIMA(order=(p,d,q), 
                 #   seasonal_order=(pp,dd,qq,ss),
                 suppress_warnings=True
                 )
-    model.fit(train_v)
-    predictions = recursive_forecasting_stats(train_v, model, horizon)
+    model.fit(train_tf_v)
+    predictions = recursive_forecasting_stats(train_tf_v, model, horizon)
     preds_norm = transform_reverse_preds(predictions, train_v_norm, format=format_v)
-    rmse_result = rmse(test_v, preds_norm)
-    mape_result = mape(test_v, preds_norm)
-    pocid_result = pocid(test_v, preds_norm)
-    mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
 
-    return mcpm_result
+    media = np.mean(train_v_real)
+    desvio = np.std(train_v_real)
+    preds_real = znorm_reverse(preds_norm, media, desvio)
+
+    rmse_result = rmse(test_v_real, preds_real)
+    # mape_result = mape(test_v, preds_real)
+    # pocid_result = pocid(test_v, preds_real)
+    # mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
+    # pbe_result = abs(pbe(test_v_real, preds_real))
+
+    return rmse_result
 # @scheduler.parallel(n_jobs=1)
 def arima_objective_function(args_list):
-    global train_v
-    global test_v
-    global horizon
-    global format_v
-    global train_v_norm
     params_evaluated = []
     futures = []
     results = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor() as executor:
         for params in args_list:
             future = (params,  executor.submit(objfun, params)) 
             futures.append(future)
@@ -81,21 +91,24 @@ def arima_objective_function(args_list):
     return params_evaluated, results
 
 
-def find_best_parameter(train, test, train_val_norm, format):
-    global train_v
-    global test_v
+def find_best_parameter(train, test, train_val_real, train_val_norm, format):
+    global train_tf_v
+    global train_v_real
     global train_v_norm
+    global test_v_real
     global format_v
     param_space_arima = dict(
                     p = range(2, 15),
-                    d = range(0, 1),
+                    d = range(0, 2),
                     q = range(2, 15))
     conf_Dict = dict()
     conf_Dict['num_iteration'] = 30
-    train_v = train
-    test_v = test
-    format_v = format
+    train_tf_v = train
+    train_v_real = train_val_real
     train_v_norm = train_val_norm
+    test_v_real = test
+    format_v = format
+
     tuner = Tuner(param_space_arima, arima_objective_function, conf_Dict)
     results_arima = tuner.minimize()
 
@@ -112,6 +125,8 @@ dirs = [
     './datasets/venda/mensal/uf/querosenedeaviacao/',
     './datasets/venda/mensal/uf/queroseneiluminante/',
 ]
+pickle_file = './pickle_arima'
+results_file = './results_rmse'
 
 def process_file(args):
     directory, file = args
@@ -129,8 +144,8 @@ def process_file(args):
             train_val_norm = znorm(train_val)
             train_norm = znorm(train)
             
-            test_val_norm = znorm_by(test_val, train_val)
-            test_norm = znorm_by(test, train)
+            # test_val_norm = znorm_by(test_val, train_val)
+            # test_norm = znorm_by(test, train)
 
             all_series_test.append(("normal", train_val_norm, train_norm))
 
@@ -167,16 +182,16 @@ def process_file(args):
 
             uf = file.split("_")[1].upper()
             derivado = file.split("_")[2].split(".")[0]
-            path_derivado = f'./results/{derivado}'
+            path_derivado = f'{results_file}/{derivado}'
             os.makedirs(path_derivado, exist_ok=True)
             csv_path = f'{path_derivado}/transform_{uf}.csv'
             if not os.path.exists(csv_path):
                 pd.DataFrame(columns=colunas).to_csv(csv_path, sep=';', index=False)
-            for k, train_val, train_tf in all_series_test:
+            for k, train_tf_val, train_tf in all_series_test:
                 print_log(f"{derivado} | {k} em {uf}")
                 renamed_transform = k.replace("-", "_")
                 
-                results_arima = find_best_parameter(train_val, test_val_norm, train_val_norm, k)
+                results_arima = find_best_parameter(train_tf_val, test_val, train_val, train_val_norm, k)
                 print_log(f'----------------------[VALIDACAO] ENCONTRADO PARAMETROS PARA {derivado} | {k} em {uf} ------------------------------')
                 initial_order = (results_arima['best_params']['p'], results_arima['best_params']['d'], results_arima['best_params']['q'])
                 forecast, preds_norm, final_order = fit_arima_train(train_tf, train_norm, initial_order, horizon, format=k)
@@ -184,10 +199,14 @@ def process_file(args):
                 # forecast.fit(train_tf)
                 # preds = recursive_forecasting_stats(train_tf, forecast, horizon)
                 # preds_norm = transform_reverse_preds(preds, train_norm, format=k)
-                rmse_result = rmse(test_norm, preds_norm)
-                mape_result = mape(test_norm, preds_norm)
-                pocid_result = pocid(test_norm, preds_norm)
-                pbe_result = pbe(test_norm, preds_norm)
+                media = np.mean(train_v_real)
+                desvio = np.std(train_v_real)
+                preds_real = znorm_reverse(preds_norm, media, desvio)
+
+                rmse_result = rmse(test, preds_real)
+                mape_result = mape(test, preds_real)
+                pocid_result = pocid(test, preds_real)
+                pbe_result = pbe(test, preds_real)
                 mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
                 print_log('[RESULTADO EM TRAIN]')
                 print_log(f'PARAMS: {str(final_order)}')
@@ -198,15 +217,18 @@ def process_file(args):
                 print_log(f'PBE: {pbe_result}')
 
                 print_log(f'---------------------- [FINALIZADO] {derivado} | {k} em {uf} ------------------------------')
-                pkl_file = f"./pickle_arima/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
+                adfuller_test = analyze_stationarity(train_tf[1:])
+                pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
                 df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'SAVED MODEL': pkl_file, 'PARAMS': str(final_order), 'WINDOW': '-', 'HORIZON': horizon,  
                                         'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 
                                         'P1': preds_norm[0], 'P2': preds_norm[1], 'P3': preds_norm[2], 'P4': preds_norm[3], 'P5': preds_norm[4],
                                         'P6': preds_norm[5], 'P7': preds_norm[6], 'P8': preds_norm[7], 'P9': preds_norm[8], 'P10': preds_norm[9],
-                                        'P11': preds_norm[10], 'P12': preds_norm[11]
+                                        'P11': preds_norm[10], 'P12': preds_norm[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
+                                        'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
+                                        'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
                                         }, index=[0])
                 df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
-                os.makedirs(f'./pickle_arima/{derivado}/{renamed_transform}', exist_ok=True)
+                os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
                 with open(pkl_file, "wb") as f:
                     pickle.dump(forecast, f) 
 
