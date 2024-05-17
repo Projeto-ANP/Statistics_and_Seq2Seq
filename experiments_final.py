@@ -39,6 +39,7 @@ train_tf_v = pd.Series()
 train_v_real = pd.Series()
 test_v_real = pd.Series()
 horizon = 12
+window = 12
 format_v = pd.Series()
 
 
@@ -59,9 +60,9 @@ def objfun(params):
     predictions = recursive_forecasting_stats(train_tf_v, model, horizon)
     preds_norm = transform_reverse_preds(predictions, train_v_norm, format=format_v)
 
-    media = np.mean(train_v_real)
-    desvio = np.std(train_v_real)
-    preds_real = znorm_reverse(preds_norm, media, desvio)
+    _, mean, std = rolling_window_series(train_v_real, window)
+
+    preds_real = znorm_reverse(preds_norm, mean, std)
 
     rmse_result = rmse(test_v_real, preds_real)
     # mape_result = mape(test_v, preds_real)
@@ -116,17 +117,17 @@ def find_best_parameter(train, test, train_val_real, train_val_norm, format):
 
 
 dirs = [
-    './datasets/venda/mensal/uf/gasolinac/',
-    './datasets/venda/mensal/uf/etanolhidratado/',
-    './datasets/venda/mensal/uf/gasolinadeaviacao/',
-    './datasets/venda/mensal/uf/glp/',
-    './datasets/venda/mensal/uf/oleocombustivel/',
-    './datasets/venda/mensal/uf/oleodiesel/',
-    './datasets/venda/mensal/uf/querosenedeaviacao/',
-    './datasets/venda/mensal/uf/queroseneiluminante/',
+    '../datasets/venda/mensal/uf/gasolinac/',
+    '../datasets/venda/mensal/uf/etanolhidratado/',
+    '../datasets/venda/mensal/uf/gasolinadeaviacao/',
+    '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/oleocombustivel/',
+    '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
-pickle_file = './pickle_arima'
-results_file = './results_rmse'
+pickle_file = './pickle_arima_rolling'
+results_file = './results_arima_rolling'
 
 def process_file(args):
     directory, file = args
@@ -141,8 +142,10 @@ def process_file(args):
             series = df['m3']
             train, test = train_test_stats(series, horizon)
             train_val, test_val = train_test_stats(train, horizon)
-            train_val_norm = znorm(train_val)
-            train_norm = znorm(train)
+            # train_val_norm = znorm(train_val)
+            # train_norm = znorm(train)
+            train_val_norm, _, _ = rolling_window_series(train_val, window)
+            train_norm, mean, std = rolling_window_series(train, window)
             
             # test_val_norm = znorm_by(test_val, train_val)
             # test_norm = znorm_by(test, train)
@@ -195,13 +198,8 @@ def process_file(args):
                 print_log(f'----------------------[VALIDACAO] ENCONTRADO PARAMETROS PARA {derivado} | {k} em {uf} ------------------------------')
                 initial_order = (results_arima['best_params']['p'], results_arima['best_params']['d'], results_arima['best_params']['q'])
                 forecast, preds_norm, final_order = fit_arima_train(train_tf, train_norm, initial_order, horizon, format=k)
-                # forecast = ARIMA(order_arima, suppress_warnings=True)
-                # forecast.fit(train_tf)
-                # preds = recursive_forecasting_stats(train_tf, forecast, horizon)
-                # preds_norm = transform_reverse_preds(preds, train_norm, format=k)
-                media = np.mean(train_v_real)
-                desvio = np.std(train_v_real)
-                preds_real = znorm_reverse(preds_norm, media, desvio)
+
+                preds_real = znorm_reverse(preds_norm, mean, std)
 
                 rmse_result = rmse(test, preds_real)
                 mape_result = mape(test, preds_real)
@@ -219,11 +217,11 @@ def process_file(args):
                 print_log(f'---------------------- [FINALIZADO] {derivado} | {k} em {uf} ------------------------------')
                 adfuller_test = analyze_stationarity(train_tf[1:])
                 pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
-                df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'SAVED MODEL': pkl_file, 'PARAMS': str(final_order), 'WINDOW': '-', 'HORIZON': horizon,  
+                df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'SAVED MODEL': pkl_file, 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
                                         'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 
-                                        'P1': preds_norm[0], 'P2': preds_norm[1], 'P3': preds_norm[2], 'P4': preds_norm[3], 'P5': preds_norm[4],
-                                        'P6': preds_norm[5], 'P7': preds_norm[6], 'P8': preds_norm[7], 'P9': preds_norm[8], 'P10': preds_norm[9],
-                                        'P11': preds_norm[10], 'P12': preds_norm[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
+                                        'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
+                                        'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
+                                        'P11': preds_real[10], 'P12': preds_real[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
                                         'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
                                         'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
                                         }, index=[0])
@@ -231,7 +229,7 @@ def process_file(args):
                 os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
                 with open(pkl_file, "wb") as f:
                     pickle.dump(forecast, f) 
-
+            print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
         except Exception as e:
             print_log(f"Exception: {derivado} em {uf}\n", e)
             traceback.print_exc()

@@ -76,13 +76,17 @@ def rolling_window(series, window):
   df = pd.DataFrame(data)
   return df
 
-def rolling_window_stats(series, window):
-    data = []
+def rolling_window_series(series, window):
+    result_series = pd.Series(index=series.index)
+    mean = 0
+    std = 0
     for i in range(len(series)-window):
-      example = znorm(np.array(series.iloc[i:i+window+1]))
-      data.append(pd.Series(example)) 
-    result_series = pd.concat(data, ignore_index=True)
-    return result_series
+        window_values = series.iloc[i:i+window+1].values
+        normalized_values = znorm(window_values)
+        result_series.iloc[i:i+window+1] = normalized_values
+        mean = np.mean(series.iloc[i:i+window+1])
+        std = np.std(series.iloc[i:i+window+1])
+    return result_series, mean, std
 
 def train_test_split(data, horizon):
   X = data.iloc[:,:-1] # features
@@ -138,186 +142,9 @@ def add_trend(series_diff, normal_series):
   series_diff.iloc[0] = normal_series.iloc[0]
   return series_diff.cumsum()
 
-def rescaled_split_series(series_diff, normal_series, horizon=12):
-  media = np.mean(normal_series.diff())
-  desvio = np.std(normal_series.diff())
-
-  completa= pd.concat(series_diff)
-  completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-  serie_normalizada = add_trend(completa_z_reverse, normal_series)
-  train_rescaled, test_rescaled = train_test_stats(serie_normalizada, horizon)
-
-  return train_rescaled, test_rescaled
 
 def pbe(y_true, y_pred):
   return 100*(np.sum(y_true - y_pred)/np.sum(y_true))
-
-def revert_series(series_transformed, series_normal, format="box-diff", horizon=12):
-    
-    if format == "box-diff":
-        boxcox_trans = BoxCoxTransformer()
-        series_bc = boxcox_trans.fit_transform(series_normal)
-        series_bc_diff = remove_trend(series_bc)
-        media = np.mean(series_bc_diff)
-        desvio = np.std(series_bc_diff)
-
-        completa = pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-        
-        #adicionar tendencia
-        series_trends = add_trend(completa_z_reverse, series_bc)
-        
-        #adicionar variancia
-        series_completa_inversa = boxcox_trans.inverse_transform(series_trends)
-        
-
-        return train_test_stats(series_completa_inversa, horizon)
-    elif format == "deseasonal":
-        _, series_ds = remove_seasonal(series_normal)
-
-        media = np.mean(series_ds)
-        desvio = np.std(series_ds)
-        completa = pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-        serie_normalizada = deseasonal_trans.inverse_transform(completa_z_reverse)   
-
-        return serie_normalizada    
-    elif format == "log-diff":
-        series_log = np.log(series_normal)
-        series_diff_log = remove_trend(series_log)
-        media = np.mean(series_diff_log)
-        desvio = np.std(series_diff_log)
-
-        completa = pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-        series_trends = add_trend(completa_z_reverse, series_log)
-        series_completa_inversa = np.exp(series_trends)
-        
-        return train_test_stats(series_completa_inversa, horizon)
-    
-    elif format == "diff":
-        media = np.mean(series_normal.diff())
-        desvio = np.std(series_normal.diff())
-
-        completa= pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-        serie_normalizada = add_trend(completa_z_reverse, series_normal)
-        return train_test_stats(serie_normalizada, horizon)
-    
-    elif format == "deseasonal-log-diff":
-        deseasonal_trans = ConditionalDeseasonalizer(sp=12)
-        series_ds = deseasonal_trans.fit_transform(series_normal)
-        
-        series_log = np.log(series_ds)
-        series_diff_log = remove_trend(series_log)
-        media = np.mean(series_diff_log)
-        desvio = np.std(series_diff_log)
-
-        completa = pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-        series_trends = add_trend(completa_z_reverse, series_log)
-        series_completa_inversa = np.exp(series_trends)
-        
-        series_completa_inversa = deseasonal_trans.inverse_transform(series_completa_inversa)
-
-        return train_test_stats(series_completa_inversa, horizon)
-
-    elif format == "deseasonal-diff":
-        deseasonal_trans = ConditionalDeseasonalizer(sp=12)
-        series_ds = deseasonal_trans.fit_transform(series_normal)
-
-        media = np.mean(series_ds.diff())
-        desvio = np.std(series_ds.diff())
-
-        completa= pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-        serie_normalizada = add_trend(completa_z_reverse, series_ds)
-        serie_normalizada = deseasonal_trans.inverse_transform(serie_normalizada)
-
-        return train_test_stats(serie_normalizada, horizon)
-
-    elif format == "deseasonal-box-diff":
-        deseasonal_trans = ConditionalDeseasonalizer(sp=12)
-        series_ds = deseasonal_trans.fit_transform(series_normal)
-
-        boxcox_trans = BoxCoxTransformer()
-        series_bc = boxcox_trans.fit_transform(series_ds)
-        series_bc_diff = remove_trend(series_bc)
-        media = np.mean(series_bc_diff)
-        desvio = np.std(series_bc_diff)
-
-        completa = pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-        
-        #adicionar tendencia
-        series_trends = add_trend(completa_z_reverse, series_bc)
-        
-        #adicionar variancia
-        series_completa_inversa = boxcox_trans.inverse_transform(series_trends)
-        
-        #adicionar sazonalidade
-        series_completa_inversa = deseasonal_trans.inverse_transform(series_completa_inversa)
-
-        return train_test_stats(series_completa_inversa, horizon)
-    
-    elif format == "deseasonal-log":
-        deseasonal_trans = ConditionalDeseasonalizer(sp=12)
-        series_ds = deseasonal_trans.fit_transform(series_normal)
-        
-        series_log = np.log(series_ds)
-        # series_diff_log = remove_trend(series_log)
-        media = np.mean(series_log)
-        desvio = np.std(series_log)
-
-        completa = pd.concat(series_transformed)
-        completa_z_reverse = znorm_reverse(completa, media, desvio)
-
-        # series_trends = add_trend(completa_z_reverse, series_log)
-        series_completa_inversa = np.exp(completa_z_reverse)
-        
-        series_completa_inversa = deseasonal_trans.inverse_transform(series_completa_inversa)
-
-        return train_test_stats(series_completa_inversa, horizon)
-
-    return pd.Series(), pd.Series()
-
-
-def transform_series(series, format="box-diff", horizon=12):
-    _, series_noseasonal = remove_seasonal(series)
-    series_log = np.log(series)
-    
-    if format == "deseasonal":
-      return series_noseasonal
-    elif format == "log":
-      return series_log
-    elif format == "diff":
-      return remove_trend(series)
-    elif format == "deseasonal-diff":
-      _, series_noseasonal = remove_seasonal(series)
-      series_ds_diff = remove_trend(series_noseasonal)
-      return series_ds_diff
-    elif format == "box-diff":
-      boxcox_trans = BoxCoxTransformer()
-      series_bc = boxcox_trans.fit_transform(series)
-      series_bc_diff = remove_trend(series_bc)
-      return series_bc_diff
-    elif format == "deseasonal-box":
-      series_ds_bc = boxcox_trans.fit_transform(series_noseasonal)
-      return series_ds_bc
-    elif format == "log-diff":
-      series_log_diff = remove_trend(series_log)
-      return series_log_diff
-    elif format == "deseasonal-log":
-      series_ds_log = np.log(series_noseasonal)
-      return series_ds_log
-    
-    return series
 
 def transform_train(series_transform, format="deseasonal"):
     if format == "deseasonal":
@@ -357,7 +184,6 @@ def transform_reverse_preds(series_preds, train_norm, format="deseasonal"):
         series_norm = transform.inverse_transform(series_preds)
         return series_norm
     elif format == "diff":
-        # series_preds.iloc[[0]] = train_norm.iloc[[-1]]
         series_preds = pd.concat([train_norm.iloc[[-1]], series_preds])
         series_norm = series_preds.cumsum()[1:]
         return series_norm
@@ -369,7 +195,6 @@ def transform_reverse_preds(series_preds, train_norm, format="deseasonal"):
         train_log = np.log(train_norm + constante)
         series_preds = pd.concat([train_log.iloc[[-1]], series_preds])
         series_log = series_preds.cumsum()
-        # print(series_log)
         series_inverse = np.exp(series_log) - constante
         return series_inverse[1:]
     elif format == "deseasonal-diff":
@@ -383,11 +208,9 @@ def transform_reverse_preds(series_preds, train_norm, format="deseasonal"):
     elif format == "deseasonal-log":
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(train_norm)
-        # train_des = transform.transform(train_norm)
         series_ds = np.exp(series_preds)
         constante = 10
         series_ds_abs = series_ds - constante
-        # print(series_ds_abs)
         series_inverse = transform.inverse_transform(series_ds_abs)
         return series_inverse
 
