@@ -28,7 +28,7 @@ import pickle
 
 warnings.filterwarnings("ignore")
 
-colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'SAVED MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE',
+colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'SAVED MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE', 'R2',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12',
            'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
            ]
@@ -56,7 +56,7 @@ def objfun(params):
     ps, ds, qs, ss = params['P'],params['D'], params['Q'], params['s']
     model = ARIMA(order=sarima_order, 
                 seasonal_order=(ps,ds,qs,ss),
-                suppress_warnings=True
+                # suppress_warnings=True
                 )
     model.fit(train_tf_v)
     predictions = recursive_forecasting_stats(train_tf_v, model, horizon)
@@ -78,7 +78,7 @@ def arima_objective_function(args_list):
     params_evaluated = []
     futures = []
     results = []
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         for params in args_list:
             future = (params,  executor.submit(objfun, params)) 
             futures.append(future)
@@ -121,6 +121,17 @@ def find_best_parameter(train, test, train_val_real, train_val_norm, format, ord
 
     return results_arima
 
+def checkFolder(pasta, arquivo, tipo):
+    if os.path.exists(pasta):
+        caminho_arquivo = os.path.join(pasta, arquivo)
+        if os.path.exists(caminho_arquivo):
+            df = pd.read_csv(caminho_arquivo, sep=';')
+            if 'DATA' in df.columns:
+                if not tipo in df['DATA'].values:
+                    print_log(f'Continuando... {tipo} em ${pasta}/{arquivo}".')
+                    return True
+    return False
+
 
 dirs = [
     '../datasets/venda/mensal/uf/gasolinac/',
@@ -134,7 +145,7 @@ dirs = [
 ]
 pickle_file = './pickle/sarima/rolling'
 results_file = './results/sarima/rolling'
-path_results_arima = './results/arima/rolling'
+path_results_arima = './results_arima_rolling'
 
 def process_file(args):
     directory, file = args
@@ -198,61 +209,64 @@ def process_file(args):
             if not os.path.exists(csv_path):
                 pd.DataFrame(columns=colunas).to_csv(csv_path, sep=';', index=False)
             for k, train_tf_val, train_tf in all_series_test:
-                print_log(f"{derivado} | {k} em {uf}")
-                arima_order = get_arima_param(path_results_arima, derivado, uf, k)
-                renamed_transform = k.replace("-", "_")
-                
-                results_arima = find_best_parameter(train_tf_val, test_val, train_val, train_val_norm, k, arima_order)
-                print_log(f'----------------------[VALIDACAO] ENCONTRADO PARAMETROS PARA {derivado} | {k} em {uf} ------------------------------')
-                seasonal_order = (results_arima['best_params']['P'], results_arima['best_params']['D'], results_arima['best_params']['Q'])
+                derivado_result = results_file+"/"+derivado
+                flag = checkFolder(derivado_result, f"transform_{uf}.csv", k)
+                if flag:
+                    print_log(f"{derivado} | {k} em {uf}")
+                    arima_order = get_arima_param(path_results_arima, derivado, uf, k)
+                    renamed_transform = k.replace("-", "_")
+                    
+                    results_arima = find_best_parameter(train_tf_val, test_val, train_val, train_val_norm, k, arima_order)
+                    print_log(f'----------------------[VALIDACAO] ENCONTRADO PARAMETROS PARA {derivado} | {k} em {uf} ------------------------------')
+                    seasonal_order = (results_arima['best_params']['P'], results_arima['best_params']['D'], results_arima['best_params']['Q'])
 
-                forecast, preds_norm, final_order = fit_sarima_train(train_tf, train_norm, arima_order, seasonal_order, horizon, format=k)
+                    forecast, preds_norm, final_order = fit_sarima_train(train_tf, train_norm, arima_order, seasonal_order, horizon, format=k)
 
-                preds_real = znorm_reverse(preds_norm, mean, std)
+                    preds_real = znorm_reverse(preds_norm, mean, std)
 
-                rmse_result = rmse(test, preds_real)
-                mape_result = mape(test, preds_real)
-                pocid_result = pocid(test, preds_real)
-                pbe_result = pbe(test, preds_real)
-                mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
+                    rmse_result = rmse(test, preds_real)
+                    mape_result = mape(test, preds_real)
+                    pocid_result = pocid(test, preds_real)
+                    pbe_result = pbe(test, preds_real)
+                    r2_result = r2(test, preds_real)
+                    mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
 
-                all_params = final_order | seasonal_order
-                print_log('[RESULTADO EM TRAIN]')
-                print_log(f'PARAMS: {str(all_params)}')
-                print_log(f'MCPM: {mcpm_result}')
-                print_log(f'RMSE: {rmse_result}')
-                print_log(f'MAPE: {mape_result}')
-                print_log(f'POCID: {pocid_result}')
-                print_log(f'PBE: {pbe_result}')
+                    all_params = final_order | seasonal_order
+                    print_log('[RESULTADO EM TRAIN]')
+                    print_log(f'PARAMS: {str(all_params)}')
+                    print_log(f'MCPM: {mcpm_result}')
+                    print_log(f'RMSE: {rmse_result}')
+                    print_log(f'MAPE: {mape_result}')
+                    print_log(f'POCID: {pocid_result}')
+                    print_log(f'PBE: {pbe_result}')
 
-                print_log(f'---------------------- [FINALIZADO] {derivado} | {k} em {uf} ------------------------------')
-                adfuller_test = analyze_stationarity(train_tf[1:])
-                pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
-                df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'SAVED MODEL': pkl_file, 'PARAMS': str(all_params  ), 'WINDOW': window, 'HORIZON': horizon,  
-                                        'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 
-                                        'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
-                                        'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
-                                        'P11': preds_real[10], 'P12': preds_real[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
-                                        'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
-                                        'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
-                                        }, index=[0])
-                df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
-                os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
-                with open(pkl_file, "wb") as f:
-                    pickle.dump(forecast, f) 
-            print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
+                    print_log(f'---------------------- [FINALIZADO] {derivado} | {k} em {uf} ------------------------------')
+                    adfuller_test = analyze_stationarity(train_tf[1:])
+                    pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
+                    df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'SARIMA', 'SAVED MODEL': pkl_file, 'PARAMS': str(all_params  ), 'WINDOW': window, 'HORIZON': horizon,  
+                                            'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 'R2': r2_result, 
+                                            'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
+                                            'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
+                                            'P11': preds_real[10], 'P12': preds_real[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
+                                            'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
+                                            'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
+                                            }, index=[0])
+                    df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
+                    os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
+                    with open(pkl_file, "wb") as f:
+                        pickle.dump(forecast, f) 
         except Exception as e:
             print_log(f"Exception: {derivado} em {uf}\n", e)
             traceback.print_exc()
 
 
 if __name__ == "__main__":
-    with multiprocessing.Pool() as pool:
+    with multiprocessing.Pool(processes=2) as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
-            for file in os.listdir(directory) 
-            if file.endswith('.csv')
+            for file in os.listdir(directory)
         ]
 
         pool.map(process_file, tasks)
+    print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
