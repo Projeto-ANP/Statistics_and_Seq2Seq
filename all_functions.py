@@ -6,6 +6,7 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.metrics import mean_squared_error as mse
 from aeon.transformations.detrend import ConditionalDeseasonalizer
 from aeon.transformations.boxcox import BoxCoxTransformer
+from aeon.forecasting.sarimax import SARIMAX
 from datetime import datetime
 import ast
 
@@ -37,6 +38,13 @@ def get_stats_norm(series, horizon, window):
 
 def rmse(y_true, y_pred):
   return np.sqrt(mse(y_true, y_pred))
+
+def r2(y_true, y_pred):
+    mean_y_true = sum(y_true) / len(y_true)
+    ss_total = sum((y_true - mean_y_true) ** 2)
+    ss_res = sum((y_true - y_pred) ** 2)
+    r2 = 1 - (ss_res / ss_total)
+    return r2
 
 def pocid(y_true, y_pred):
     n = len(y_true)
@@ -72,6 +80,15 @@ def recursive_forecasting_stats(data, model, horizon):
 
 def custom_parser(date):
   return pd.to_datetime(date, format='%Y%m')
+
+
+def read_series(file_path):
+    df = pd.read_csv(file_path, header=0, parse_dates=['timestamp'], sep=";", date_parser=custom_parser)
+    df['timestamp'] = pd.to_datetime(df['timestamp'], infer_datetime_format=True)
+    df = df.set_index('timestamp', inplace=False)
+    df.index = df.index.to_period('M')
+    series = df['m3']
+    return series
 
 def rolling_window(series, window):
   data = []
@@ -151,36 +168,48 @@ def add_trend(series_diff, normal_series):
 def pbe(y_true, y_pred):
   return 100*(np.sum(y_true - y_pred)/np.sum(y_true))
 
-def transform_train(series_transform, format="deseasonal"):
+
+def transform_train(series_transform, format="deseasonal", horizon=12):
     if format == "deseasonal":
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(series_transform)
         series_ts = transform.transform(series_transform)
-        return series_ts
+        series_ts_norm, _, _ = rolling_window_series(series_ts, horizon)
+        return series_ts_norm
     elif format == "diff":
         series_diff = series_transform.diff()
-        return series_diff
+        series_diff_norm, _, _ = rolling_window_series(series_diff, horizon)
+        return series_diff_norm
     elif format == "log":
         constante = 10
-        return np.log(series_transform + constante)
+        series_ts = np.log(series_transform + constante)
+        series_ts_norm, _, _ = rolling_window_series(series_ts, horizon)
+        return series_ts_norm
     elif format == "log-diff":
         constante = 10
         series_log = np.log(series_transform + constante)
-        series_diff = series_log.diff()
-        return series_diff
+        series_ts = series_log.diff()
+        series_ts_norm, _, _ = rolling_window_series(series_ts, horizon)
+        return series_ts_norm
     elif format == "deseasonal-diff":
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(series_transform)
         series_ds = transform.transform(series_transform)
-        series_diff = series_ds.diff()
-        return series_diff
+        series_ts = series_ds.diff()
+
+        series_ts_norm, _, _ = rolling_window_series(series_ts, horizon)
+        return series_ts_norm
     elif format == "deseasonal-log":
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(series_transform)
         series_ds = transform.transform(series_transform)
         constante = 10
-        series_log = np.log(series_ds + constante)
-        return series_log
+        series_ts = np.log(series_ds + constante)
+        series_ts_norm, _, _ = rolling_window_series(series_ts, horizon)
+        return series_ts_norm
+    #normal
+    series_transform_norm, _, _ = rolling_window_series(series_transform, horizon)
+    return series_transform_norm
 
 def transform_reverse_preds(series_preds, train_norm, format="deseasonal"):
     if format == "deseasonal":
@@ -222,7 +251,8 @@ def transform_reverse_preds(series_preds, train_norm, format="deseasonal"):
     #normal
     return series_preds
 
-def fit_arima_train(train_ds, train_norm, initial_order, horizon, format):
+
+def fit_arima_train(train_ds, train, initial_order, horizon, format):
     p, d, q = initial_order
     p_original, d_original, q_original = initial_order
     max_attempts = 10
@@ -231,8 +261,9 @@ def fit_arima_train(train_ds, train_norm, initial_order, horizon, format):
         forecast = ARIMA(order=(p_original, d, q_original), suppress_warnings=True)
         forecast.fit(train_ds)
 
-        preds = recursive_forecasting_stats(train_ds, forecast, horizon)
-        preds_inverse = transform_reverse_preds(preds, train_norm, format=format)
+        # preds = recursive_forecasting_stats(train_ds, forecast, horizon)
+        preds = forecast.predict(fh=[i for i in range(1, horizon+1)] )
+        preds_inverse = reverse_transform_norm_preds(preds, train, format=format)
 
         final_order_dict = {
             'p': p_original,
@@ -248,8 +279,8 @@ def fit_arima_train(train_ds, train_norm, initial_order, horizon, format):
           forecast = ARIMA(order=(p_original, d_incremented, q_original), suppress_warnings=True)
           forecast.fit(train_ds)
 
-          preds = recursive_forecasting_stats(train_ds, forecast, horizon)
-          preds_inverse = transform_reverse_preds(preds, train_norm, format=format)
+          preds = forecast.predict(fh=[i for i in range(1, horizon+1)] )
+          preds_inverse = reverse_transform_norm_preds(preds, train, format=format)
 
           final_order_dict = {
               'p': p_original,
@@ -265,8 +296,8 @@ def fit_arima_train(train_ds, train_norm, initial_order, horizon, format):
             forecast = ARIMA(order=(p, d, q), suppress_warnings=True)
             forecast.fit(train_ds)
 
-            preds = recursive_forecasting_stats(train_ds, forecast, horizon)
-            preds_inverse = transform_reverse_preds(preds, train_norm, format=format)
+            preds = forecast.predict(fh=[i for i in range(1, horizon+1)] )
+            preds_inverse = reverse_transform_norm_preds(preds, train, format=format)
 
             final_order_dict = {
                 'p': p,
@@ -293,17 +324,20 @@ def fit_arima_train(train_ds, train_norm, initial_order, horizon, format):
     raise ValueError("Problem with all possible (p,d,q) in this time series") from e
 
 
-def fit_sarima_train(train_ds, train_norm, initial_order, seasonal_order, horizon, format):
+def fit_sarima_train(train_ds, train, initial_order, seasonal_order, horizon, format):
     p, d, q = initial_order
     p_original, d_original, q_original = initial_order
     max_attempts = 10
     d_incremented = d+1
     try:
-        forecast = ARIMA(order=(p_original, d, q_original), seasonal_order=seasonal_order, suppress_warnings=True)
+        forecast = ARIMA(order=(p_original, d, q_original), 
+                           seasonal_order=seasonal_order, 
+                           suppress_warnings=True
+                           )
         forecast.fit(train_ds)
 
-        preds = recursive_forecasting_stats(train_ds, forecast, horizon)
-        preds_inverse = transform_reverse_preds(preds, train_norm, format=format)
+        preds = forecast.predict(fh=[i for i in range(1, horizon+1)] )
+        preds_real = reverse_transform_norm_preds(preds, train, format=format)
 
         final_order_dict = {
             'p': p_original,
@@ -311,33 +345,39 @@ def fit_sarima_train(train_ds, train_norm, initial_order, seasonal_order, horizo
             'q': q_original,
         }
 
-        return forecast, preds_inverse, final_order_dict
+        return forecast, preds_real, final_order_dict
 
     except Exception as e:
         print_log(f"Exception: Not valid original ({p},{d},{q}) for train. Error: {e}")
         try:
-          forecast = ARIMA(order=(p_original, d_incremented, q_original), seasonal_order=seasonal_order, suppress_warnings=True)
+          forecast = ARIMA(order=(p_original, d_incremented, q_original),
+                                seasonal_order=seasonal_order,
+                                suppress_warnings=True
+                                )
           forecast.fit(train_ds)
 
-          preds = recursive_forecasting_stats(train_ds, forecast, horizon)
-          preds_inverse = transform_reverse_preds(preds, train_norm, format=format)
+          preds = forecast.predict(fh=[i for i in range(1, horizon+1)] )
+          preds_real = reverse_transform_norm_preds(preds, train, format=format)
 
           final_order_dict = {
               'p': p_original,
               'd': d_incremented,
               'q': q_original,
           }
-          return forecast, preds_inverse, final_order_dict
+          return forecast, preds_real, final_order_dict
         except:
           print_log(f"Exception: Not valid (d) incrementation in ({p},{d_incremented},{q}) for train. Error: {e}")
         # raise ValueError("Problem with all possible (p,d,q) in this time series") from e
     for attempt in range(max_attempts):
         try:
-            forecast = ARIMA(order=(p, d, q), seasonal_order=seasonal_order, suppress_warnings=True)
+            forecast = ARIMA(order=(p, d, q),
+                                seasonal_order=seasonal_order,
+                                suppress_warnings=True
+                                )
             forecast.fit(train_ds)
 
-            preds = recursive_forecasting_stats(train_ds, forecast, horizon)
-            preds_inverse = transform_reverse_preds(preds, train_norm, format=format)
+            preds = forecast.predict(fh=[i for i in range(1, horizon+1)] )
+            preds_real = reverse_transform_norm_preds(preds, train, format=format)
 
             final_order_dict = {
                 'p': p,
@@ -345,7 +385,7 @@ def fit_sarima_train(train_ds, train_norm, initial_order, seasonal_order, horizo
                 'q': q,
             }
 
-            return forecast, preds_inverse, final_order_dict
+            return forecast, preds_real, final_order_dict
 
         except Exception as e:
             print_log(f"Exception: Not valid decrementing ({p},{d},{q}) for train. Error: {e}")
@@ -475,7 +515,59 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
         series_ds_abs = series_ds - constante
         series_inverse = transform.inverse_transform(series_ds_abs)
         return series_inverse
-
+    
     #normal
-    return series_preds
+    _, mean, std = rolling_window_series(train, 12)
+    preds_real = znorm_reverse(series_preds, mean, std)
+    return preds_real
 
+from statsmodels.tsa.stattools import pacf
+from statsmodels.tsa.stattools import acf
+   
+def get_pacf(series):
+    df_datetime = series.copy()
+    df_datetime.index = df_datetime.index.to_timestamp()
+    return pacf(df_datetime.dropna(), alpha=0.05, method='ywm')
+
+def get_acf(series):
+    df_datetime = series.copy()
+    df_datetime.index = df_datetime.index.to_timestamp()
+    return acf(df_datetime.dropna(), alpha=0.05)
+
+def get_AR_terms(series):
+    PACF, PACF_ci = get_pacf(series)
+
+    PACF_ci_ll = PACF_ci[:,0] - PACF
+    PACF_ci_ul = PACF_ci[:,1] - PACF
+    
+    l_values = np.where(PACF < PACF_ci_ll)[0]
+    u_values = np.where(PACF > PACF_ci_ul)[0]
+    
+    AR_values =  np.concatenate((l_values, u_values))
+    AR_values = np.sort(AR_values)
+
+    AR_values = np.unique(AR_values[(AR_values > 1) & (AR_values < 12)][:5])
+
+    if len(AR_values) == 0:
+        return [1]  
+    
+    return AR_values.tolist() 
+
+def get_MA_terms(series):
+    ACF, ACF_ci = get_acf(series)
+    
+    ACF_ci_ll = ACF_ci[:,0] - ACF
+    ACF_ci_ul = ACF_ci[:,1] - ACF
+    
+    l_values = np.where(ACF < ACF_ci_ll)[0]
+    u_values = np.where(ACF > ACF_ci_ul)[0]
+
+    MA_values =  np.concatenate((l_values, u_values))
+    MA_values = np.sort(MA_values)
+
+    MA_values = np.unique(MA_values[(MA_values > 1) & (MA_values < 12)][:5])
+
+    if len(MA_values) == 0:
+        return [1]  
+    
+    return MA_values.tolist() 

@@ -28,12 +28,11 @@ import pickle
 
 warnings.filterwarnings("ignore")
 
-colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'SAVED MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE',
+colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12',
            'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
            ]
 df_result = pd.DataFrame(columns=colunas)
-train_v_norm = pd.Series()
 format_v = "UNKNOWN"
 train_tf_v = pd.Series()
 train_v_real = pd.Series()
@@ -49,7 +48,6 @@ def objfun(params):
     global test_v_real
     global horizon
     global format_v
-    global train_v_norm
 
     p,d,q = params['p'],params['d'], params['q']
     model = ARIMA(order=(p,d,q), 
@@ -57,12 +55,16 @@ def objfun(params):
                 suppress_warnings=True
                 )
     model.fit(train_tf_v)
-    predictions = recursive_forecasting_stats(train_tf_v, model, horizon)
-    preds_norm = transform_reverse_preds(predictions, train_v_norm, format=format_v)
 
-    _, mean, std = rolling_window_series(train_v_real, window)
+    predictions = model.predict(fh=[i for i in range(1, horizon+1)] )
+    preds_real = reverse_transform_norm_preds(predictions, train_v_real, format=format_v)
 
-    preds_real = znorm_reverse(preds_norm, mean, std)
+    # predictions = recursive_forecasting_stats(train_tf_v, model, horizon)
+    # preds_norm = transform_reverse_preds(predictions, train_v_norm, format=format_v)
+
+    # _, mean, std = rolling_window_series(train_v_real, window)
+
+    # preds_real = znorm_reverse(preds_norm, mean, std)
 
     rmse_result = rmse(test_v_real, preds_real)
     # mape_result = mape(test_v, preds_real)
@@ -92,7 +94,7 @@ def arima_objective_function(args_list):
     return params_evaluated, results
 
 
-def find_best_parameter(train, test, train_val_real, train_val_norm, format):
+def find_best_parameter(train, test, train_val_real, format):
     global train_tf_v
     global train_v_real
     global train_v_norm
@@ -106,7 +108,6 @@ def find_best_parameter(train, test, train_val_real, train_val_norm, format):
     conf_Dict['num_iteration'] = 30
     train_tf_v = train
     train_v_real = train_val_real
-    train_v_norm = train_val_norm
     test_v_real = test
     format_v = format
 
@@ -136,8 +137,8 @@ dirs = [
     '../datasets/venda/mensal/uf/querosenedeaviacao/',
     '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
-pickle_file = './pickle_arima_rolling'
-results_file = './results_arima_rolling'
+# pickle_file = './pickle/arima/rolling'
+results_file = './results/arima/rolling'
 
 def process_file(args):
     directory, file = args
@@ -155,44 +156,39 @@ def process_file(args):
             series = df['m3']
             train, test = train_test_stats(series, horizon)
             train_val, test_val = train_test_stats(train, horizon)
-            # train_val_norm = znorm(train_val)
-            # train_norm = znorm(train)
-            train_val_norm, _, _ = rolling_window_series(train_val, window)
-            train_norm, mean, std = rolling_window_series(train, window)
-            
-            # test_val_norm = znorm_by(test_val, train_val)
-            # test_norm = znorm_by(test, train)
-
-            all_series_test.append(("normal", train_val_norm, train_norm))
+            train_val_normal = transform_train(train_val, format="normal")
+            train_normal = transform_train(train, format="normal")
+            all_series_test.append(("normal", train_val_normal, train_normal))
 
             #series sem sazonalidade
-            train_val_ds = transform_train(train_val_norm, format="deseasonal")
-            train_tf_ds = transform_train(train_norm, format="deseasonal")
+            train_val_ds = transform_train(train_val, format="deseasonal")
+            train_tf_ds = transform_train(train, format="deseasonal")
+            
             all_series_test.append(("deseasonal", train_val_ds, train_tf_ds))
 
             #series deseasonal + log transform
-            train_val_ds_log = transform_train(train_val_norm, format="deseasonal-log")
-            train_tf_ds_log = transform_train(train_norm, format="deseasonal-log")
+            train_val_ds_log = transform_train(train_val, format="deseasonal-log")
+            train_tf_ds_log = transform_train(train, format="deseasonal-log")
             all_series_test.append(("deseasonal-log", train_val_ds_log, train_tf_ds_log))
 
             #series sem sazonalidade e sem tendencia
-            train_val_ds_diff = transform_train(train_val_norm, format="deseasonal-diff")
-            train_tf_ds_diff = transform_train(train_norm, format="deseasonal-diff")
+            train_val_ds_diff = transform_train(train_val, format="deseasonal-diff")
+            train_tf_ds_diff = transform_train(train, format="deseasonal-diff")
             all_series_test.append(("deseasonal-diff", train_val_ds_diff, train_tf_ds_diff))
 
             #series sem tendencia
-            train_val_diff = transform_train(train_val_norm, format="diff")
-            train_tf_diff = transform_train(train_norm, format="diff")
+            train_val_diff = transform_train(train_val, format="diff")
+            train_tf_diff = transform_train(train, format="diff")
             all_series_test.append(("diff", train_val_diff, train_tf_diff))
 
             #series log transform
-            train_val_log = transform_train(train_val_norm, format="log")
-            train_tf_log = transform_train(train_norm, format="log")
+            train_val_log = transform_train(train_val, format="log")
+            train_tf_log = transform_train(train, format="log")
             all_series_test.append(("log", train_val_log, train_tf_log))
 
             #series log transform + diff
-            train_val_log_diff = transform_train(train_val_norm, format="log-diff")
-            train_tf_log_diff = transform_train(train_norm, format="log-diff")
+            train_val_log_diff = transform_train(train_val, format="log-diff")
+            train_tf_log_diff = transform_train(train, format="log-diff")
             all_series_test.append(("log-diff", train_val_log_diff, train_tf_log_diff))
 
             path_derivado = f'{results_file}/{derivado}'
@@ -207,12 +203,12 @@ def process_file(args):
                     print_log(f"{derivado} | {k} em {uf}")
                     renamed_transform = k.replace("-", "_")
                     
-                    results_arima = find_best_parameter(train_tf_val, test_val, train_val, train_val_norm, k)
+                    results_arima = find_best_parameter(train_tf_val, test_val, train_val, k)
                     print_log(f'----------------------[VALIDACAO] ENCONTRADO PARAMETROS PARA {derivado} | {k} em {uf} ------------------------------')
                     initial_order = (results_arima['best_params']['p'], results_arima['best_params']['d'], results_arima['best_params']['q'])
-                    forecast, preds_norm, final_order = fit_arima_train(train_tf, train_norm, initial_order, horizon, format=k)
+                    forecast, preds_real, final_order = fit_arima_train(train_tf, train, initial_order, horizon, format=k)
 
-                    preds_real = znorm_reverse(preds_norm, mean, std)
+                    # preds_real = znorm_reverse(preds_norm, mean, std)
 
                     rmse_result = rmse(test, preds_real)
                     mape_result = mape(test, preds_real)
@@ -229,8 +225,8 @@ def process_file(args):
 
                     print_log(f'---------------------- [FINALIZADO] {derivado} | {k} em {uf} ------------------------------')
                     adfuller_test = analyze_stationarity(train_tf[1:])
-                    pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
-                    df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'SAVED MODEL': pkl_file, 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
+                    # pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
+                    df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
                                             'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 
                                             'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
                                             'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
@@ -239,10 +235,9 @@ def process_file(args):
                                             'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
                                             }, index=[0])
                     df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
-                    os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
-                    with open(pkl_file, "wb") as f:
-                        pickle.dump(forecast, f) 
-            print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
+                    # os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
+                    # with open(pkl_file, "wb") as f:
+                        # pickle.dump(forecast, f) 
         except Exception as e:
             print_log(f"Exception: {derivado} em {uf}\n", e)
             traceback.print_exc()
@@ -258,3 +253,4 @@ if __name__ == "__main__":
         ]
 
         pool.map(process_file, tasks)
+    print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
