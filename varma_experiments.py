@@ -10,8 +10,8 @@ from multiprocessing import Process
 from collections import Counter
 import ast
 dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
+    # '../datasets/venda/mensal/uf/gasolinac/',
+    # '../datasets/venda/mensal/uf/etanolhidratado/',
     '../datasets/venda/mensal/uf/gasolinadeaviacao/',
     '../datasets/venda/mensal/uf/glp/',
     '../datasets/venda/mensal/uf/oleocombustivel/',

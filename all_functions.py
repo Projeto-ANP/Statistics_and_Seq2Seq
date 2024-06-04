@@ -36,6 +36,14 @@ def get_stats_norm(series, horizon, window):
   last_std = np.std(last_subsequence)
   return last_mean, last_std
 
+def mase(y_true, y_pred, y_baseline):
+    # Calcula o MAE do modelo
+    mae_pred = np.mean(np.abs(y_true - y_pred))
+    # Calcula o MAE do modelo baseline Persistent Window (i.e., últimas h observações antes do teste)
+    mae_naive = np.mean(np.abs(y_true - y_baseline))
+    result = mae_pred/mae_naive
+    return result
+
 def rmse(y_true, y_pred):
   return np.sqrt(mse(y_true, y_pred))
 

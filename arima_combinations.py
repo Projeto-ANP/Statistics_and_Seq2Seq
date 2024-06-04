@@ -61,10 +61,10 @@ for directory in dirs:
             voting = VotingCombination(estimators, combination='moe')
             voting.fit_moe(estimators_val, test_val)
             preds_moe = voting.predict()
-            rmse_result = rmse(test, preds_real)
-            mape_result = mape(test, preds_real)
-            pocid_result = pocid(test, preds_real)
-            pbe_result = pbe(test, preds_real)
+            rmse_result = rmse(test, preds_moe)
+            mape_result = mape(test, preds_moe)
+            pocid_result = pocid(test, preds_moe)
+            pbe_result = pbe(test, preds_moe)
             mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
             print_log('[RESULTADO EM TRAIN]')
             print_log(f'PARAMS: {str(final_order)}')
@@ -76,11 +76,11 @@ for directory in dirs:
             csv_path = f'{results_derivado}/transform_{uf}.csv'
             if not os.path.exists(csv_path):
                 pd.DataFrame(columns=colunas).to_csv(csv_path, sep=';', index=False)
-            df_temp = pd.DataFrame({'DATA': 'moe', 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'VALIDATION-MOE': voting.get_moe(),'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
+            df_temp = pd.DataFrame({'DATA': 'moe', 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'VALIDATION-MOE':[voting.get_moe()],'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
                                             'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 
-                                            'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
-                                            'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
-                                            'P11': preds_real[10], 'P12': preds_real[11]
+                                            'P1': preds_moe[0], 'P2': preds_moe[1], 'P3': preds_moe[2], 'P4': preds_moe[3], 'P5': preds_moe[4],
+                                            'P6': preds_moe[5], 'P7': preds_moe[6], 'P8': preds_moe[7], 'P9': preds_moe[8], 'P10': preds_moe[9],
+                                            'P11': preds_moe[10], 'P12': preds_moe[11]
                                             }, index=[0])
             df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
 
