@@ -5,8 +5,7 @@ from aeon.forecasting.arima import ARIMA
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.metrics import mean_squared_error as mse
 from aeon.transformations.detrend import ConditionalDeseasonalizer
-from aeon.transformations.boxcox import BoxCoxTransformer
-from aeon.forecasting.sarimax import SARIMAX
+from aeon.transformations.detrend import STLTransformer
 from datetime import datetime
 import ast
 
@@ -57,7 +56,7 @@ def r2(y_true, y_pred):
 def pocid(y_true, y_pred):
     n = len(y_true)
     D = [1 if (y_pred[i] - y_pred[i-1]) * (y_true[i] - y_true[i-1]) > 0 else 0 for i in range(1, n)]
-    POCID = 100 * np.sum(D) / n
+    POCID = 100 * np.sum(D) / (n-1)
     return POCID
 
 def mcpm(rmse_result, mape_result, pocid_result):
@@ -106,6 +105,40 @@ def rolling_window(series, window):
   df = pd.DataFrame(data)
   return df
 
+def rolling_semnorm(series, window):
+  data = []
+  for i in range(len(series)-window):
+    example = np.array(series[i:i+window+1])
+    data.append(example)
+  df = pd.DataFrame(data)
+  return df
+
+
+def rolling_window_transform(series, window, format="log"):
+  data = []
+  for i in range(len(series)-window):
+    series_transform = np.log(np.array(series[i:i+window+1]))
+    example = znorm(series_transform)
+    data.append(example)
+  df = pd.DataFrame(data)
+  return df
+
+
+def rolling_window_resid(series, window):
+  data = []
+  for i in range(len(series)-window):
+    transformer = STLTransformer(sp=12)
+    serie_window = np.array(series[i:i+window+1])
+    result = transformer.fit(serie_window)
+    # example = znorm(np.array(result.resid_))
+    example = serie_window
+    data.append(example)
+  df = pd.DataFrame(data)
+  mean = np.mean(np.array(result.resid_))
+  std = np.std(np.array(result.resid_))
+  return df, mean, std
+
+
 def rolling_window_series(series, window):
     result_series = pd.Series(index=series.index)
     mean = 0
@@ -134,6 +167,30 @@ def train_test_stats(data, horizon):
   # print(pd.Series(data))
   train, test = data[:-horizon], data[-horizon:]
   return train, test
+
+def rolling_validation_stats(treino, horizon=12):
+    rolling_sets = []
+    size_train = len(treino)
+    
+    for i in range(size_train - horizon*2, size_train - horizon + 1):
+        treino_rolling = treino[:i]
+        validacao_rolling = treino[i:i + horizon]
+        rolling_sets.append((treino_rolling, validacao_rolling))
+    
+    return rolling_sets
+
+def rolling_validation_regressors(X_train, y_train, horizonte_validacao=12):
+    rolling_sets = []
+    tamanho_treino = len(X_train)
+    
+    for i in range(tamanho_treino - 24, tamanho_treino - horizonte_validacao + 1):
+        X_rolling_train = X_train.iloc[:i]
+        X_rolling_val = X_train.iloc[i:i + horizonte_validacao]
+        y_rolling_train = y_train.iloc[:i]
+        y_rolling_val = y_train.iloc[i:i + horizonte_validacao]
+        rolling_sets.append((X_rolling_train, X_rolling_val, y_rolling_train, y_rolling_val))
+    
+    return rolling_sets
 
 def recursive_multistep_forecasting(X_test, model, horizon):
   # example é composto pelas últimas observações vistas
@@ -579,3 +636,38 @@ def get_MA_terms(series):
         return [1]  
     
     return MA_values.tolist() 
+
+from scipy.spatial.distance import cdist
+from dtaidistance import dtw
+from aeon.distances import dtw_distance
+
+def knn_similar_series(train_series, query_series, k, metric='euclidean', horizon = 12):
+    train_data = train_series.values
+    query_data = query_series.values
+    query_len = len(query_data)
+    
+    n = len(train_data)
+    train_subsequences = np.array([train_data[i:i+query_len] for i in range(n - query_len + 1)])
+    
+    if metric == 'euclidean':
+        distances = cdist([query_data], train_subsequences, metric='euclidean').flatten()
+    elif metric == 'mahalanobis':
+        V = np.cov(train_subsequences.T)
+        VI = np.linalg.inv(V)
+        distances = cdist([query_data], train_subsequences, metric='mahalanobis', VI=VI).flatten()
+    elif metric == 'dtw':
+        distances = np.array([dtw_distance(query_data, subsequence, window=0.2) for subsequence in train_subsequences])
+    else:
+        raise ValueError("Métrica desconhecida. Use 'euclidean', 'mahalanobis' ou 'dtw'.")
+    
+    nearest_indices = np.argsort(distances)[:k]
+    
+    results = []
+    for idx in nearest_indices:
+        similar_sequence = train_series[idx:idx + query_len]
+        results.append({
+            'similar_sequence': similar_sequence,
+            'distance': distances[idx],
+        })
+    
+    return results

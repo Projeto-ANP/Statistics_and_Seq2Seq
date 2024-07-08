@@ -37,6 +37,23 @@ class VotingCombination:
             math_func = mean
         elif self.combination == 'median':
             math_func = median
+        elif self.combination == 'max':
+            # math_func = max
+            num_elements = len(sformat)
+            combined_predictions = []
+            lista_preds = []
+            
+            for i in range(num_elements):
+                values_at_index = [self.estimators[format][i] for format in self.estimators.keys()]
+                
+                index_max = max(values_at_index)
+                lista_preds.append(index_max)
+            
+            combined_predictions = pd.Series(lista_preds, index=sformat.index)
+            
+            return combined_predictions
+        elif self.combination == 'min':
+            math_func = min
         elif self.combination == 'oracle':
             if test is None:
                 raise ValueError("Parameter 'test' is required for combination method 'oracle'.")
