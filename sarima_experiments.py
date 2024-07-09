@@ -140,12 +140,12 @@ def checkFolder(pasta, arquivo, tipo):
 
 dirs = [
     '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
+    # '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    '../datasets/venda/mensal/uf/glp/',
+    # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    '../datasets/venda/mensal/uf/oleodiesel/',
-    '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    # '../datasets/venda/mensal/uf/oleodiesel/',
+    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 # pickle_file = './pickle/sarima/rolling'
