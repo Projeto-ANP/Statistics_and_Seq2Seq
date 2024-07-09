@@ -392,6 +392,7 @@ def fit_arima_train(train_ds, train, initial_order, horizon, format):
 def fit_sarima_train(train_ds, train, initial_order, seasonal_order, horizon, format):
     p, d, q = initial_order
     p_original, d_original, q_original = initial_order
+    pp, dd, qq, ss = seasonal_order
     max_attempts = 10
     d_incremented = d+1
     try:
@@ -408,6 +409,10 @@ def fit_sarima_train(train_ds, train, initial_order, seasonal_order, horizon, fo
             'p': p_original,
             'd': d,
             'q': q_original,
+            'P': pp,
+            'D': dd,
+            'Q': qq,
+            's': ss
         }
 
         return forecast, preds_real, final_order_dict
@@ -425,10 +430,14 @@ def fit_sarima_train(train_ds, train, initial_order, seasonal_order, horizon, fo
           preds_real = reverse_transform_norm_preds(preds, train, format=format)
 
           final_order_dict = {
-              'p': p_original,
-              'd': d_incremented,
-              'q': q_original,
-          }
+            'p': p_original,
+            'd': d,
+            'q': q_original,
+            'P': pp,
+            'D': dd,
+            'Q': qq,
+            's': ss
+        }
           return forecast, preds_real, final_order_dict
         except:
           print_log(f"Exception: Not valid (d) incrementation in ({p},{d_incremented},{q}) for train. Error: {e}")
@@ -445,10 +454,14 @@ def fit_sarima_train(train_ds, train, initial_order, seasonal_order, horizon, fo
             preds_real = reverse_transform_norm_preds(preds, train, format=format)
 
             final_order_dict = {
-                'p': p,
-                'd': d,
-                'q': q,
-            }
+            'p': p_original,
+            'd': d,
+            'q': q_original,
+            'P': pp,
+            'D': dd,
+            'Q': qq,
+            's': ss
+        }
 
             return forecast, preds_real, final_order_dict
 
