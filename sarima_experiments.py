@@ -140,18 +140,19 @@ def checkFolder(pasta, arquivo, tipo):
 
 dirs = [
     '../datasets/venda/mensal/uf/gasolinac/',
-    # '../datasets/venda/mensal/uf/etanolhidratado/',
+    '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    # '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    # '../datasets/venda/mensal/uf/oleodiesel/',
-    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 # pickle_file = './pickle/sarima/rolling'
 
 def process_file(args):
-    results_file = './paper2/sarima_busca'
+    chave = '_noresid'
+    results_file = f'./paper2/sarima{chave}'
     directory, file = args
     if file.endswith('.csv'):
         try:
@@ -163,6 +164,12 @@ def process_file(args):
             all_series_test = []
             series = df['m3']
             train, test = train_test_stats(series, horizon)
+            if 'noresid' in chave:
+                print_log('----------- SEM RESIDUO NA SERIE ---------')
+                transformer = STLTransformer(sp=12) 
+                stl = transformer.fit(train)
+                train = stl.seasonal_ + stl.trend_
+
             train_val, test_val = train_test_stats(train, horizon)
 
             train_val_normal = transform_train(train_val, format="normal")

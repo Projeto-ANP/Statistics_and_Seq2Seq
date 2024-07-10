@@ -174,11 +174,12 @@ def reverse_regressors(train_real, preds, format='normal'):
     
     raise ValueError('nao existe essa transformacao')
 
-
+#pkill -f -SIGINT "regressor_experiments.py"
 def for_regressor(args):
     directory, file = args
     regr = 'xgb'
-    results_file = f'./paper2/{regr}'
+    chave = '_noresid'
+    results_file = f'./paper2/{regr}{chave}'
     derivado = file.split("_")[2].split(".")[0]
     results_derivado = f'{results_file}/{derivado}'
     os.makedirs(results_derivado, exist_ok=True)
@@ -189,11 +190,15 @@ def for_regressor(args):
          
         series = read_series(full_path)
         train, test_unused = train_test_stats(series, horizon) 
+        if 'noresid' in chave:
+            print_log('----------- SEM RESIDUO NA SERIE ---------')
+            transformer = STLTransformer(sp=12) 
+            stl = transformer.fit(train)
+            train = stl.seasonal_ + stl.trend_
 
         for tf in transformations:
             train_tf = transform_regressors(train, tf)
 
-            
             # train_tf = np.log(train) #log
             data = rolling_window(pd.concat([train_tf, pd.Series([1,2,3,4,5,6,7,8,9,10,11,12], index=test_unused.index)]), window)
             # data = rolling_window_transform(series, window) #log
