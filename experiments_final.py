@@ -147,8 +147,9 @@ dirs = [
 # pickle_file = './pickle/arima/rolling'
 
 def process_file(args):
-    results_file = './paper2/arima'
     directory, file = args
+    chave = '_noresid'
+    results_file = f'./paper2/arima{chave}'
     if file.endswith('.csv'):
         try:
             uf = file.split("_")[1].upper()
@@ -162,10 +163,16 @@ def process_file(args):
             all_series_test = []
             series = df['m3']
             train, test = train_test_stats(series, horizon)
+            if 'noresid' in chave:
+                print_log('----------- SEM RESIDUO NA SERIE ---------')
+                transformer = STLTransformer(sp=12) 
+                stl = transformer.fit(train)
+                train = stl.seasonal_ + stl.trend_
+
             train_val, test_val = train_test_stats(train, horizon)
             train_val_normal = transform_train(train_val, format="normal")
             train_normal = transform_train(train, format="normal")
-            # all_series_test.append(("normal", train_val_normal, train_normal))
+            all_series_test.append(("normal", train_val_normal, train_normal))
 
             #series sem sazonalidade
             train_val_ds = transform_train(train_val, format="deseasonal")
@@ -189,9 +196,9 @@ def process_file(args):
             # all_series_test.append(("diff", train_val_diff, train_tf_diff))
 
             #series log transform
-            # train_val_log = transform_train(train_val, format="log")
-            # train_tf_log = transform_train(train, format="log")
-            # all_series_test.append(("log", train_val_log, train_tf_log))
+            train_val_log = transform_train(train_val, format="log")
+            train_tf_log = transform_train(train, format="log")
+            all_series_test.append(("log", train_val_log, train_tf_log))
 
             #series log transform + diff
             # train_val_log_diff = transform_train(train_val, format="log-diff")
