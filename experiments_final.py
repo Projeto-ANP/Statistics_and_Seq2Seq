@@ -258,9 +258,16 @@ def process_file(args):
             traceback.print_exc()
 
 
-def arima_error(args):
-    results_file = './paper2/arma_max_error'
+def arima_pbe(args):
     directory, file = args
+    chave = ''
+    model_file = f'arima{chave}'
+    results_file = f'./modelo_pbe/{model_file}'
+    transformations = ["normal", "log", "deseasonal"]
+    cols = ['train_range', 'test_range', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
+           'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12',
+           'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
+           ]
     if file.endswith('.csv'):
         try:
             uf = file.split("_")[1].upper()
@@ -273,62 +280,53 @@ def arima_error(args):
             df.index = df.index.to_period('M')
             all_series_test = []
             series = df['m3']
-            train, test = train_test_stats(series, horizon)
-            train_val, test_val = train_test_stats(train, horizon)
-            train_val_normal = transform_train(train_val, format="normal")
-            train_normal = transform_train(train, format="normal")
-            all_series_test.append(("normal", train_val_normal, train_normal))
+            # train, test = train_test_stats(series, horizon)
+            # train_stl = train
+            # if 'noresid' in chave:
+            #     print_log('----------- SEM RESIDUO NA SERIE ---------')
+            #     transformer = STLTransformer(sp=12) 
+            #     stl = transformer.fit(train)
+            #     train_stl = stl.seasonal_ + stl.trend_
+            train_test_splits = []
+            initial_train_size = 24
+            start = 0
 
-            #series log transform
-            train_val_log = transform_train(train_val, format="log")
-            train_tf_log = transform_train(train, format="log")
-            all_series_test.append(("log", train_val_log, train_tf_log))
+            current_train_size = initial_train_size
+            while start + current_train_size + horizon <= len(series):
+                end_train = start + current_train_size
+                end_test = end_train + horizon
+                
+                train_data = series.iloc[start:end_train]
+                test_data = series.iloc[end_train:end_test]
+                
+                train_test_splits.append((train_data, test_data))
+                
+                current_train_size += horizon 
+            
+            
+            for train, test in train_test_splits:
+                train_stl = train
+                if 'noresid' in chave:
+                    print_log('----------- SEM RESIDUO NA SERIE ---------')
+                    transformer = STLTransformer(sp=12) 
+                    stl = transformer.fit(train)
+                    train_stl = stl.seasonal_ + stl.trend_
 
-            path_derivado = f'{results_file}/{derivado}'
-            os.makedirs(path_derivado, exist_ok=True)
-            csv_path = f'{path_derivado}/transform_{uf}.csv'
-            if not os.path.exists(csv_path):
-                pd.DataFrame(columns=colunas).to_csv(csv_path, sep=';', index=False)
-            for k, train_tf_val, train_tf in all_series_test:
-                derivado_result = results_file+"/"+derivado
-                flag = checkFolder(derivado_result, f"transform_{uf}.csv", k)
-                if flag:
-                    print_log(f"{derivado} | {k} em {uf}")
-                    renamed_transform = k.replace("-", "_")
-                    
-                    # results_arima = find_best_parameter(train_tf_val, test_val, train_val, k)
-                    print_log(f'----------------------[VALIDACAO] ENCONTRADO PARAMETROS PARA {derivado} | {k} em {uf} ------------------------------')
-                    results_arima = get_params_model(f'./paper2/arma/{derivado}/transform_{uf}.csv', k)
-                    initial_order = (results_arima['p'], results_arima['d'], results_arima['q'])
-
-
-                    rolling_val_stats = rolling_validation_stats(train)
-                    tam_horizon = range(1, horizon+1)
-                    errors_h = {h: [] for h in tam_horizon}
-                    for i in range(0,13):
-                        train_rolling_normal = transform_train(rolling_val_stats[i][0], format=k)
-                        # X_rolling_train, X_rolling_test, y_rolling_train, _ = rolling_validation_regressors(X_train, y_train)[i]
-                        _, preds_real_v, _ = fit_arima_train(train_rolling_normal, rolling_val_stats[i][0], initial_order, horizon, format=k)
-
-                        erro =  (rolling_val_stats[i][1].values - preds_real_v).tolist()
-
-                        for h, err in zip(tam_horizon, erro):
-                            errors_h[h].append(err)
-
-                    max_horizon = {h: np.max(erros) for h, erros in errors_h.items()}
-
-
-                    _, preds_real, final_order = fit_arima_train(train_tf, train, initial_order, horizon, format=k)
-                    preds_somadas  = [a + b for a, b in zip(max_horizon.values(), preds_real)]
+                for transform in transformations:
+                    train_tf, _ = transform_train(train_stl, format=transform)
+                  
+                    params = get_params_model(f'./paper_final/{model_file}/{derivado}/transform_{uf}.csv', transform)
+                    initial_order = (params['p'], params['d'], params['q'])
+                    _, preds_real, final_order = fit_arima_train(train_tf, train, initial_order, horizon, format=transform)
 
                     # preds_real = znorm_reverse(preds_norm, mean, std)
                     y_baseline = series[-horizon*2:-horizon].values
-                    rmse_result = rmse(test, preds_somadas)
-                    mape_result = mape(test, preds_somadas)
-                    pocid_result = pocid(test, preds_somadas)
-                    pbe_result = pbe(test, preds_somadas)
+                    rmse_result = rmse(test, preds_real)
+                    mape_result = mape(test, preds_real)
+                    pocid_result = pocid(test, preds_real)
+                    pbe_result = pbe(test, preds_real)
                     mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
-                    mase_result = mase(test, preds_somadas, y_baseline)
+                    mase_result = mase(test, preds_real, y_baseline)
                     print_log('[RESULTADO EM TRAIN]')
                     print_log(f'PARAMS: {str(final_order)}')
                     print_log(f'MCPM: {mcpm_result}')
@@ -336,26 +334,39 @@ def arima_error(args):
                     print_log(f'MAPE: {mape_result}')
                     print_log(f'POCID: {pocid_result}')
                     print_log(f'PBE: {pbe_result}')
-
-                    print_log(f'---------------------- [FINALIZADO] {derivado} | {k} em {uf} ------------------------------')
                     adfuller_test = analyze_stationarity(train_tf[1:])
-                    # pkl_file = f"{pickle_file}/{derivado}/{renamed_transform}/{uf}_{renamed_transform}.pkl"
-                    df_temp = pd.DataFrame({'DATA': k, 'MCPM': mcpm_result, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARMA', 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
-                                            'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result, 'MASE': mase_result,
-                                            'P1': preds_somadas[0], 'P2': preds_somadas[1], 'P3': preds_somadas[2], 'P4': preds_somadas[3], 'P5': preds_somadas[4],
-                                            'P6': preds_somadas[5], 'P7': preds_somadas[6], 'P8': preds_somadas[7], 'P9': preds_somadas[8], 'P10': preds_somadas[9],
-                                            'P11': preds_somadas[10], 'P12': preds_somadas[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
+
+                    path_derivado = f'{results_file}/{derivado}/{transform}'
+                    os.makedirs(path_derivado, exist_ok=True)
+                    csv_path = f'{path_derivado}/transform_{uf}.csv'
+
+                    if not os.path.exists(csv_path):
+                        pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
+                    
+                   
+                    start_train = train.index.tolist()[0]
+                    final_train = train.index.tolist()[-1]
+
+                    start_test = test.index.tolist()[0]
+                    final_test = test.index.tolist()[-1]
+
+                    train_range = f"{start_train}_{final_train}"
+                    test_range = f"{start_test}_{final_test}"
+
+
+                    df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
+                                            'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
+                                            'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
+                                            'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
+                                            'P11': preds_real[10], 'P12': preds_real[11], 'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
                                             'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
                                             'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
                                             }, index=[0])
                     df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
-                    # os.makedirs(f'{pickle_file}/{derivado}/{renamed_transform}', exist_ok=True)
-                    # with open(pkl_file, "wb") as f:
-                        # pickle.dump(forecast, f) 
+
         except Exception as e:
             print_log(f"Exception: {derivado} em {uf}\n", e)
             traceback.print_exc()
-
 
 
 
@@ -368,5 +379,5 @@ if __name__ == "__main__":
             if file.endswith('.csv')
         ]
 
-        pool.map(process_file, tasks)
+        pool.map(arima_pbe, tasks)
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
