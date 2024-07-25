@@ -37,6 +37,20 @@ class VotingCombination:
             math_func = mean
         elif self.combination == 'median':
             math_func = median
+        elif self.combination == 'mean_weight':
+            weighted_sum = pd.Series(0, index=self.estimators[next(iter(self.estimators))].index)
+            total_weight = 0
+            
+            # Itera sobre o dicionário e calcula a soma ponderada
+            for position, series in self.estimators.items():
+                weight = len(self.estimators) - position + 1
+                weighted_sum += series * weight
+                total_weight += weight
+            
+            # Calcula a média ponderada
+            weighted_average = weighted_sum / total_weight
+            
+            return weighted_average
         elif self.combination == 'max':
             # math_func = max
             num_elements = len(sformat)

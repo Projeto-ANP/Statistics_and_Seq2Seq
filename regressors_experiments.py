@@ -136,44 +136,6 @@ colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZO
            ]
 df_result = pd.DataFrame(columns=colunas)
 
-def transform_regressors(train, format='normal'):
-    if format == 'deseasonal':
-        transform = ConditionalDeseasonalizer(sp=12)
-        transform.fit(train)
-        train_deseasonal = transform.transform(train)
-
-        return train_deseasonal
-    elif format == 'log':
-        train_log = np.log(train)
-        return train_log
-    elif format == 'normal':
-        return train
-
-def reverse_regressors(train_real, preds, format='normal'):
-    if format == 'deseasonal':
-        transform = ConditionalDeseasonalizer(sp=12)
-        transform.fit(train_real)
-        series_before_norm = transform.transform(train_real)
-
-        _, mean, std = rolling_window_series(series_before_norm, 12)
-        preds_transformed = znorm_reverse(preds, mean, std)
-
-        series_real = transform.inverse_transform(preds_transformed)
-        return series_real
-    elif format == 'log':
-        series_before_norm = np.log(train_real)
-        
-        _, mean, std = rolling_window_series(series_before_norm, 12)
-        preds_transformed = znorm_reverse(preds, mean, std)
-
-        return np.exp(preds_transformed)
-    elif format == 'normal':
-        _, mean, std = rolling_window_series(train_real, 12)
-        preds_real = znorm_reverse(preds, mean, std)
-        return preds_real
-    
-    raise ValueError('nao existe essa transformacao')
-
 #pkill -f -SIGINT "regressor_experiments.py"
 def for_regressor(args):
     directory, file = args
