@@ -135,8 +135,8 @@ def checkFolder(pasta, arquivo, tipo):
     return False
 
 dirs = [
-    # '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
+    '../datasets/venda/mensal/uf/gasolinac/',
+    # '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
     # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
@@ -259,7 +259,7 @@ def process_file(args):
 def arima_pbe(args):
     directory, file = args
     chave = ''
-    model_file = f'arima{chave}'
+    model_file = f'arima_bfgs{chave}'
     results_file = f'./modelo_pbe/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
     cols = ['train_range', 'test_range', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
@@ -368,7 +368,7 @@ def arima_pbe(args):
 
 
 if __name__ == "__main__":
-    with multiprocessing.Pool() as pool:
+    with multiprocessing.Pool(processes=16) as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
@@ -376,5 +376,5 @@ if __name__ == "__main__":
             if file.endswith('.csv')
         ]
 
-        pool.map(process_file, tasks)
+        pool.map(arima_pbe, tasks)
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
