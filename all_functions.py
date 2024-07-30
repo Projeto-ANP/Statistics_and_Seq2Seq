@@ -386,7 +386,11 @@ def fit_arima_train(train_ds, train, initial_order, horizon, format):
                 p = p_original
                 q = q_original
                 d += 1
-    raise ValueError("Problem with all possible (p,d,q) in this time series") from e
+    start_train = train.index.tolist()[0]
+    final_train = train.index.tolist()[-1]
+
+    train_range = f"{start_train}_{final_train}"
+    raise ValueError(f"Problem with all possible {str(initial_order)} for {format} in {train_range}")
 
 
 def fit_sarima_train(train_ds, train, initial_order, seasonal_order, horizon, format):
