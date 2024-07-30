@@ -135,13 +135,13 @@ def checkFolder(pasta, arquivo, tipo):
     return False
 
 dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
+    # '../datasets/venda/mensal/uf/gasolinac/',
     '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    '../datasets/venda/mensal/uf/glp/',
+    # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    '../datasets/venda/mensal/uf/oleodiesel/',
-    '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    # '../datasets/venda/mensal/uf/oleodiesel/',
+    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 # pickle_file = './pickle/arima/rolling'
@@ -149,7 +149,7 @@ dirs = [
 def process_file(args):
     directory, file = args
     chave = ''
-    results_file = f'./results/arima{chave}'
+    results_file = f'./results/arima_bfgs{chave}'
     if file.endswith('.csv'):
         try:
             uf = file.split("_")[1].upper()
