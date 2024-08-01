@@ -135,8 +135,8 @@ def checkFolder(pasta, arquivo, tipo):
     return False
 
 dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
-    # '../datasets/venda/mensal/uf/etanolhidratado/',
+    # '../datasets/venda/mensal/uf/gasolinac/',
+    '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
     # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
@@ -368,7 +368,7 @@ def arima_pbe(args):
 
 
 if __name__ == "__main__":
-    with multiprocessing.Pool(processes=16) as pool:
+    with multiprocessing.Pool() as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
