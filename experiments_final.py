@@ -135,10 +135,10 @@ def checkFolder(pasta, arquivo, tipo):
     return False
 
 dirs = [
-    # '../datasets/venda/mensal/uf/gasolinac/',
+    '../datasets/venda/mensal/uf/gasolinac/',
     '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    # '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
     # '../datasets/venda/mensal/uf/oleodiesel/',
     # '../datasets/venda/mensal/uf/querosenedeaviacao/',
@@ -368,7 +368,7 @@ def arima_error_series(args):
 
 
 if __name__ == "__main__":
-    with multiprocessing.Pool() as pool:
+    with multiprocessing.Pool(processes=16) as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
