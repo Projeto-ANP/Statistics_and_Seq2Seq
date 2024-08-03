@@ -368,7 +368,7 @@ def arima_error_series(args):
 
 
 if __name__ == "__main__":
-    with multiprocessing.Pool(processes=16) as pool:
+    with multiprocessing.Pool() as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
