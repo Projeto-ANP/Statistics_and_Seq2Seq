@@ -693,10 +693,10 @@ def transform_regressors(train, format='normal'):
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(train)
         train_deseasonal = transform.transform(train)
-
         return train_deseasonal
     elif format == 'log':
-        train_log = np.log(train)
+        constante = 10
+        train_log = np.log(train + constante)
         return train_log
     elif format == 'normal':
         return train
@@ -713,12 +713,12 @@ def reverse_regressors(train_real, preds, format='normal'):
         series_real = transform.inverse_transform(preds_transformed)
         return series_real
     elif format == 'log':
+        constante = 10
         series_before_norm = np.log(train_real)
-        
         _, mean, std = rolling_window_series(series_before_norm, 12)
         preds_transformed = znorm_reverse(preds, mean, std)
 
-        return np.exp(preds_transformed)
+        return np.exp(preds_transformed) - constante
     elif format == 'normal':
         _, mean, std = rolling_window_series(train_real, 12)
         preds_real = znorm_reverse(preds, mean, std)

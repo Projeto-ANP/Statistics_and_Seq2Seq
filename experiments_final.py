@@ -313,7 +313,7 @@ def arima_error_series(args):
                     results_arima = find_best_parameter(train_tf_val, test_val, train_val, transform)
                     # initial_order = (params['p'], params['d'], params['q'])
                     initial_order = (results_arima['best_params']['p'], results_arima['best_params']['d'], results_arima['best_params']['q'])
-                    _, preds_real, final_order = fit_arima_train(train_tf, train, initial_order, horizon, format=transform)
+                    _, preds_real, final_order = fit_arima_train(train_tf, train_stl, initial_order, horizon, format=transform)
                     
                     start_train = train.index.tolist()[0]
                     final_train = train.index.tolist()[-1]
