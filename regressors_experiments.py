@@ -57,29 +57,29 @@ horizon = 12
 window = 12
 transformacao = "normal"
 format_v = "sem"
-def objective_Xgboost(args_list):
+@scheduler.parallel(n_jobs=4)
+def objective_Xgboost(**args_list):
     global X_train_v, y_train_v, X_test_v 
     global train_original, test_val
     global regr, format_v
     results = []
-    for hyper_par in args_list:
         
-        if regr == 'xgb':
-            rg = xgboost.XGBRegressor(**hyper_par)
-        elif regr == 'rf':
-            rg = RandomForestRegressor(**hyper_par)
-        elif regr == 'knn':
-            rg = KNeighborsRegressor(**hyper_par)
-        else: 
-            raise ValueError(f'MODELO {regr} nao existe')
-        rg.fit(X_train_v, y_train_v)
+    if regr == 'xgb':
+        rg = xgboost.XGBRegressor(**args_list)
+    elif regr == 'rf':
+        rg = RandomForestRegressor(**args_list)
+    elif regr == 'knn':
+        rg = KNeighborsRegressor(**args_list)
+    else: 
+        raise ValueError(f'MODELO {regr} nao existe')
+    rg.fit(X_train_v, y_train_v)
 
-        predictions = recursive_multistep_forecasting(X_test_v, rg, horizon)
-        preds = pd.Series(predictions, index=test_val.index)
-        preds_real = reverse_regressors(train_original, preds, format=format_v)
-        
-        mape_result = mape(test_val, preds_real)
-        results.append(mape_result)
+    predictions = recursive_multistep_forecasting(X_test_v, rg, horizon)
+    preds = pd.Series(predictions, index=test_val.index)
+    preds_real = reverse_regressors(train_original, preds, format=format_v)
+    
+    mape_result = mape(test_val, preds_real)
+    results.append(mape_result)
         
     return results
 
@@ -118,7 +118,7 @@ def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
     train_original = train_v
     test_val = test_v
     format_v = format
-    tuner = Tuner(param_xgb, objective_Xgboost, conf_Dict)
+    tuner = Tuner(param_xgb, objective=objective_Xgboost, conf_dict=conf_Dict)
     results_arima = tuner.minimize()
 
     return results_arima
