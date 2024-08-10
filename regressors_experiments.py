@@ -226,9 +226,9 @@ def for_regressor(args):
 regr = 'SEM MODELO'
 def regressor_error_series(args):
     directory, file = args
-    chave = ''
     global regr 
-    regr = 'rf'
+    regr = 'xgb'
+    chave = '_noresid'
     model_file = f'{regr}{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
@@ -237,39 +237,39 @@ def regressor_error_series(args):
            'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
            ]
     if file.endswith('.csv'):
-        try:
-            uf = file.split("_")[1].upper()
-            derivado = file.split("_")[2].split(".")[0]
+        
+        uf = file.split("_")[1].upper()
+        derivado = file.split("_")[2].split(".")[0]
 
-            full_path = os.path.join(directory, file)
-            df = pd.read_csv(full_path, header=0, parse_dates=['timestamp'], sep=";", date_parser=custom_parser)
-            df['timestamp']=pd.to_datetime(df['timestamp'], infer_datetime_format=True)
-            df = df.set_index('timestamp',inplace=False)
-            df.index = df.index.to_period('M')
-            series = df['m3']
-            train_test_splits = []
-            min_train_size = 36
+        full_path = os.path.join(directory, file)
+        df = pd.read_csv(full_path, header=0, parse_dates=['timestamp'], sep=";", date_parser=custom_parser)
+        df['timestamp']=pd.to_datetime(df['timestamp'], infer_datetime_format=True)
+        df = df.set_index('timestamp',inplace=False)
+        df.index = df.index.to_period('M')
+        series = df['m3']
+        train_test_splits = []
+        min_train_size = 36
 
-            aux_series = series
-            while len(aux_series) > horizon + min_train_size:
-                train, test = aux_series[:-horizon], aux_series[-horizon:]
-                train_test_splits.append((train, test))
-                aux_series = train
-    
-            for (train, test) in train_test_splits:
-                train_stl = train
-                _, test_val = train_test_stats(train, horizon) #para pegar o test_val real
-                if 'noresid' in chave:
-                    print_log('----------- SEM RESIDUO NA SERIE ---------')
-                    transformer = STLTransformer(sp=12) 
-                    stl = transformer.fit(train)
-                    train_stl = stl.seasonal_ + stl.trend_
-                train_val, _ = train_test_stats(train_stl, horizon) # pra pegar um train_val (sem/com residual)
+        aux_series = series
+        while len(aux_series) > horizon + min_train_size:
+            train, test = aux_series[:-horizon], aux_series[-horizon:]
+            train_test_splits.append((train, test))
+            aux_series = train
 
-                for transform in transformations:
-                    train_tf = transform_regressors(train_stl, transform)
-                    train_tf_val = transform_train(train_val, format=transform)
+        for (train, test) in train_test_splits:
+            train_stl = train
+            _, test_val = train_test_stats(train, horizon) #para pegar o test_val real
+            if 'noresid' in chave:
+                print_log('----------- SEM RESIDUO NA SERIE ---------')
+                transformer = STLTransformer(sp=12) 
+                stl = transformer.fit(train)
+                train_stl = stl.seasonal_ + stl.trend_
+            train_val, _ = train_test_stats(train_stl, horizon) # pra pegar um train_val (sem/com residual)
 
+            for transform in transformations:
+                train_tf = transform_regressors(train_stl, transform)
+                train_tf_val = transform_train(train_val, format=transform)
+                try:
                     data = rolling_window(pd.concat([train_tf, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window)
                     data = data.dropna()
                     X_train, X_test, y_train, _ = train_test_split(data, horizon)
@@ -341,10 +341,10 @@ def regressor_error_series(args):
                                             'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
                                             }, index=[0])
                     df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
-                   
-        except Exception as e:
-            print_log(f"Exception: {derivado} em {uf}\n {e}")
-            traceback.print_exc()
+                
+                except Exception as e:
+                    print_log(f"Error: Not possible to train for {derivado}-{transform} in {uf}\n {e}")
+                    traceback.print_exc()
 
 
 
