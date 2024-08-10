@@ -228,7 +228,7 @@ def regressor_error_series(args):
     directory, file = args
     chave = ''
     global regr 
-    regr = 'xgb'
+    regr = 'rf'
     model_file = f'{regr}{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
@@ -314,13 +314,13 @@ def regressor_error_series(args):
                     pbe_result = pbe(test, preds_real)
                     mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
                     mase_result = mase(test, preds_real, y_baseline)
-                    print_log('[RESULTADO EM TRAIN]')
-                    print_log(f'PARAMS: {str(results_rg)}')
-                    print_log(f'MCPM: {mcpm_result}')
-                    print_log(f'RMSE: {rmse_result}')
-                    print_log(f'MAPE: {mape_result}')
-                    print_log(f'POCID: {pocid_result}')
-                    print_log(f'PBE: {pbe_result}')
+                    # print_log('[RESULTADO EM TRAIN]')
+                    # print_log(f'PARAMS: {str(results_rg)}')
+                    # print_log(f'MCPM: {mcpm_result}')
+                    # print_log(f'RMSE: {rmse_result}')
+                    # print_log(f'MAPE: {mape_result}')
+                    # print_log(f'POCID: {pocid_result}')
+                    # print_log(f'PBE: {pbe_result}')
                     adfuller_test = analyze_stationarity(train_tf[1:])
 
                     path_derivado = f'{results_file}/{derivado}/{transform}'
