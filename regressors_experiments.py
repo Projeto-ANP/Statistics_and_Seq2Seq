@@ -57,7 +57,7 @@ horizon = 12
 window = 12
 transformacao = "normal"
 format_v = "sem"
-@scheduler.parallel(n_jobs=4)
+@scheduler.parallel(n_jobs=1)
 def objective_Xgboost(**args_list):
     global X_train_v, y_train_v, X_test_v 
     global train_original, test_val
@@ -227,7 +227,7 @@ regr = 'SEM MODELO'
 def regressor_error_series(args):
     directory, file = args
     global regr 
-    regr = 'xgb'
+    regr = 'rf'
     chave = '_noresid'
     model_file = f'{regr}{chave}'
     results_file = f'./results_hybrid/{model_file}'
