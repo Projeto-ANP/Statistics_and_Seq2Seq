@@ -13,6 +13,7 @@ from mango import scheduler, Tuner
 import multiprocessing
 import traceback
 import xgboost
+from catboost import CatBoostRegressor
 
 def checkFolder(pasta, arquivo, tipo):
     if os.path.exists(pasta):
@@ -63,13 +64,15 @@ def objective_Xgboost(**args_list):
     global train_original, test_val
     global regr, format_v
     results = []
-        
+    
     if regr == 'xgb':
         rg = xgboost.XGBRegressor(**args_list)
     elif regr == 'rf':
         rg = RandomForestRegressor(**args_list)
     elif regr == 'knn':
         rg = KNeighborsRegressor(**args_list)
+    elif regr == "catboost":
+        rg = CatBoostRegressor(**args_list)
     else: 
         raise ValueError(f'MODELO {regr} nao existe')
     rg.fit(X_train_v, y_train_v)
@@ -106,6 +109,18 @@ def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
     elif regr == 'rf':
          param_xgb = {
             'n_estimators': [50, 100, 150, 200] #rf/xgb
+        }
+    elif regr == 'catboost':
+        param_xgb = {
+            'iterations': range(500, 2000),  
+            'subsample': (0.5, 1.0),         
+            'learning_rate': (0.01, 0.3),    
+            'depth': range(4, 10),           
+            'colsample_bylevel': (0.5, 1.0), 
+            'min_data_in_leaf': range(1, 20),
+            'task_type': ["GPU"],
+            'loss_function': ['MAPE'],
+            'verbose': [False]
         }
     else:
         raise ValueError(f'MODELO {regr} nao existe')
@@ -287,6 +302,8 @@ def regressor_error_series(args):
                         rg = RandomForestRegressor(**results_rg)
                     elif regr == 'knn':
                         rg = KNeighborsRegressor(**results_rg)
+                    elif regr == "catboost":
+                        rg = CatBoostRegressor(**results_rg)
                     else:
                         raise ValueError('nao existe esse regressor')
                     rg.fit(X_train, y_train)
