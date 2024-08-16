@@ -10,6 +10,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from sklearn.linear_model import LinearRegression
 from mango import scheduler, Tuner
+from sklearn.svm import SVR
 import multiprocessing
 import traceback
 import xgboost
@@ -58,32 +59,64 @@ horizon = 12
 window = 12
 transformacao = "normal"
 format_v = "sem"
-@scheduler.parallel(n_jobs=1)
+# @scheduler.parallel(n_jobs=1)
 def objective_Xgboost(**args_list):
     global X_train_v, y_train_v, X_test_v 
     global train_original, test_val
     global regr, format_v
     results = []
-    
-    if regr == 'xgb':
-        rg = xgboost.XGBRegressor(**args_list)
-    elif regr == 'rf':
-        rg = RandomForestRegressor(**args_list)
-    elif regr == 'knn':
-        rg = KNeighborsRegressor(**args_list)
-    elif regr == "catboost":
-        rg = CatBoostRegressor(**args_list)
-    else: 
-        raise ValueError(f'MODELO {regr} nao existe')
-    rg.fit(X_train_v, y_train_v)
+    try:
+        if regr == 'xgb':
+            rg = xgboost.XGBRegressor(**args_list)
+        elif regr == 'rf':
+            rg = RandomForestRegressor(**args_list)
+        elif regr == 'knn':
+            rg = KNeighborsRegressor(**args_list)
+        elif regr == "catboost":
+            rg = CatBoostRegressor(**args_list)
+        else: 
+            raise ValueError(f'MODELO {regr} nao existe')
+        rg.fit(X_train_v, y_train_v, verbose=False)
 
-    predictions = recursive_multistep_forecasting(X_test_v, rg, horizon)
-    preds = pd.Series(predictions, index=test_val.index)
-    preds_real = reverse_regressors(train_original, preds, format=format_v)
-    
-    mape_result = mape(test_val, preds_real)
-    results.append(mape_result)
+        predictions = recursive_multistep_forecasting(X_test_v, rg, horizon)
+        preds = pd.Series(predictions, index=test_val.index)
+        preds_real = reverse_regressors(train_original, preds, format=format_v)
         
+        mape_result = mape(test_val, preds_real)
+        results.append(mape_result)
+    except:
+        pass
+    return results
+
+def simple_objective(args_list):
+    global X_train_v, y_train_v, X_test_v 
+    global train_original, test_val
+    global regr, format_v
+    results = []
+    for hyper_par in args_list:
+        try:    
+            if regr == 'xgb':
+                rg = xgboost.XGBRegressor(**hyper_par)
+            elif regr == 'rf':
+                rg = RandomForestRegressor(**hyper_par)
+            elif regr == 'knn':
+                rg = KNeighborsRegressor(**hyper_par)
+            elif regr == "svr":
+                rg = SVR(**hyper_par)
+            elif regr == "catboost":
+                rg = CatBoostRegressor(**hyper_par)
+            else: 
+                raise ValueError(f'MODELO {regr} nao existe')
+            rg.fit(X_train_v, y_train_v, verbose=False)
+
+            predictions = recursive_multistep_forecasting(X_test_v, rg, horizon)
+            preds = pd.Series(predictions, index=test_val.index)
+            preds_real = reverse_regressors(train_original, preds, format=format_v)
+            
+            mape_result = mape(test_val, preds_real)
+            results.append(mape_result)
+        except:
+            continue    
     return results
 
 def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
@@ -112,15 +145,14 @@ def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
         }
     elif regr == 'catboost':
         param_xgb = {
-            'iterations': range(500, 2000),  
-            'subsample': (0.5, 1.0),         
+            'iterations': [100, 200],  
+            # 'subsample': (0.5, 1.0),         
             'learning_rate': (0.01, 0.3),    
             'depth': range(4, 10),           
-            'colsample_bylevel': (0.5, 1.0), 
-            'min_data_in_leaf': range(1, 20),
+            # 'colsample_bylevel': (0.5, 1.0), 
+            # 'min_data_in_leaf': range(1, 20),
             'task_type': ["GPU"],
-            'loss_function': ['MAPE'],
-            'verbose': [False]
+            'loss_function': ['MAPE']
         }
     else:
         raise ValueError(f'MODELO {regr} nao existe')
@@ -133,7 +165,7 @@ def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
     train_original = train_v
     test_val = test_v
     format_v = format
-    tuner = Tuner(param_xgb, objective=objective_Xgboost, conf_dict=conf_Dict)
+    tuner = Tuner(param_xgb, objective=simple_objective, conf_dict=conf_Dict)
     results_arima = tuner.minimize()
 
     return results_arima
@@ -242,8 +274,8 @@ regr = 'SEM MODELO'
 def regressor_error_series(args):
     directory, file = args
     global regr 
-    regr = 'rf'
-    chave = '_noresid'
+    regr = 'catboost'
+    chave = ''
     model_file = f'{regr}{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
@@ -306,7 +338,7 @@ def regressor_error_series(args):
                         rg = CatBoostRegressor(**results_rg)
                     else:
                         raise ValueError('nao existe esse regressor')
-                    rg.fit(X_train, y_train)
+                    rg.fit(X_train, y_train, verbose=False)
 
                     predictions = recursive_multistep_forecasting(X_test, rg, horizon)
                     preds = pd.Series(predictions, index=test.index)
@@ -368,7 +400,7 @@ def regressor_error_series(args):
 if __name__ == '__main__':
 #   for directory in dirs:
 #     regressors_preds(directory)
-    with multiprocessing.Pool() as pool:
+    with multiprocessing.Pool(processes=1) as pool:
             tasks = [
                 (directory, file) 
                 for directory in dirs 
