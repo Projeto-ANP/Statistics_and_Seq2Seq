@@ -143,6 +143,13 @@ def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
          param_xgb = {
             'n_estimators': [50, 100, 150, 200] #rf/xgb
         }
+    elif regr == "svr":
+        param_xgb = {
+            'kernel': ['rbf'], 
+            'C': [0.1, 1, 10, 100, 1000],
+            'gamma': [0.0001, 0.001, 0.005, 0.1, 1, 3, 5],
+            'epsilon':[0.1,0.2,0.5,0.3]
+        }
     elif regr == 'catboost':
         param_xgb = {
             'iterations': [100, 200],  
@@ -151,8 +158,8 @@ def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
             'depth': range(4, 10),           
             # 'colsample_bylevel': (0.5, 1.0), 
             # 'min_data_in_leaf': range(1, 20),
-            'task_type': ["GPU"],
-            'loss_function': ['MAPE']
+            # 'task_type': ["GPU"],
+            'loss_function': ['RMSE']
         }
     else:
         raise ValueError(f'MODELO {regr} nao existe')
@@ -275,7 +282,7 @@ def regressor_error_series(args):
     directory, file = args
     global regr 
     regr = 'catboost'
-    chave = ''
+    chave = '_noresid'
     model_file = f'{regr}{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
@@ -400,7 +407,7 @@ def regressor_error_series(args):
 if __name__ == '__main__':
 #   for directory in dirs:
 #     regressors_preds(directory)
-    with multiprocessing.Pool(processes=1) as pool:
+    with multiprocessing.Pool() as pool:
             tasks = [
                 (directory, file) 
                 for directory in dirs 
