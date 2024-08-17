@@ -276,6 +276,49 @@ def transform_train(series_transform, format="deseasonal", horizon=12):
     series_transform_norm, _, _ = rolling_window_series(series_transform, horizon)
     return series_transform_norm
 
+
+def transform_deep_train(series_transform, format="deseasonal", horizon=12):
+    if format == "deseasonal":
+        transform = ConditionalDeseasonalizer(sp=12)
+        transform.fit(series_transform)
+        series_ts = transform.transform(series_transform)
+        series_ts_norm, mean, std= rolling_window_series(series_ts, horizon)
+        return series_ts_norm, mean, std
+    elif format == "diff":
+        series_diff = series_transform.diff()
+        series_diff_norm, mean, std = rolling_window_series(series_diff, horizon)
+        return series_diff_norm, mean, std
+    elif format == "log":
+        constante = 10
+        series_ts = np.log(series_transform + constante)
+        series_ts_norm, mean, std = rolling_window_series(series_ts, horizon)
+        return series_ts_norm, mean, std
+    elif format == "log-diff":
+        constante = 10
+        series_log = np.log(series_transform + constante)
+        series_ts = series_log.diff()
+        series_ts_norm, mean, std= rolling_window_series(series_ts, horizon)
+        return series_ts_norm, mean, std
+    elif format == "deseasonal-diff":
+        transform = ConditionalDeseasonalizer(sp=12)
+        transform.fit(series_transform)
+        series_ds = transform.transform(series_transform)
+        series_ts = series_ds.diff()
+
+        series_ts_norm, mean, std= rolling_window_series(series_ts, horizon)
+        return series_ts_norm, mean, std
+    elif format == "deseasonal-log":
+        transform = ConditionalDeseasonalizer(sp=12)
+        transform.fit(series_transform)
+        series_ds = transform.transform(series_transform)
+        constante = 10
+        series_ts = np.log(series_ds + constante)
+        series_ts_norm, mean, std = rolling_window_series(series_ts, horizon)
+        return series_ts_norm, mean, std
+    #normal
+    series_transform_norm, mean, std = rolling_window_series(series_transform, horizon)
+    return series_transform_norm, mean, std
+
 def transform_reverse_preds(series_preds, train_norm, format="deseasonal"):
     if format == "deseasonal":
         transform = ConditionalDeseasonalizer(sp=12)
