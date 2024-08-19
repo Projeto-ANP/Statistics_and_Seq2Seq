@@ -1,16 +1,25 @@
 from all_functions import *
 import pandas as pd
-import matplotlib.pyplot as plt
 import os
 import csv
+import torch
 from gluonts.dataset.pandas import PandasDataset
 from gluonts.dataset.split import split
 from gluonts.torch import DeepAREstimator
 from gluonts.evaluation.backtest import make_evaluation_predictions
 from mango import scheduler, Tuner
 import multiprocessing
+from pytorch_lightning.callbacks import EarlyStopping
 from sklearn.metrics import mean_absolute_percentage_error as mape
 import traceback
+import optuna
+from optuna.samplers import TPESampler
+from optuna.pruners import MedianPruner
+
+BATCH_SIZE = 32
+MAX_EPOCHS = 15
+NUM_BATCHES_PER_EPOCH = 20
+
 def objective(args_list):
     global train_v_data, train_v_real, test_v_data, test_v_real
     results = []
@@ -22,18 +31,25 @@ def objective(args_list):
                 context_length = int(params['context_length']),
                 num_layers=params["num_layers"],
                 # hidden_size=params["hidden_size"],
-                batch_size= int(params['mini_batch_size']),
-                dropout_rate = params['dropout_rate'],
+                batch_size= int(params['batch_size']),
+                # dropout_rate = params['dropout_rate'],
                 # num_cells = int(params['num_cells']),
                 # num_layers = int(params['num_layers']),
+                num_batches_per_epoch = params['num_batches_per_epoch'],
                 # embedding_dimension = int(params['embedding_dimension']),
                 trainer_kwargs={
                     # "learning_rate": params['learning_rate'],
-                    "accelerator": "gpu",
+                    "accelerator": params["accelerator"],
+                    # "devices": params['devices'],  # Usa duas GPUs
+                    "devices": [0],
+                    # "precision": "medium",
                     "enable_progress_bar": False,
                     "enable_model_summary": False,
-                    "max_epochs": params['max_epochs']
-                    # "mini_batch_size": int(params['mini_batch_size']),
+                    # "enable_checkpointing":False,
+                    "max_epochs": params['max_epochs'],
+                    # "strategy": params["strategy"],
+                    "limit_test_batches": 0.25
+                    # "batch_size": int(params['batch_size']),
                     }
             ).train(train_v_data)
             
@@ -55,17 +71,20 @@ def objective(args_list):
 
 def find_best_parameter(train_norm, test_norm, train_real, test_real):
     global train_v_data, train_v_real, test_v_data, test_v_real
-
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=10, verbose=False, mode="min")
+    
     params_space = {
-        'context_length': range(1,200),
-        "max_epochs": [50],
-        # 'learning_rate': np.logspace(-5, -1, 10),
-        'mini_batch_size': range(32, 1029, 32),
-        # 'num_cells': range(30, 201, 10),
-        'num_layers': range(1, 9),
-        'dropout_rate': np.linspace(0.0, 0.2, 5),
-        # 'embedding_dimension': range(1, 51)
+        'context_length': [12, 24],  
+        'accelerator': ["gpu"],                
+        # 'devices': [2],                       
+        "max_epochs": [10],               
+        'batch_size': [32], 
+        'num_layers': range(2, 5),           
+        # 'dropout_rate': np.linspace(0.1, 0.2, 3), 
+        'num_batches_per_epoch': [10],
+        # "strategy": ["ddp"]
     }
+    
     conf_Dict = dict()
     conf_Dict['num_iteration'] = 15
     train_v_data = train_norm
@@ -78,6 +97,77 @@ def find_best_parameter(train_norm, test_norm, train_real, test_real):
 
     return results_arima
 
+def objective_optuna(trial):
+    global train_v_data, train_v_real, test_v_data, test_v_real, format
+
+    # Sugere valores para os hiperparâmetros
+    context_length = trial.suggest_categorical('context_length', [12, 24, 36])
+    num_layers = trial.suggest_int('num_layers', 2, 4)
+    # hidden_size = trial.suggest_categorical("hidden_size", [40, 50])
+    # learning_rate = trial.suggest_loguniform('lr', 1e-4, 1e-1)
+    # batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
+    batch_size = BATCH_SIZE
+    # max_epochs = trial.suggest_int('max_epochs', 10, 50)
+    max_epochs = MAX_EPOCHS
+    # num_batches_per_epoch = trial.suggest_int('num_batches_per_epoch', 10, 50)
+    num_batches_per_epoch = NUM_BATCHES_PER_EPOCH
+    
+    try:
+        # Configura o DeepAREstimator com os parâmetros sugeridos
+        predictor = DeepAREstimator(
+                prediction_length=12, freq="M", 
+                context_length=context_length,
+                num_layers=num_layers,
+                batch_size=batch_size,
+                num_batches_per_epoch=num_batches_per_epoch,
+                # hidden_size=hidden_size,
+                # lr=learning_rate,
+                trainer_kwargs={
+                    "accelerator": "gpu",
+                    "devices": [0],
+                    "max_epochs": max_epochs,
+                    "enable_progress_bar": False,
+                    "enable_model_summary": False,
+                    "limit_test_batches": 0.25
+                    }
+            ).train(train_v_data)
+            
+        
+        forecast_it = list(predictor.predict(test_v_data.input, num_samples=100))
+
+        all_forecasts = []
+        for forecast in forecast_it:
+            all_forecasts.append(forecast.mean)
+
+        # _, mean, std = rolling_window_series(train_v_real, 12)
+        # preds_real = znorm_reverse(all_forecasts[0], mean, std)
+        preds = pd.Series(all_forecasts[0], index=test_v_real.index)
+        preds_real = reverse_regressors(train_v_real, preds, format=format)
+
+        mape_result = mape(test_v_real, preds_real)
+        return mape_result
+    except Exception as e:
+        print(f"Error: {e}")
+        return float('inf')  # Retorna um valor alto para indicar falha
+
+
+def find_best_parameter_optuna(train_norm, test_norm, train_real, test_real, transform):
+    global train_v_data, train_v_real, test_v_data, test_v_real, format
+
+    train_v_data = train_norm
+    train_v_real = train_real
+    test_v_data = test_norm
+    test_v_real = test_real
+    format = transform
+
+    study = optuna.create_study(
+        direction="minimize",
+        sampler=TPESampler(),
+        pruner=MedianPruner()
+    )
+    study.optimize(objective_optuna, n_trials=35)
+    
+    return study.best_params, study.best_value
 def get_train_test_deepar(train_norm, test_norm):
     concat_norm = pd.concat([train_norm, test_norm])
     dataset_norm = PandasDataset(concat_norm, target="value")
@@ -86,9 +176,21 @@ def get_train_test_deepar(train_norm, test_norm):
     test_data = test_gen.generate_instances(prediction_length=12, windows=1)
     return training_data, test_data
 
+def transform_test_deepar(train_ref, test, format):
+    if format == "log":
+        constante = 10
+        series_ts = np.log(test + constante)
+        return series_ts
+    elif format == "deseasonal":
+        transform = ConditionalDeseasonalizer(sp=12)
+        transform.fit(train_ref)
+        series_ts = transform.transform(test)
+        return series_ts
+    
+    return test
 
-def deepar_train(args):
-    directory, file = args
+def deepar_train(directory, file):
+    # directory, file = args
     chave = ''
     model_file = f'deepar{chave}'
     results_file = f'./results_hybrid/{model_file}'
@@ -121,7 +223,8 @@ def deepar_train(args):
                 train_test_splits.append((train, test))
                 aux_series = train
 
-            for i, (train, test) in enumerate(train_test_splits):
+            # for i, (train, test) in enumerate(train_test_splits):
+            for (train, test) in train_test_splits:               
                 train_stl = train
                 _, test_val = train_test_stats(train, horizon) #para pegar o test_val real
                 if 'noresid' in chave:
@@ -136,30 +239,49 @@ def deepar_train(args):
                     train_tf_val, mean_val, std_val = transform_deep_train(train_val, format=transform)
 
                     #treino
-                    test_tf = znorm_mean_std(test, mean, std)
-                    train_data, test_data = get_train_test_deepar(train_tf, test_tf)
+                    test_tf = transform_test_deepar(train_stl, test, format=transform)
+                    test_tf_norm = znorm_mean_std(test_tf, mean, std)
+                    train_data, test_data = get_train_test_deepar(train_tf, test_tf_norm)
 
-                    if i == 0: #se é o primeiro pedaço (ultima parte da serie) encontra parametros para repassar para outras partes
-                      #validacao                    
-                      test_val_tf = znorm_mean_std(test_val, mean_val, std_val)
-                      train_data_val, test_data_val = get_train_test_deepar(train_tf_val, test_val_tf)
+                    # if i == 0: #se é o primeiro pedaço (ultima parte da serie) encontra parametros para repassar para outras partes
+                    #   #validacao                    
+                    #   test_tf_val = transform_test_deepar(train_val, test_val, format=transform)
+                    #   test_tf_val_norm = znorm_mean_std(test_tf_val, mean_val, std_val)
+                    #   train_data_val, test_data_val = get_train_test_deepar(train_tf_val, test_tf_val_norm)
+                    #   print_log(f"------------ FINDING PARAMETERS FOR {derivado} in {uf}")
+                    #   saved_params, _ = find_best_parameter_optuna(train_data_val, test_data_val, train_val, test_val)
+                    #   print_log(f"\n ------------ FOUND BEST PARAMETERS FOR {derivado} in {uf} ---------------")
+                    #   print_log(saved_params)
 
-                      saved_params = find_best_parameter(train_data_val, test_data_val, train_val, test_val)['best_params']
-
+                    #validacao                    
+                    test_tf_val = transform_test_deepar(train_val, test_val, format=transform)
+                    test_tf_val_norm = znorm_mean_std(test_tf_val, mean_val, std_val)
+                    train_data_val, test_data_val = get_train_test_deepar(train_tf_val, test_tf_val_norm)
+                    print_log(f"------------ FINDING PARAMETERS FOR {derivado} in {uf}")
+                    saved_params, _ = find_best_parameter_optuna(train_data_val, test_data_val, train_val, test_val, transform)
+                    
+                    saved_params['batch_size'] = BATCH_SIZE
+                    # saved_params['max_epochs'] = MAX_EPOCHS
+                    saved_params['max_epochs'] = 30
+                    saved_params['num_batches_per_epoch'] = NUM_BATCHES_PER_EPOCH
                     predictor = DeepAREstimator(
                             prediction_length=12,
                             context_length = int(saved_params['context_length']),
-                            num_cells = int(saved_params['num_cells']),
                             num_layers = int(saved_params['num_layers']),
-                            embedding_dimension = int(saved_params['embedding_dimension']),
-
-                            prediction_length=12, freq="M", 
+                            num_batches_per_epoch=saved_params['num_batches_per_epoch'],
+                            batch_size= int(saved_params['batch_size']),
+                            # hidden_size=saved_params['hidden_size'],
+                            # lr=saved_params['lr'],
+                            # dropout_rate = saved_params['dropout_rate'],
+                            freq="M", 
                             trainer_kwargs={
-                                "learning_rate": saved_params['learning_rate'],
+                                # "learning_rate":
                                 "max_epochs": saved_params['max_epochs'],
-                                "batch_size": int(saved_params['mini_batch_size']),
-                                "num_batches_per_epoch": saved_params['num_batches_per_epoch'],
-                                "dropout_rate": saved_params['dropout_rate']
+                                # "strategy": saved_params["strategy"],
+                                "devices": [1],
+                                "enable_progress_bar": False,
+                                "enable_model_summary": False,
+                                "accelerator": "gpu"
                                 }
                         ).train(train_data)
                     
@@ -169,8 +291,9 @@ def deepar_train(args):
                     all_forecasts = []
                     for forecast in forecasts_it:
                         all_forecasts.append(forecast.mean)
-
-                    preds_real = znorm_reverse(all_forecasts[0], mean, std)
+                    preds = pd.Series(all_forecasts[0], index=test.index)
+                    preds_real = reverse_regressors(train, preds, format=transform)
+                    # preds_real = znorm_reverse(all_forecasts[0], mean, std)
 
                     start_train = train.index.tolist()[0]
                     final_train = train.index.tolist()[-1]
@@ -226,21 +349,26 @@ dirs = [
     '../datasets/venda/mensal/uf/gasolinac/',
     '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    # '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    # '../datasets/venda/mensal/uf/oleodiesel/',
-    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 
 if __name__ == "__main__":
-    with multiprocessing.Pool(processes=8) as pool:
-        tasks = [
-            (directory, file) 
-            for directory in dirs 
-            for file in os.listdir(directory) 
-            if file.endswith('.csv')
-        ]
+    torch.set_float32_matmul_precision('medium')
+    # with multiprocessing.Pool(processes=1) as pool:
+    #     tasks = [
+    #         (directory, file) 
+    #         for directory in dirs 
+    #         for file in os.listdir(directory) 
+    #         if file.endswith('.csv')
+    #     ]
 
-        pool.map(deepar_train, tasks)
+    #     pool.map(deepar_train, tasks)
+    
+    for directory in dirs:
+        for file in os.listdir(directory):
+            deepar_train(directory, file)
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
