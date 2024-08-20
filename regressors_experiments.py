@@ -282,7 +282,7 @@ def regressor_error_series(args):
     directory, file = args
     global regr 
     regr = 'catboost'
-    chave = '_noresid'
+    chave = ''
     model_file = f'{regr}{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
