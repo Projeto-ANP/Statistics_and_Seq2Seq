@@ -258,7 +258,7 @@ def process_file(args):
 
 def arima_error_series(args):
     directory, file = args
-    chave = ''
+    chave = '_noresid'
     model_file = f'arima{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
