@@ -35,7 +35,9 @@ def objective_optuna(trial):
     max_epochs = MAX_EPOCHS
     # num_batches_per_epoch = trial.suggest_int('num_batches_per_epoch', 10, 50)
     num_batches_per_epoch = NUM_BATCHES_PER_EPOCH
-    
+    from pytorch_lightning.callbacks import ModelCheckpoint
+
+    # Define a ModelCheckpoint callback but configure it to save only the latest checkpoint
     try:
         # Configura o DeepAREstimator com os parâmetros sugeridos
         predictor = DeepAREstimator(
@@ -52,7 +54,8 @@ def objective_optuna(trial):
                     "max_epochs": max_epochs,
                     "enable_progress_bar": False,
                     "enable_model_summary": False,
-                    "limit_test_batches": 0.25
+                    "limit_test_batches": 0.25,
+                    "callbacks": []
                     }
             ).train(train_v_data)
             
@@ -217,7 +220,8 @@ def deepar_train(args):
                                     "devices": [1],
                                     "enable_progress_bar": False,
                                     "enable_model_summary": False,
-                                    "accelerator": "gpu"
+                                    "accelerator": "gpu",
+                                     "callbacks": []
                                     }
                             ).train(train_data)
                         
@@ -234,52 +238,55 @@ def deepar_train(args):
                         # preds_real = znorm_reverse(preds_norm, mean, std)
                         error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
                         y_baseline = series[-horizon*2:-horizon].values
-                        rmse_result = rmse(test, preds_real)
-                        mape_result = mape(test, preds_real)
-                        pocid_result = pocid(test, preds_real)
-                        pbe_result = pbe(test, preds_real)
-                        mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
-                        mase_result = mase(test, preds_real, y_baseline)
-                        print_log('[RESULTADO EM TRAIN]')
-                        print_log(f'PARAMS: {saved_params}')
-                        print_log(f'MCPM: {mcpm_result}')
-                        print_log(f'RMSE: {rmse_result}')
-                        print_log(f'MAPE: {mape_result}')
-                        print_log(f'POCID: {pocid_result}')
-                        print_log(f'PBE: {pbe_result}')
-                        adfuller_test = analyze_stationarity(train_tf[1:])
+                        try:
+                            rmse_result = rmse(test, preds_real)
+                            mape_result = mape(test, preds_real)
+                            pocid_result = pocid(test, preds_real)
+                            pbe_result = pbe(test, preds_real)
+                            mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
+                            mase_result = mase(test, preds_real, y_baseline)
+                            print_log('[RESULTADO EM TRAIN]')
+                            print_log(f'PARAMS: {saved_params}')
+                            print_log(f'MCPM: {mcpm_result}')
+                            print_log(f'RMSE: {rmse_result}')
+                            print_log(f'MAPE: {mape_result}')
+                            print_log(f'POCID: {pocid_result}')
+                            print_log(f'PBE: {pbe_result}')
+                            adfuller_test = analyze_stationarity(train_tf[1:])
 
-                        # path_derivado = f'{results_file}/{derivado}/{transform}'
-                        os.makedirs(path_derivado, exist_ok=True)
-                        csv_path = f'{path_derivado}/transform_{uf}.csv'
+                            # path_derivado = f'{results_file}/{derivado}/{transform}'
+                            os.makedirs(path_derivado, exist_ok=True)
+                            csv_path = f'{path_derivado}/transform_{uf}.csv'
 
-                        if not os.path.exists(csv_path):
-                            pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
+                            if not os.path.exists(csv_path):
+                                pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
 
-                        df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'DeepAR', 'PARAMS': str(saved_params), 'WINDOW': window, 'HORIZON': horizon,  
-                                                'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
-                                                'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
-                                                'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
-                                                'P11': preds_real[10], 'P12': preds_real[11], 
-                                                'error_series': [error_series],
-                                                'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
-                                                'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
-                                                'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
-                                                }, index=[0])
-                        df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
-
+                            df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'DeepAR', 'PARAMS': str(saved_params), 'WINDOW': window, 'HORIZON': horizon,  
+                                                    'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
+                                                    'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
+                                                    'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
+                                                    'P11': preds_real[10], 'P12': preds_real[11], 
+                                                    'error_series': [error_series],
+                                                    'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
+                                                    'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
+                                                    'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
+                                                    }, index=[0])
+                            df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
+                        except Exception as e:
+                            print_log(f"Error: {train_range} {derivado} {transform} in {uf}: \n ... {e}")
+                            print_log(preds_real)
         except Exception as e:
             print_log(f"Exception: {derivado} em {uf}\n {e}")
             traceback.print_exc()
 
 dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
+    # '../datasets/venda/mensal/uf/gasolinac/',
+    # '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    '../datasets/venda/mensal/uf/glp/',
+    # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    '../datasets/venda/mensal/uf/oleodiesel/',
-    '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    # '../datasets/venda/mensal/uf/oleodiesel/',
+    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 
