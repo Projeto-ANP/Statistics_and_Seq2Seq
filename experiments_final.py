@@ -124,21 +124,33 @@ def find_best_parameter(train, test, train_val_real, format):
     return results_arima
 
 def checkFolder(pasta, arquivo, tipo):
-    if os.path.exists(pasta):
-        caminho_arquivo = os.path.join(pasta, arquivo)
-        if os.path.exists(caminho_arquivo):
-            df = pd.read_csv(caminho_arquivo, sep=';')
-            if 'DATA' in df.columns:
-                if not tipo in df['DATA'].values:
-                    print_log(f'Continuando... {tipo} em ${pasta}/{arquivo}".')
-                    return True
+    if not os.path.exists(pasta):
+        return True
+    
+    caminho_arquivo = os.path.join(pasta, arquivo)
+    try:
+        if not os.path.exists(caminho_arquivo):
+            return True
+        
+        df = pd.read_csv(caminho_arquivo, sep=';')
+        
+        if 'test_range' not in df.columns:
+            return True
+        
+        if tipo not in df['test_range'].values:
+            print_log(f'Continuando... {tipo} em "{pasta}/{arquivo}".')
+            return True
+    except Exception as e:
+        print_log(f"Erro em: {caminho_arquivo} | {e}")
     return False
+
+
 
 dirs = [
     '../datasets/venda/mensal/uf/gasolinac/',
     '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    '../datasets/venda/mensal/uf/glp/',
+    # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
     # '../datasets/venda/mensal/uf/oleodiesel/',
     # '../datasets/venda/mensal/uf/querosenedeaviacao/',
@@ -294,7 +306,6 @@ def arima_error_series(args):
                 train, test = aux_series[:-horizon], aux_series[-horizon:]
                 train_test_splits.append((train, test))
                 aux_series = train
-    
             for (train, test) in train_test_splits:
                 train_stl = train
                 _, test_val = train_test_stats(train, horizon) #para pegar o test_val real
@@ -304,62 +315,61 @@ def arima_error_series(args):
                     stl = transformer.fit(train)
                     train_stl = stl.seasonal_ + stl.trend_
                 train_val, _ = train_test_stats(train_stl, horizon) # pra pegar um train_val (sem/com residual)
+                start_train = train.index.tolist()[0]
+                final_train = train.index.tolist()[-1]
 
+                start_test = test.index.tolist()[0]
+                final_test = test.index.tolist()[-1]
+
+                train_range = f"{start_train}_{final_train}"
+                test_range = f"{start_test}_{final_test}"
                 for transform in transformations:
-                    train_tf = transform_train(train_stl, format=transform)
-                    train_tf_val = transform_train(train_val, format=transform)
-                  
-                    # params = get_params_model(f'./results/{model_file}/{derivado}/transform_{uf}.csv', transform)
-                    results_arima = find_best_parameter(train_tf_val, test_val, train_val, transform)
-                    # initial_order = (params['p'], params['d'], params['q'])
-                    initial_order = (results_arima['best_params']['p'], results_arima['best_params']['d'], results_arima['best_params']['q'])
-                    _, preds_real, final_order = fit_arima_train(train_tf, train_stl, initial_order, horizon, format=transform)
-                    
-                    start_train = train.index.tolist()[0]
-                    final_train = train.index.tolist()[-1]
-
-                    start_test = test.index.tolist()[0]
-                    final_test = test.index.tolist()[-1]
-
-                    train_range = f"{start_train}_{final_train}"
-                    test_range = f"{start_test}_{final_test}"
-                    
-                    # preds_real = znorm_reverse(preds_norm, mean, std)
-                    error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
-                    y_baseline = series[-horizon*2:-horizon].values
-                    rmse_result = rmse(test, preds_real)
-                    mape_result = mape(test, preds_real)
-                    pocid_result = pocid(test, preds_real)
-                    pbe_result = pbe(test, preds_real)
-                    mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
-                    mase_result = mase(test, preds_real, y_baseline)
-                    print_log('[RESULTADO EM TRAIN]')
-                    print_log(f'PARAMS: {final_order}')
-                    print_log(f'MCPM: {mcpm_result}')
-                    print_log(f'RMSE: {rmse_result}')
-                    print_log(f'MAPE: {mape_result}')
-                    print_log(f'POCID: {pocid_result}')
-                    print_log(f'PBE: {pbe_result}')
-                    adfuller_test = analyze_stationarity(train_tf[1:])
-
                     path_derivado = f'{results_file}/{derivado}/{transform}'
-                    os.makedirs(path_derivado, exist_ok=True)
-                    csv_path = f'{path_derivado}/transform_{uf}.csv'
+                    flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
+                    if flag:
+                        train_tf = transform_train(train_stl, format=transform)
+                        train_tf_val = transform_train(train_val, format=transform)
+                    
+                        # params = get_params_model(f'./results/{model_file}/{derivado}/transform_{uf}.csv', transform)
+                        results_arima = find_best_parameter(train_tf_val, test_val, train_val, transform)
+                        # initial_order = (params['p'], params['d'], params['q'])
+                        initial_order = (results_arima['best_params']['p'], results_arima['best_params']['d'], results_arima['best_params']['q'])
+                        _, preds_real, final_order = fit_arima_train(train_tf, train_stl, initial_order, horizon, format=transform)
+                                         
+                        # preds_real = znorm_reverse(preds_norm, mean, std)
+                        error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
+                        y_baseline = series[-horizon*2:-horizon].values
+                        rmse_result = rmse(test, preds_real)
+                        mape_result = mape(test, preds_real)
+                        pocid_result = pocid(test, preds_real)
+                        pbe_result = pbe(test, preds_real)
+                        mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
+                        mase_result = mase(test, preds_real, y_baseline)
+                        print_log('[RESULTADO EM TRAIN]')
+                        print_log(f'PARAMS: {final_order}')
+                        print_log(f'MCPM: {mcpm_result}')
+                        print_log(f'RMSE: {rmse_result}')
+                        print_log(f'MAPE: {mape_result}')
+                        print_log(f'POCID: {pocid_result}')
+                        print_log(f'PBE: {pbe_result}')
+                        adfuller_test = analyze_stationarity(train_tf[1:])
+                        os.makedirs(path_derivado, exist_ok=True)
+                        csv_path = f'{path_derivado}/transform_{uf}.csv'
 
-                    if not os.path.exists(csv_path):
-                        pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
+                        if not os.path.exists(csv_path):
+                            pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
 
-                    df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
-                                            'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
-                                            'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
-                                            'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
-                                            'P11': preds_real[10], 'P12': preds_real[11], 
-                                            'error_series': [error_series],
-                                            'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
-                                            'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
-                                            'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
-                                            }, index=[0])
-                    df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
+                        df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'PARAMS': str(final_order), 'WINDOW': window, 'HORIZON': horizon,  
+                                                'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
+                                                'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
+                                                'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
+                                                'P11': preds_real[10], 'P12': preds_real[11], 
+                                                'error_series': [error_series],
+                                                'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
+                                                'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
+                                                'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
+                                                }, index=[0])
+                        df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
                    
         except Exception as e:
             print_log(f"Exception: {derivado} em {uf}\n {e}")
@@ -368,7 +378,7 @@ def arima_error_series(args):
 
 
 if __name__ == "__main__":
-    with multiprocessing.Pool(processes=16) as pool:
+    with multiprocessing.Pool() as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
