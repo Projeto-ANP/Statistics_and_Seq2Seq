@@ -118,7 +118,7 @@ def transform_test_deepar(train_ref, test, format):
 
 def deepar_train(args):
     directory, file = args
-    chave = ''
+    chave = '_noresid'
     model_file = f'deepar{chave}'
     results_file = f'./results_hybrid/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
@@ -281,7 +281,7 @@ def deepar_train(args):
 
 dirs = [
     # '../datasets/venda/mensal/uf/gasolinac/',
-    # '../datasets/venda/mensal/uf/etanolhidratado/',
+    '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
     # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
@@ -325,7 +325,7 @@ if __name__ == "__main__":
     seed_value = 42
     set_seed(seed_value)
     # torch.multiprocessing.set_start_method('spawn', force=True)
-    with multiprocessing.Pool(processes=17) as pool:
+    with multiprocessing.Pool(processes=1) as pool:
         tasks = [
             (directory, file) 
             for directory in dirs 
