@@ -71,94 +71,6 @@ transformacao = "normal"
 format_v = "sem"
 # @scheduler.parallel(n_jobs=1)
 
-def simple_objective(args_list):
-    global X_train_v, y_train_v, X_test_v 
-    global train_original, test_val
-    global regr, format_v
-    results = []
-    for hyper_par in args_list:
-        try:    
-            if regr == 'xgb':
-                rg = xgboost.XGBRegressor(**hyper_par)
-            elif regr == 'rf':
-                rg = RandomForestRegressor(**hyper_par)
-            elif regr == 'knn':
-                rg = KNeighborsRegressor(**hyper_par)
-            elif regr == "svr":
-                rg = SVR(**hyper_par)
-            elif regr == "catboost":
-                rg = CatBoostRegressor(**hyper_par)
-            else: 
-                raise ValueError(f'MODELO {regr} nao existe')
-            rg.fit(X_train_v, y_train_v, verbose=False)
-
-            predictions = recursive_multistep_forecasting(X_test_v, rg, horizon)
-            preds = pd.Series(predictions, index=test_val.index)
-            preds_real = reverse_regressors(train_original, preds, format=format_v)
-            
-            mape_result = mape(test_val, preds_real)
-            results.append(mape_result)
-        except:
-            continue    
-    return results
-
-def find_best_parameter_xgb(train_x, test_x, train_y, train_v, test_v, format):
-    global X_train_v
-    global y_train_v
-    global X_test_v
-    global train_original
-    global regr
-    global test_val
-    global format_v
-
-    if regr == 'xgb':
-        param_xgb = {
-            'learning_rate': [0.2, 0.3, 0.4], #xgb
-            'subsample': [0.7, 0.8, 0.9], #xgb
-            'n_estimators': [50, 100, 150, 200] #rf/xgb
-            # 'n_neighbors': [1,3,5,7,9]
-        }
-    elif regr == 'knn':
-        param_xgb = {
-            'n_neighbors': [1,3,5,7,9]
-        }
-    elif regr == 'rf':
-         param_xgb = {
-            'n_estimators': [50, 100, 150, 200] #rf/xgb
-        }
-    elif regr == "svr":
-        param_xgb = {
-            'kernel': ['rbf'], 
-            'C': [0.1, 1, 10, 100, 1000],
-            'gamma': [0.0001, 0.001, 0.005, 0.1, 1, 3, 5],
-            'epsilon':[0.1,0.2,0.5,0.3]
-        }
-    elif regr == 'catboost':
-        param_xgb = {
-            'iterations': [100, 200],  
-            # 'subsample': (0.5, 1.0),         
-            'learning_rate': (0.01, 0.3),    
-            'depth': range(4, 10),           
-            # 'colsample_bylevel': (0.5, 1.0), 
-            # 'min_data_in_leaf': range(1, 20),
-            # 'task_type': ["GPU"],
-            'loss_function': ['RMSE']
-        }
-    else:
-        raise ValueError(f'MODELO {regr} nao existe')
-    
-    conf_Dict = dict()
-    conf_Dict['num_iteration'] = 35
-    X_train_v = train_x
-    y_train_v = train_y
-    X_test_v = test_x
-    train_original = train_v
-    test_val = test_v
-    format_v = format
-    tuner = Tuner(param_xgb, objective=simple_objective, conf_dict=conf_Dict)
-    results_arima = tuner.minimize()
-
-    return results_arima
 
 def objective_optuna(trial):
     global X_train_v, y_train_v, X_test_v 
@@ -169,13 +81,15 @@ def objective_optuna(trial):
         param = {
             'learning_rate': trial.suggest_categorical('learning_rate', [0.2, 0.3, 0.4]),
             'subsample': trial.suggest_categorical('subsample', [0.7, 0.8, 0.9]),
-            'n_estimators': trial.suggest_categorical('n_estimators', [50, 100, 150, 200])
+            'n_estimators': trial.suggest_categorical('n_estimators', [50, 100, 150, 200]),
+            'random_state': 42
         }
         model = xgboost.XGBRegressor(**param)
         
     elif regr == 'rf':
         param = {
-            'n_estimators': trial.suggest_categorical('n_estimators', [50, 100, 150, 200])
+            'n_estimators': trial.suggest_categorical('n_estimators', [50, 100, 150, 200]),
+            'random_state': 42
         }
         model = RandomForestRegressor(**param)
         
@@ -190,7 +104,8 @@ def objective_optuna(trial):
             'kernel': trial.suggest_categorical('kernel', ['rbf']),
             'C': trial.suggest_categorical('C', [0.1, 1, 10, 100, 1000]),
             'gamma': trial.suggest_categorical('gamma', [0.0001, 0.001, 0.005, 0.1, 1, 3, 5]),
-            'epsilon': trial.suggest_categorical('epsilon', [0.1, 0.2, 0.5, 0.3])
+            'epsilon': trial.suggest_categorical('epsilon', [0.1, 0.2, 0.5, 0.3]),
+            # 'random_state': 42
         }
         model = SVR(**param)
         
@@ -199,7 +114,8 @@ def objective_optuna(trial):
             'iterations': trial.suggest_categorical('iterations', [100, 200]),
             'learning_rate': trial.suggest_uniform('learning_rate', 0.01, 0.3),
             'depth': trial.suggest_int('depth', 4, 9),
-            'loss_function': trial.suggest_categorical('loss_function', ['RMSE'])
+            'loss_function': trial.suggest_categorical('loss_function', ['RMSE']),
+            'random_state': 42
         }
         model = CatBoostRegressor(**param)
         
@@ -218,11 +134,12 @@ def objective_optuna(trial):
         # Calcule o MAPE
         mape_result = mape(test_val, preds_real)
     except Exception as e:
-        print_log(f'Error: {format}')
+        print_log(f'Error: {format_v}')
         print_log('X_TRAIN\n')
         print_log(X_train_v)
         print_log('y_TRAIN\n')
         print_log(y_train_v)
+        print(e)
         return float('inf')
 
     return mape_result
@@ -351,9 +268,9 @@ def regressor_error_series(args):
     directory, file = args
     global regr 
     regr = 'catboost'
-    chave = ''
+    chave = '_noresid'
     model_file = f'{regr}{chave}'
-    results_file = f'./results_hybrid/{model_file}'
+    results_file = f'./results/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
     cols = ['train_range', 'test_range', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series',
@@ -402,7 +319,7 @@ def regressor_error_series(args):
                 flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
                 if flag:
                     train_tf = transform_regressors(train_stl, transform)
-                    train_tf_val = transform_train(train_val, format=transform)
+                    train_tf_val = transform_regressors(train_val, format=transform)
                     try:
                         data = rolling_window(pd.concat([train_tf, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window)
                         data = data.dropna()
@@ -414,15 +331,20 @@ def regressor_error_series(args):
 
                         X_train_v, X_test_v, y_train_v, _ = train_test_split(data_val, horizon)
                         results_rg = find_best_parameter_optuna(X_train_v, X_test_v, y_train_v, train_val, test_val, transform)
-
                         if regr == 'xgb':
+                            results_rg['random_state'] = 42
                             rg = xgboost.XGBRegressor(**results_rg) 
                         elif regr == 'rf':
+                            results_rg['random_state'] = 42
                             rg = RandomForestRegressor(**results_rg)
                         elif regr == 'knn':
                             rg = KNeighborsRegressor(**results_rg)
                         elif regr == "catboost":
+                            results_rg['random_state'] = 42
                             rg = CatBoostRegressor(**results_rg)
+                        elif regr == "svr":
+                            # results_rg['random_state'] = 42
+                            rg = SVR(**results_rg)
                         else:
                             raise ValueError('nao existe esse regressor')
                         rg.fit(X_train, y_train)

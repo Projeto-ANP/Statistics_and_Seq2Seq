@@ -181,20 +181,6 @@ def deepar_train(args):
                         # test_tf = transform_test_deepar(train_stl, test, format=transform)
                         # test_tf_norm = znorm_mean_std(test_tf, mean, std)
                         train_data, test_data = get_train_test_deepar(train_tf, test)
-
-                        # if i == 0: #se é o primeiro pedaço (ultima parte da serie) encontra parametros para repassar para outras partes
-                        #   #validacao                    
-                        #   test_tf_val = transform_test_deepar(train_val, test_val, format=transform)
-                        #   test_tf_val_norm = znorm_mean_std(test_tf_val, mean_val, std_val)
-                        #   train_data_val, test_data_val = get_train_test_deepar(train_tf_val, test_tf_val_norm)
-                        #   print_log(f"------------ FINDING PARAMETERS FOR {derivado} in {uf}")
-                        #   saved_params, _ = find_best_parameter_optuna(train_data_val, test_data_val, train_val, test_val)
-                        #   print_log(f"\n ------------ FOUND BEST PARAMETERS FOR {derivado} in {uf} ---------------")
-                        #   print_log(saved_params)
-
-                        #validacao                    
-                        # test_tf_val = transform_test_deepar(train_val, test_val, format=transform)
-                        # test_tf_val_norm = znorm_mean_std(test_tf_val, mean_val, std_val)
                         train_data_val, test_data_val = get_train_test_deepar(train_tf_val, test_val)
                         print_log(f"------------ FINDING PARAMETERS FOR {derivado} in {uf}")
                         saved_params, _ = find_best_parameter_optuna(train_data_val, test_data_val, train_val, test_val, transform)
