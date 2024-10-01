@@ -6,6 +6,11 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.metrics import mean_squared_error as mse
 from aeon.transformations.detrend import ConditionalDeseasonalizer
 from aeon.transformations.detrend import STLTransformer
+import pywt
+from scipy import signal
+from pyts.image import MarkovTransitionField
+from pyts.image import GramianAngularField
+from pyts.image import RecurrencePlot
 from datetime import datetime
 import ast
 
@@ -98,12 +103,24 @@ def read_series(file_path):
     return series
 
 def rolling_window(series, window):
-  data = []
-  for i in range(len(series)-window):
-    example = znorm(np.array(series[i:i+window+1]))
-    data.append(example)
-  df = pd.DataFrame(data)
-  return df
+    data = []
+    for i in range(len(series) - window):
+        window_values = np.array(series[i:i+window])
+
+        target_value = series[i+window]
+
+        normalized_window = znorm(window_values)
+
+        mean = np.mean(window_values)
+        std = np.std(window_values)
+        normalized_target = (target_value - mean) / std if std > 0 else target_value - mean
+
+        example = np.append(normalized_window, normalized_target)
+
+        data.append(example)
+
+    df = pd.DataFrame(data)
+    return df
 
 def rolling_semnorm(series, window):
   data = []
@@ -209,6 +226,40 @@ def recursive_multistep_forecasting(X_test, model, horizon):
     example = np.append(example, pred)
     example = example.reshape(1,-1)
   return preds
+
+def recursive_multistep_rocket(X_test, rocket, model, horizon):
+  # example é composto pelas últimas observações vistas
+  # na prática, é o primeiro exemplo do conjunto de teste
+  example = X_test.iloc[0].values.reshape(1,-1)
+
+  preds = []
+  for i in range(horizon):
+    t = rocket.transform(example).reshape(1, -1)
+    pred = model.predict(t)[0]
+    # pred = model.predict(example)[0]
+
+    preds.append(pred)
+
+    # Descartar o valor da primeira posição do vetor de características
+    example = example[:,1:]
+
+    # Adicionar o valor predito na última posição do vetor de características
+    example = np.append(example, pred)
+    example = example.reshape(1,-1)
+  return preds
+
+# preds = []  # Initialize the list to store predictions
+# for i in range(horizon):
+#     t = rocket_obj.transform(example).reshape(1, -1)
+#     if selector != None:
+#         t = selector_obj.transform(t)
+#     pred = regressor_obg.predict(t)
+#     pred = pred[0] if pred.ndim == 1 else pred[0][0]
+#     preds.append(pred)
+#     example = example[:, 1:]
+#     example = np.append(example, pred)
+#     example = example.reshape(1, -1)
+
 
 def plot_decompose(series, print=False):
     df_datetime = series.copy()
@@ -768,3 +819,101 @@ def reverse_regressors(train_real, preds, format='normal'):
         return preds_real
     
     raise ValueError('nao existe essa transformacao')
+
+def get_error_series(path, test_date):
+    df = pd.read_csv(path, sep=";")
+    error_series_str = df.loc[df['test_range'] == test_date, 'error_series'].values[0]
+    error_list_rf = ast.literal_eval(error_series_str)
+    return error_list_rf
+
+
+def get_preds_model(path, filter, coluna):
+    df = pd.read_csv(path, sep=";")
+    results = {}
+    filtered_df = df[df[coluna] == filter]
+    columns_p1_to_p12 = filtered_df.loc[:, 'P1':'P12']
+    values_list = columns_p1_to_p12.values.flatten().tolist()     
+    return values_list
+
+
+def rolling_window_image(series, window, representation):
+  data = []
+  for i in range(len(series)-window):
+    example = np.array(series[i:i+window+1])
+    target = example[-1]
+
+    features = np.delete(example, -1)
+    features_norm = znorm(features)
+    
+    target_norm = znorm_by(target, features)
+
+    rep_features = transform_series(features_norm, representation)
+    feat_target = np.concatenate((rep_features.flatten(), [target_norm]))
+    data.append(feat_target)
+  df = pd.DataFrame(data)
+  return df
+
+def transform_series(series, representation):
+  # series = np.array(znorm(series))
+  if representation == "CWT":
+    coeffs, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet='morl') # morl
+    im_final = coeffs
+  elif representation == "DWT":
+    coeffs = pywt.wavedec(series, wavelet='db1', level=4)
+    im_final = np.concatenate(coeffs, axis=0) 
+  elif representation == "SWT":
+    wavelet = 'db1'
+    level = 2  # Nível de decomposição
+
+    coeffs_swt = pywt.swt(series, wavelet, level=level)
+
+    # Concatenar os coeficientes de aproximação e detalhe para visualização
+    im_final = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
+  elif representation == "WPT":
+    wp = pywt.WaveletPacket(data=series, wavelet='db1', mode='symmetric')
+
+    # Extrair os coeficientes em diferentes níveis
+    nodes = wp.get_level(4, order='freq')  # Pegando o 4º nível de decomposição
+    coeffs_wpt = np.array([n.data for n in nodes])
+
+    # Concatenar os coeficientes para visualização
+    im_final = np.concatenate(coeffs_wpt, axis=0)
+  elif representation == "STFT":
+    from scipy.signal import stft
+    f, t, Zxx = stft(series, nperseg=64)
+
+    # Obter a magnitude dos coeficientes
+    coeffs_stft = np.abs(Zxx)
+
+    # Concatenar os coeficientes para criar im_final
+    im_final = coeffs_stft
+  elif representation == "MTF":
+    series = series.reshape(1, len(series))
+    mtf = MarkovTransitionField(strategy='normal') #n_bins=4, strategy='uniform'
+    X_mtf = mtf.fit_transform(series)
+    im_final = X_mtf[0]
+  elif representation == "GADF":
+    series = series.reshape(1, len(series))
+    gaf = GramianAngularField(method='difference')
+    X_gaf = gaf.fit_transform(series)
+    im_final = X_gaf[0]
+  elif representation == "GASF":
+    series = series.reshape(1, len(series))
+    gaf = GramianAngularField(method='summation')
+    X_gaf = gaf.fit_transform(series)
+    im_final = X_gaf[0]
+  elif representation == "RP":
+    series = series.reshape(1, len(series))
+    rp = RecurrencePlot(threshold='distance')
+    X_rp = rp.fit_transform(series)
+    im_final = X_rp[0]
+  elif representation == "FIRTS":
+    series = series.reshape(1, len(series))
+    mtf = MarkovTransitionField(n_bins=4, strategy='uniform')
+    X_mtf = mtf.fit_transform(series)
+    gaf = GramianAngularField(method='difference')
+    X_gaf = gaf.fit_transform(series)
+    rp = RecurrencePlot(threshold='distance')
+    X_rp = rp.fit_transform(series)
+    im_final = (X_mtf[0] + X_gaf[0] + X_rp[0]) # FIRTS é fusão entre MTF, GADF e RP (vejam o artigo que passei para vocês)
+  return im_final
