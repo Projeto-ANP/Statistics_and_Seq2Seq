@@ -223,7 +223,7 @@ def image_error_series(args):
     # cgau1, cgau2, cgau3, cgau4, cgau5, cgau6, cgau7, cgau8, cmor1-1, 
     # fbsp1-1.5-1.0, gaus1, gaus2, gaus3, gaus4, gaus5, gaus6, gaus7, gaus8, mexh, shan1-1
     wavelet = "db6"
-    level = 6 #only DWT/SWT
+    level = 8 #only DWT/SWT
     horizon = 12
     window = 36
     regr = 'ridge'
@@ -233,8 +233,7 @@ def image_error_series(args):
     results_file = f'./paper_roma/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
     cols = ['train_range', 'test_range', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
-           'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series',
-           'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
+           'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series'
            ]
     if file.endswith('.csv'):
         
@@ -326,7 +325,6 @@ def image_error_series(args):
                         pbe_result = pbe(test, preds_real)
                         mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
                         mase_result = mase(test, preds_real, y_baseline)
-                        adfuller_test = analyze_stationarity(train_tf[1:])
 
                         path_derivado = f'{results_file}/{derivado}/{transform}'
                         os.makedirs(path_derivado, exist_ok=True)
@@ -340,10 +338,7 @@ def image_error_series(args):
                                                 'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
                                                 'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
                                                 'P11': preds_real[10], 'P12': preds_real[11], 
-                                                'error_series': [error_series],
-                                                'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
-                                                'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
-                                                'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
+                                                'error_series': [error_series]
                                                 }, index=[0])
                         df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
                     
