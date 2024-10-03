@@ -836,7 +836,7 @@ def get_preds_model(path, filter, coluna):
     return values_list
 
 
-def rolling_window_image(series, window, representation):
+def rolling_window_image(series, window, representation, wavelet, level):
   data = []
   for i in range(len(series)-window):
     example = np.array(series[i:i+window+1])
@@ -847,27 +847,22 @@ def rolling_window_image(series, window, representation):
     
     target_norm = znorm_by(target, features)
 
-    rep_features = transform_series(features_norm, representation)
+    rep_features = transform_series(features_norm, representation, wavelet, level)
     feat_target = np.concatenate((rep_features.flatten(), [target_norm]))
     data.append(feat_target)
   df = pd.DataFrame(data)
   return df
 
-def transform_series(series, representation):
+def transform_series(series, representation, wavelet, level):
   # series = np.array(znorm(series))
   if representation == "CWT":
-    coeffs, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet='morl') # morl
+    coeffs, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet=wavelet) # morl
     im_final = coeffs
   elif representation == "DWT":
-    coeffs = pywt.wavedec(series, wavelet='db1', level=4)
+    coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
     im_final = np.concatenate(coeffs, axis=0) 
   elif representation == "SWT":
-    wavelet = 'db1'
-    level = 2  # Nível de decomposição
-
     coeffs_swt = pywt.swt(series, wavelet, level=level)
-
-    # Concatenar os coeficientes de aproximação e detalhe para visualização
     im_final = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
   elif representation == "WPT":
     wp = pywt.WaveletPacket(data=series, wavelet='db1', mode='symmetric')

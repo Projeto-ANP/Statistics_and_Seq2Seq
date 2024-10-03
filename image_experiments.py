@@ -187,6 +187,26 @@ dirs = [
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 
+def rolling_window_image_concat(series, window, representation, wavelet1, wavelet2, level1, level2):
+  data = []
+  for i in range(len(series)-window):
+    example = np.array(series[i:i+window+1])
+    target = example[-1]
+
+    features = np.delete(example, -1)
+    features_norm = znorm(features)
+    
+    target_norm = znorm_by(target, features)
+
+    rep_features1 = transform_series(features_norm, representation, wavelet1, level1)
+    rep_features2 = transform_series(features_norm, representation, wavelet2, level2)
+
+    reps = rep_features1.flatten() + rep_features2.flatten()
+    feat_target = np.concatenate((reps, [target_norm]))
+    data.append(feat_target)
+  df = pd.DataFrame(data)
+  return df
+
 horizon = 12
 window = 12
 colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 
@@ -199,13 +219,18 @@ regr = 'SEM MODELO'
 def image_error_series(args):
     directory, file = args
     global regr 
-    representation = "CWT"
+    representation = "DWT"
+    # cgau1, cgau2, cgau3, cgau4, cgau5, cgau6, cgau7, cgau8, cmor1-1, 
+    # fbsp1-1.5-1.0, gaus1, gaus2, gaus3, gaus4, gaus5, gaus6, gaus7, gaus8, mexh, shan1-1
+    wavelet = "db6"
+    level = 6 #only DWT/SWT
     horizon = 12
     window = 36
-    regr = 'rf'
+    regr = 'ridge'
     chave = ''
-    model_file = f'{representation}_{regr}{chave}'
-    results_file = f'./results/{model_file}'
+    model_file = f'{representation}_{regr}{chave}_{wavelet}_lvl{level}'
+    # model_file = f'{representation}_{regr}{chave}_concat'
+    results_file = f'./paper_roma/{model_file}'
     transformations = ["normal", "log", "deseasonal"]
     cols = ['train_range', 'test_range', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series',
@@ -256,12 +281,15 @@ def image_error_series(args):
                     train_tf = transform_regressors(train_stl, transform)
                     train_tf_val = transform_regressors(train_val, format=transform)
                     try:
-                        data = rolling_window_image(pd.concat([train_tf, pd.Series([1,2,3,4,5,6,7,8,9,10,11,12], index=test.index)]), window, representation)
+                        data = rolling_window_image(pd.concat([train_tf, pd.Series([1,2,3,4,5,6,7,8,9,10,11,12], index=test.index)]), window, representation, wavelet, level)
+                        # data = rolling_window_image_concat(pd.concat([train_tf, pd.Series([1,2,3,4,5,6,7,8,9,10,11,12], index=test.index)]), window, representation, "morl", "mexh", 0,0)
+                    
                         data = data.dropna()
                         X_train, X_test, y_train, _ = train_test_split(data, horizon)
 
                         #necessita fazer isso para nao implicar na sazonalidade do val com train
-                        data_val = rolling_window_image(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window, representation)
+                        data_val = rolling_window_image(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window, representation, wavelet, level)
+                        # data_val = rolling_window_image_concat(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window, representation, "morl", "mexh", 0,0)
                         data_val = data_val.dropna()
 
                         X_train_v, X_test_v, y_train_v, _ = train_test_split(data_val, horizon)
@@ -307,7 +335,7 @@ def image_error_series(args):
                         if not os.path.exists(csv_path):
                             pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
 
-                        df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'ARIMA', 'PARAMS': str(results_rg), 'WINDOW': window, 'HORIZON': horizon,  
+                        df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': f'{representation}_{regr}', 'PARAMS': str(results_rg), 'WINDOW': window, 'HORIZON': horizon,  
                                                 'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
                                                 'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
                                                 'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
