@@ -911,7 +911,7 @@ def transform_series(series, representation, wavelet, level):
     rp = RecurrencePlot(threshold='distance')
     X_rp = rp.fit_transform(series)
     im_final = (X_mtf[0] + X_gaf[0] + X_rp[0]) # FIRTS é fusão entre MTF, GADF e RP (vejam o artigo que passei para vocês)
-  return 
+  return im_final
 
 def get_test_real(series, start_date, end_date):
     start_period = pd.to_datetime(start_date).to_period('M')
