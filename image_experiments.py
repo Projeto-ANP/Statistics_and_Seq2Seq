@@ -261,16 +261,16 @@ regr = 'SEM MODELO'
 def image_error_series(args):
     directory, file = args
     global regr 
-    representation = "SWT"
+    representation = "FUSION_SWT_DWT"
     # cgau1, cgau2, cgau3, cgau4, cgau5, cgau6, cgau7, cgau8, cmor1-1, 
     # fbsp1-1.5-1.0, gaus1, gaus2, gaus3, gaus4, gaus5, gaus6, gaus7, gaus8, mexh, shan1-1
-    wavelet = "bior3.3"
+    wavelet = "bior2.2"
     level = 2 #only DWT/SWT
     horizon = 12
     window = 60
     regr = 'ridge'
     chave = ''
-    model_file = f'{representation}_{regr}{chave}_{wavelet}_{window}'
+    model_file = f'{representation}_{regr}{chave}_{wavelet}_{window}_lvl_{level}'
     # model_file = f'{representation}_{regr}{chave}_concat'
     results_file = f'./paper_roma/{model_file}'
     transformations = ["normal", "log","deseasonal"]
@@ -665,5 +665,5 @@ if __name__ == '__main__':
                 for file in os.listdir(directory) 
             ]
 
-            pool.map(concat_image_series, tasks)
+            pool.map(image_error_series, tasks)
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")

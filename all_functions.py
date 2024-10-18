@@ -5,6 +5,7 @@ from aeon.forecasting.arima import ARIMA
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.metrics import mean_squared_error as mse
 from aeon.transformations.detrend import ConditionalDeseasonalizer
+from aeon.transformations.detrend import Deseasonalizer
 from aeon.transformations.detrend import STLTransformer
 import pywt
 from scipy import signal
@@ -12,6 +13,7 @@ from pyts.image import MarkovTransitionField
 from pyts.image import GramianAngularField
 from pyts.image import RecurrencePlot
 from datetime import datetime
+from distutils.util import strtobool
 import ast
 
 warnings.filterwarnings("ignore")
@@ -248,18 +250,62 @@ def recursive_multistep_rocket(X_test, rocket, model, horizon):
     example = example.reshape(1,-1)
   return preds
 
-# preds = []  # Initialize the list to store predictions
-# for i in range(horizon):
-#     t = rocket_obj.transform(example).reshape(1, -1)
-#     if selector != None:
-#         t = selector_obj.transform(t)
-#     pred = regressor_obg.predict(t)
-#     pred = pred[0] if pred.ndim == 1 else pred[0][0]
-#     preds.append(pred)
-#     example = example[:, 1:]
-#     example = np.append(example, pred)
-#     example = example.reshape(1, -1)
+def smape_m4(a, b):
+    """
+    Calculates sMAPE
 
+    :param a: actual values
+    :param b: predicted values
+    :return: sMAPE
+    """
+    a = np.reshape(a, (-1,))
+    b = np.reshape(b, (-1,))
+    return np.mean(2.0 * np.abs(a - b) / (np.abs(a) + np.abs(b))).item()
+
+
+def mase_m4(insample, y_test, y_hat_test, freq):
+    """
+    Calculates MAsE
+
+    :param insample: insample data
+    :param y_test: out of sample target values
+    :param y_hat_test: predicted values
+    :param freq: data frequency
+    :return:
+    """
+    y_hat_naive = []
+    for i in range(freq, len(insample)):
+        y_hat_naive.append(insample[(i - freq)])
+
+    masep = np.mean(abs(insample[freq:] - y_hat_naive))
+
+    return np.mean(abs(y_test - y_hat_test)) / masep
+
+def split_into_train_test(data, in_num, fh):
+    """
+    Splits the series into train and test sets. Each step takes multiple points as inputs
+
+    :param data: an individual TS
+    :param fh: number of out of sample points
+    :param in_num: number of input points for the forecast
+    :return:
+    """
+    train, test = data[:-fh], data[-(fh + in_num):]
+    x_train, y_train = train[:-1], np.roll(train, -in_num)[:-in_num]
+    x_test, y_test = train[-in_num:], np.roll(test, -in_num)[:-in_num]
+
+    # reshape input to be [samples, time steps, features] (N-NF samples, 1 time step, 1 feature)
+    x_train = np.reshape(x_train, (-1, 1))
+    x_test = np.reshape(x_test, (-1, 1))
+    temp_test = np.roll(x_test, -1)
+    temp_train = np.roll(x_train, -1)
+    for x in range(1, in_num):
+        x_train = np.concatenate((x_train[:-1], temp_train[:-1]), 1)
+        x_test = np.concatenate((x_test[:-1], temp_test[:-1]), 1)
+        temp_test = np.roll(temp_test, -1)[:-1]
+        temp_train = np.roll(temp_train, -1)[:-1]
+
+    return x_train, y_train, x_test, y_test
 
 def plot_decompose(series, print=False):
     df_datetime = series.copy()
@@ -287,7 +333,8 @@ def pbe(y_true, y_pred):
 
 def transform_train(series_transform, format="deseasonal", horizon=12):
     if format == "deseasonal":
-        transform = ConditionalDeseasonalizer(sp=12)
+        # transform = ConditionalDeseasonalizer(sp=12)
+        transform = Deseasonalizer(sp=12)
         transform.fit(series_transform)
         series_ts = transform.transform(series_transform)
         series_ts_norm, _, _ = rolling_window_series(series_ts, horizon)
@@ -626,7 +673,7 @@ def get_arima_param(path_results, derivado, uf, transform):
 
 def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
     if format == "deseasonal":
-        transform = ConditionalDeseasonalizer(sp=12)
+        transform = Deseasonalizer(sp=12)
         transform.fit(train)
         series_before_norm = transform.transform(train)
         
@@ -787,6 +834,7 @@ def transform_regressors(train, format='normal'):
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(train)
         train_deseasonal = transform.transform(train)
+        # train_deseasonal = fit_transform_STL(train, train)
         return train_deseasonal
     elif format == 'log':
         constante = 10
@@ -798,13 +846,17 @@ def transform_regressors(train, format='normal'):
 def reverse_regressors(train_real, preds, format='normal'):
     if format == 'deseasonal':
         transform = ConditionalDeseasonalizer(sp=12)
+        transform = Deseasonalizer(sp=12)
         transform.fit(train_real)
         series_before_norm = transform.transform(train_real)
+
+        # series_before_norm = fit_transform_STL(train_real, train_real)
 
         _, mean, std = rolling_window_series(series_before_norm, 12)
         preds_transformed = znorm_reverse(preds, mean, std)
 
         series_real = transform.inverse_transform(preds_transformed)
+        # series_real = fit_inverse_transform_STL(train_real, preds_transformed)
         return series_real
     elif format == 'log':
         constante = 10
@@ -848,7 +900,7 @@ def rolling_window_image(series, window, representation, wavelet, level):
     target_norm = znorm_by(target, features)
 
     rep_features = transform_series(features_norm, representation, wavelet, level)
-    feat_target = np.concatenate((rep_features.flatten(), [target_norm]))
+    feat_target = np.concatenate((rep_features, [target_norm]))
     data.append(feat_target)
   df = pd.DataFrame(data)
   return df
@@ -864,6 +916,40 @@ def transform_series(series, representation, wavelet, level):
   elif representation == "SWT":
     coeffs_swt = pywt.swt(series, wavelet, level=level)
     im_final = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
+
+  elif representation == "CONCAT":
+    coeffs_cwt, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet='morl')
+    coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
+    coeffs_dwt = np.concatenate(coeffs, axis=0) 
+    coeffs_swt = pywt.swt(series, wavelet, level=level)
+    coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
+    im_final = np.concatenate((coeffs_cwt.flatten(),coeffs_dwt.flatten(), coeffs_swt.flatten()))
+  elif representation == "CONCAT2":
+    coeffs_cwt, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet='morl')
+    coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
+    coeffs_dwt = np.concatenate(coeffs, axis=0) 
+    coeffs_swt = pywt.swt(series, wavelet, level=level)
+    coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
+    im_final = np.concatenate((coeffs_cwt.flatten(), coeffs_swt.flatten()))
+  elif representation == "FUSION3":
+    approx_weight = 1
+    detail_weight = 0.9
+    coeffs_swt = pywt.swt(series, wavelet, level=level)
+    approx_swt = [coeff[0] for coeff in coeffs_swt]
+    detail_swt = [coeff[1] for coeff in coeffs_swt]
+    
+    coeffs_dwt = pywt.wavedec(series, wavelet=wavelet, level=level)
+    approx_dwt = coeffs_dwt[0]
+    details_dwt = coeffs_dwt[1:]
+    
+    adjusted_approx = [approx_weight * coeff for coeff in approx_swt]
+    adjusted_details = [detail_weight * coeff for coeff in detail_swt] 
+    
+    reconstructed_swt = pywt.iswt(list(zip(adjusted_approx, adjusted_details)), wavelet)
+    reconstructed_dwt = pywt.waverec([approx_dwt] + details_dwt, wavelet)
+    
+    im_final = approx_weight * reconstructed_swt + detail_weight * reconstructed_dwt
+    
   elif representation == "WPT":
     wp = pywt.WaveletPacket(data=series, wavelet='db1', mode='symmetric')
 
@@ -920,3 +1006,492 @@ def get_test_real(series, start_date, end_date):
     filtered_series = series.loc[start_period:end_period]
 
     return filtered_series
+
+
+from aeon.utils.datetime import _get_duration, _get_freq
+from statsmodels.tsa.seasonal import seasonal_decompose, STL
+def fit_transform_STL(X, serie_target, model="additive", sp=12):
+  # sazonalidade = seasonal_decompose(
+  #           X,
+  #           model=model,
+  #           period=12,
+  #           filt=None,
+  #           two_sided=True,
+  #           extrapolate_trend=0,
+  #       ).seasonal.iloc[:12]
+
+  stl = STL(X, period=sp)
+  result = stl.fit()
+
+  sazonalidade = result.seasonal.iloc[:sp]
+  
+  
+  shift = (
+            -_get_duration(
+                serie_target.index[0],
+                X.index[0],
+                coerce_to_int=True,
+                unit=_get_freq(X.index),
+            )
+            % sp
+        )
+  seasonal = np.resize(np.roll(sazonalidade, shift=shift), serie_target.shape[0])
+
+  if model == "additive":
+    return serie_target - seasonal
+  else:
+    return serie_target / seasonal
+
+def fit_inverse_transform_STL(X, serie_target, model="additive", sp=12):
+  # sazonalidade = seasonal_decompose(
+  #           X,
+  #           model=model,
+  #           period=12,
+  #           filt=None,
+  #           two_sided=True,
+  #           extrapolate_trend=0,
+  #       ).seasonal.iloc[:12]
+
+  stl = STL(X, period=sp)
+  result = stl.fit()
+
+  sazonalidade = result.seasonal.iloc[:sp]
+  
+  
+  shift = (
+            -_get_duration(
+                serie_target.index[0],
+                X.index[0],
+                coerce_to_int=True,
+                unit=_get_freq(X.index),
+            )
+            % sp
+        )
+  seasonal = np.resize(np.roll(sazonalidade, shift=shift), serie_target.shape[0])
+
+  if model == "additive":
+    return serie_target + seasonal
+  else:
+    return serie_target * seasonal
+
+def convert_tsf_to_dataframe(
+    full_file_path_and_name,
+    replace_missing_vals_with="NaN",
+    value_column_name="series_value",
+):
+    col_names = []
+    col_types = []
+    all_data = {}
+    line_count = 0
+    frequency = None
+    forecast_horizon = None
+    contain_missing_values = None
+    contain_equal_length = None
+    found_data_tag = False
+    found_data_section = False
+    started_reading_data_section = False
+
+    with open(full_file_path_and_name, "r", encoding="cp1252") as file:
+        for line in file:
+            # Strip white space from start/end of line
+            line = line.strip()
+
+            if line:
+                if line.startswith("@"):  # Read meta-data
+                    if not line.startswith("@data"):
+                        line_content = line.split(" ")
+                        if line.startswith("@attribute"):
+                            if (
+                                len(line_content) != 3
+                            ):  # Attributes have both name and type
+                                raise Exception("Invalid meta-data specification.")
+
+                            col_names.append(line_content[1])
+                            col_types.append(line_content[2])
+                        else:
+                            if (
+                                len(line_content) != 2
+                            ):  # Other meta-data have only values
+                                raise Exception("Invalid meta-data specification.")
+
+                            if line.startswith("@frequency"):
+                                frequency = line_content[1]
+                            elif line.startswith("@horizon"):
+                                forecast_horizon = int(line_content[1])
+                            elif line.startswith("@missing"):
+                                contain_missing_values = bool(
+                                    strtobool(line_content[1])
+                                )
+                            elif line.startswith("@equallength"):
+                                contain_equal_length = bool(strtobool(line_content[1]))
+
+                    else:
+                        if len(col_names) == 0:
+                            raise Exception(
+                                "Missing attribute section. Attribute section must come before data."
+                            )
+
+                        found_data_tag = True
+                elif not line.startswith("#"):
+                    if len(col_names) == 0:
+                        raise Exception(
+                            "Missing attribute section. Attribute section must come before data."
+                        )
+                    elif not found_data_tag:
+                        raise Exception("Missing @data tag.")
+                    else:
+                        if not started_reading_data_section:
+                            started_reading_data_section = True
+                            found_data_section = True
+                            all_series = []
+
+                            for col in col_names:
+                                all_data[col] = []
+
+                        full_info = line.split(":")
+
+                        if len(full_info) != (len(col_names) + 1):
+                            raise Exception("Missing attributes/values in series.")
+
+                        series = full_info[len(full_info) - 1]
+                        series = series.split(",")
+
+                        if len(series) == 0:
+                            raise Exception(
+                                "A given series should contains a set of comma separated numeric values. At least one numeric value should be there in a series. Missing values should be indicated with ? symbol"
+                            )
+
+                        numeric_series = []
+
+                        for val in series:
+                            if val == "?":
+                                numeric_series.append(replace_missing_vals_with)
+                            else:
+                                numeric_series.append(float(val))
+
+                        if numeric_series.count(replace_missing_vals_with) == len(
+                            numeric_series
+                        ):
+                            raise Exception(
+                                "All series values are missing. A given series should contains a set of comma separated numeric values. At least one numeric value should be there in a series."
+                            )
+
+                        all_series.append(pd.Series(numeric_series).array)
+
+                        for i in range(len(col_names)):
+                            att_val = None
+                            if col_types[i] == "numeric":
+                                att_val = int(full_info[i])
+                            elif col_types[i] == "string":
+                                att_val = str(full_info[i])
+                            elif col_types[i] == "date":
+                                att_val = datetime.strptime(
+                                    full_info[i], "%Y-%m-%d %H-%M-%S"
+                                )
+                            else:
+                                raise Exception(
+                                    "Invalid attribute type."
+                                )  # Currently, the code supports only numeric, string and date types. Extend this as required.
+
+                            if att_val is None:
+                                raise Exception("Invalid attribute value.")
+                            else:
+                                all_data[col_names[i]].append(att_val)
+
+                line_count = line_count + 1
+
+        if line_count == 0:
+            raise Exception("Empty file.")
+        if len(col_names) == 0:
+            raise Exception("Missing attribute section.")
+        if not found_data_section:
+            raise Exception("Missing series information under data section.")
+
+        all_data[value_column_name] = all_series
+        loaded_data = pd.DataFrame(all_data)
+
+        return (
+            loaded_data,
+            frequency,
+            forecast_horizon,
+            contain_missing_values,
+            contain_equal_length,
+        )
+
+
+
+def morlet_wavelet(f, t, w=5):
+    """Gera a wavelet de Morlet."""
+    if f == 0:
+        return np.zeros_like(t)
+    return np.exp(1j * 2 * np.pi * f * t) * np.exp(-t ** 2 / (2 * (w / (2 * np.pi * f)) ** 2))
+
+def apply_kernel(X, num_kernels, lengths, dilations, paddings, biases):
+    X = np.array(X)
+    input_length = len(X)
+
+    # Inicializando a matriz de características
+    features = np.zeros((input_length, num_kernels))
+
+    for k in range(num_kernels):
+        length = lengths[k]
+        padding = paddings[k]
+        bias = biases[k]
+        dilation = dilations[k]
+
+        end = (input_length + padding) - ((length - 1) * dilation)
+
+        for i in range(-padding, end):
+            _sum = bias
+            index = i
+
+            # Convolução com wavelet
+            for j in range(length):
+                wavelet_index = index + j * dilation
+                if 0 <= wavelet_index < input_length:
+                    # Usar uma frequência fixa ou variar levemente
+                    frequency = 1 / (length / 2)  # Frequência baseada no comprimento
+                    wavelet_value = morlet_wavelet(frequency, j / length)
+                    _sum += wavelet_value.real * X[wavelet_index]
+
+            if i + padding >= 0:
+                features[i + padding, k] = _sum
+
+    return features, np.sum(features > 0)
+
+def recursive_rocket1(X_test, model, feats, convs, horizon):
+    example = X_test.iloc[0].values.reshape(1,-1)
+    preds = []
+    for i in range(horizon):
+        pred = model.predict(example)[0]
+        preds.append(pred)
+        feats = feats[1:]
+        feats.append(pred)
+      
+        # example = example[:,1:]
+        example_transform = random_wavelet_convolution(feats, convs)
+        # example = np.append(example, pred)
+        # example = example.reshape(1,-1)
+        example = example_transform.reshape(1,-1)
+
+    return preds
+
+def generate_random_wavelet(serie, waveType, wavelet, level, scales):
+    if waveType == "cwt":
+        coeffs, _ = pywt.cwt(serie, scales, wavelet)
+    elif waveType == "dwt":
+        coeffs = pywt.wavedec(serie, wavelet=wavelet, level=level)
+        # return np.concatenate(coeffs, axis=0) 
+        return [np.concatenate(coeffs, axis=0)]
+    elif waveType == "swt":
+        coeffs_swt = pywt.swt(serie, wavelet, level=level)
+        # return [np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)]
+        # return coeffs_swt
+        coeffs_lists = [c1 for c1, c2 in coeffs_swt] + [c2 for c1, c2 in coeffs_swt]
+        coeffs_final = []
+        for c in coeffs_lists:
+            coeffs_final.append(c)
+        return coeffs_lists
+    return coeffs
+    
+
+def random_wavelet_convolution(serie, convs):
+    features = np.array([])
+
+    wavetypes, wavelets, levels, scales = convs
+    
+    for i in range(len(wavetypes)):
+        coeffs = generate_random_wavelet(serie, wavetypes[i], wavelets[i], levels[i], scales[i])
+        # print(coeffs)
+        # print(coeffs_mean)
+        coeffs_mean = np.mean(coeffs, axis=1)
+        # coeffs_median = np.median(coeffs, axis=1)
+        # coeffs_std = np.std(coeffs, axis=1)
+        coeffs_max = np.max(coeffs, axis=1)
+        # coeffs_min = np.min(coeffs, axis=1)
+
+        # features = np.concatenate([features, coeffs_mean])
+        features = np.concatenate([features, coeffs_mean])
+        # features.append(np.std(coeffs))
+        # features.append(np.max(coeffs))
+        # features.append(np.min(coeffs))
+
+    return features
+
+def generate_convolutions(len_serie, num_wavelets = 10):
+    wavelets = np.empty(num_wavelets, dtype=object)
+    # wavetypes = np.random.choice(["cwt", "dwt", "swt"], size=num_wavelets)
+    # wavetypes = np.random.choice(["cwt","dwt", "swt"], size=num_wavelets)
+    wavetypes = ['cwt', 'cwt', 'cwt', 'cwt','dwt','swt','swt','swt','swt', 'swt']
+
+    levels = np.zeros(num_wavelets, dtype=int)
+    scales = [np.zeros(0) for _ in range(num_wavelets)]
+
+    for i, waveType in enumerate(wavetypes):
+        if waveType == "cwt":
+            wavelet = np.random.choice(["morl"])
+
+            # max_scale_limit = np.random.randint(low = len_serie/2, high = len_serie + 1)
+            # max_scale = np.random.randint(low=len_serie/2, high=max_scale_limit + 1)
+            
+            # scale = np.random.uniform(len_serie/3, max_scale, size=max_scale_limit)
+
+            scale = np.random.choice(np.arange(0.1, 1.1, 0.1), size=30)
+        
+            wavelets[i] = wavelet
+            scales[i] = scale
+        elif waveType == "dwt":
+            # wavelet = "db2"
+            wavelet = np.random.choice(pywt.wavelist(kind="discrete"))
+            wlt = pywt.Wavelet(wavelet)
+            max_level = pywt.dwt_max_level(len_serie, wlt.dec_len)
+            level = 1
+            # if max_level > 1:
+            #     level = np.random.randint(low = 1, high = max_level + 1)
+            
+            wavelets[i] = wavelet
+            levels[i] = level
+        elif waveType == "swt":
+            wavelet = np.random.choice(pywt.wavelist(kind="discrete"))
+            # wavelet = "bior2.2"
+            wlt = pywt.Wavelet(wavelet)
+            max_level = pywt.swt_max_level(len_serie)
+            level = np.random.randint(low = 1, high = max_level + 1)
+            wavelets[i] = wavelet
+            levels[i] = max_level
+
+    return wavetypes, wavelets, levels, scales
+
+
+def features_target(series, convs, window):
+    data = []
+    series = series.tolist()
+    for i in range(len(series) - window):
+        example = np.array(series[i:i+window])
+        target_value = series[i+window]
+        # features = random_wavelet_convolution(example, convs)
+        features = random_wavelet_convolution(example, convs)
+        feats_target = np.concatenate((features, [target_value]))
+        norm_features = feats_target
+        data.append(norm_features)
+
+        df = pd.DataFrame(data)
+    return df
+
+
+
+def read_tsf(file_path):
+    with open(file_path, 'r', encoding='ISO-8859-1') as f:
+        lines = f.readlines()
+
+    metadata = []
+    series = []
+
+    for line in lines:
+        if line.startswith('@') or line.startswith('#'):
+            metadata.append(line.strip())
+        else:
+            series.append(line.strip())
+
+    formatted_data = []
+
+    for entry in series:
+        dataset_name, start_date, series_values = entry.split(':', 2)
+        start_date = start_date.strip()
+        series_list = [float(value) for value in series_values.split(',')]
+        
+        formatted_data.append({
+            'dataset': dataset_name,
+            'start_date': start_date,
+            'series': series_list
+        })
+        
+    series_data = pd.DataFrame(formatted_data)
+
+
+    return metadata, series_data
+
+# Função para calcular os valores de SMAPE
+def calculate_smape(forecasts, test_set):
+    smape = 2 * np.abs(forecasts - test_set) / (np.abs(forecasts) + np.abs(test_set))
+    smape_per_series = np.nanmean(smape, axis=1)  # Média por série
+    return smape_per_series
+
+# Função para calcular os valores de mSMAPE
+def calculate_msmape(forecasts, test_set):
+    epsilon = 0.1
+    comparator = np.full(test_set.shape, 0.5 + epsilon)
+    sum_values = np.maximum(comparator, (np.abs(forecasts) + np.abs(test_set) + epsilon))
+    smape = 2 * np.abs(forecasts - test_set) / sum_values
+    msmape_per_series = np.nanmean(smape, axis=1)
+    return msmape_per_series
+
+# Função para calcular os valores de MASE
+def calculate_mase(forecasts, test_set, training_set, seasonality):
+    mase_per_series = []
+    
+    for k in range(forecasts.shape[0]):
+        te = test_set[k, ~np.isnan(test_set[k, :])]
+        tr = training_set[k][~np.isnan(training_set[k])]
+        f = forecasts[k, ~np.isnan(forecasts[k, :])]
+        
+        # Cálculo de MASE
+        mase = MASE(te, f, np.mean(np.abs(np.diff(tr, n=1, axis=0, prepend=tr[0]))))
+        
+        if np.isnan(mase):
+            mase = MASE(te, f, np.mean(np.abs(np.diff(tr, n=1, axis=0, prepend=tr[0]))))
+        
+        mase_per_series.append(mase)
+
+    return np.array(mase_per_series)
+
+# Função para calcular os valores de MAE
+def calculate_mae(forecasts, test_set):
+    mae = np.abs(forecasts - test_set)
+    mae_per_series = np.nanmean(mae, axis=1)
+    return mae_per_series
+
+# Função para calcular os valores de RMSE
+def calculate_rmse(forecasts, test_set):
+    squared_errors = (forecasts - test_set) ** 2
+    rmse_per_series = np.sqrt(np.nanmean(squared_errors, axis=1))
+    return rmse_per_series
+
+# Função para fornecer um resumo das métricas de erro
+def calculate_errors(forecasts, test_set, training_set, seasonality, output_file_name):
+    smape_per_series = calculate_smape(forecasts, test_set)
+    msmape_per_series = calculate_msmape(forecasts, test_set)
+    mase_per_series = calculate_mase(forecasts, test_set, training_set, seasonality)
+    mae_per_series = calculate_mae(forecasts, test_set)
+    rmse_per_series = calculate_rmse(forecasts, test_set)
+
+    metrics = {
+        "Mean SMAPE": np.nanmean(smape_per_series),
+        "Median SMAPE": np.nanmedian(smape_per_series),
+        "Mean mSMAPE": np.nanmean(msmape_per_series),
+        "Median mSMAPE": np.nanmedian(msmape_per_series),
+        "Mean MASE": np.nanmean(mase_per_series),
+        "Median MASE": np.nanmedian(mase_per_series),
+        "Mean MAE": np.nanmean(mae_per_series),
+        "Median MAE": np.nanmedian(mae_per_series),
+        "Mean RMSE": np.nanmean(rmse_per_series),
+        "Median RMSE": np.nanmedian(rmse_per_series),
+    }
+
+    for key, value in metrics.items():
+        print(f"{key}: {value}")
+
+    # Escrevendo as métricas em arquivos
+    np.savetxt(f"{output_file_name}_smape.txt", smape_per_series, delimiter=",")
+    np.savetxt(f"{output_file_name}_msmape.txt", msmape_per_series, delimiter=",")
+    np.savetxt(f"{output_file_name}_mase.txt", mase_per_series, delimiter=",")
+    np.savetxt(f"{output_file_name}_mae.txt", mae_per_series, delimiter=",")
+    np.savetxt(f"{output_file_name}_rmse.txt", rmse_per_series, delimiter=",")
+    
+    with open(f"{output_file_name}.txt", "w") as f:
+        for key, value in metrics.items():
+            f.write(f"{key}: {value}\n")
+
+# Função auxiliar para calcular MASE
+def MASE(actual, forecast, training_mean):
+    return np.mean(np.abs(actual - forecast)) / training_mean if training_mean != 0 else np.nan
