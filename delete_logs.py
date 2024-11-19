@@ -17,7 +17,7 @@ def main():
     folder_path = './lightning_logs'
     while True:
         delete_folder(folder_path)
-        time.sleep(5 * 60)
+        time.sleep(10 * 60)
 
 if __name__ == "__main__":
     main()

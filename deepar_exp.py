@@ -118,13 +118,12 @@ def transform_test_deepar(train_ref, test, format):
 
 def deepar_train(args):
     directory, file = args
-    chave = '_noresid'
+    chave = ''
     model_file = f'deepar{chave}'
-    results_file = f'./results_hybrid/{model_file}'
-    transformations = ["normal", "log", "deseasonal"]
-    cols = ['train_range', 'test_range', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
+    results_file = f'./paper_roma/{model_file}'
+    transformations = ["deseasonal"]
+    cols = ['train_range', 'test_range','time', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series',
-           'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
            ]
     window = 12
     horizon = 12
@@ -142,7 +141,7 @@ def deepar_train(args):
             df.index = df.index.to_period('M')
             series = df['m3']
             train_test_splits = []
-            min_train_size = 36
+            min_train_size = 36 + (12 * 26)
 
             aux_series = series
             while len(aux_series) > horizon + min_train_size:
@@ -173,6 +172,7 @@ def deepar_train(args):
                 for transform in transformations:
                     path_derivado = f'{results_file}/{derivado}/{transform}'
                     flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
+                    start_exp = time.perf_counter()
                     if flag:
                         train_tf, mean, std = transform_deep_train(train_stl, format=transform)
                         train_tf_val, mean_val, std_val = transform_deep_train(train_val, format=transform)
@@ -203,7 +203,7 @@ def deepar_train(args):
                                     # "learning_rate":
                                     "max_epochs": saved_params['max_epochs'],
                                     # "strategy": saved_params["strategy"],
-                                    "devices": [1],
+                                    "devices": [0],
                                     "enable_progress_bar": False,
                                     "enable_model_summary": False,
                                     "accelerator": "gpu",
@@ -218,12 +218,13 @@ def deepar_train(args):
                         for forecast in forecasts_it:
                             all_forecasts.append(forecast.mean)
                         preds = pd.Series(all_forecasts[0], index=test.index)
-                        preds_real = reverse_regressors(train, preds, format=transform)
+                        preds_real = reverse_regressors(train_stl, preds, format=transform)
+                        end_exp = time.perf_counter()
                         # preds_real = znorm_reverse(all_forecasts[0], mean, std)
 
                         # preds_real = znorm_reverse(preds_norm, mean, std)
                         error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
-                        y_baseline = series[-horizon*2:-horizon].values
+                        y_baseline = train[-horizon*1:].values
                         try:
                             rmse_result = rmse(test, preds_real)
                             mape_result = mape(test, preds_real)
@@ -238,7 +239,6 @@ def deepar_train(args):
                             print_log(f'MAPE: {mape_result}')
                             print_log(f'POCID: {pocid_result}')
                             print_log(f'PBE: {pbe_result}')
-                            adfuller_test = analyze_stationarity(train_tf[1:])
 
                             # path_derivado = f'{results_file}/{derivado}/{transform}'
                             os.makedirs(path_derivado, exist_ok=True)
@@ -246,16 +246,13 @@ def deepar_train(args):
 
                             if not os.path.exists(csv_path):
                                 pd.DataFrame(columns=cols).to_csv(csv_path, sep=';', index=False)
-
-                            df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range , 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'DeepAR', 'PARAMS': str(saved_params), 'WINDOW': window, 'HORIZON': horizon,  
+                            final_exp = end_exp - start_exp
+                            df_temp = pd.DataFrame({'train_range': train_range, 'test_range': test_range, 'time': final_exp, 'UF': uf, 'PRODUCT': derivado, 'MODEL': 'DeepAR', 'PARAMS': str(saved_params), 'WINDOW': window, 'HORIZON': horizon,  
                                                     'RMSE': rmse_result, 'MAPE': mape_result, 'POCID': pocid_result, 'PBE': pbe_result,'MCPM': mcpm_result,  'MASE': mase_result,
                                                     'P1': preds_real[0], 'P2': preds_real[1], 'P3': preds_real[2], 'P4': preds_real[3], 'P5': preds_real[4],
                                                     'P6': preds_real[5], 'P7': preds_real[6], 'P8': preds_real[7], 'P9': preds_real[8], 'P10': preds_real[9],
                                                     'P11': preds_real[10], 'P12': preds_real[11], 
                                                     'error_series': [error_series],
-                                                    'Test Statistic': adfuller_test['Test Statistic'], 'p-value': adfuller_test['p-value'],
-                                                    'Lags Used': adfuller_test['Lags Used'],  'Observations Used': adfuller_test['Observations Used'], 'Critical Value (1%)': adfuller_test['Critical Value (1%)'],
-                                                    'Critical Value (5%)': adfuller_test['Critical Value (5%)'], 'Critical Value (10%)': adfuller_test['Critical Value (10%)'], 'Stationary': adfuller_test['Stationary']
                                                     }, index=[0])
                             df_temp.to_csv(csv_path, sep=';', mode='a', header=False, index=False)
                         except Exception as e:
@@ -266,12 +263,12 @@ def deepar_train(args):
             traceback.print_exc()
 
 dirs = [
-    # '../datasets/venda/mensal/uf/gasolinac/',
+    '../datasets/venda/mensal/uf/gasolinac/',
     '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    # '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    # '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/oleodiesel/',
     # '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
@@ -305,11 +302,13 @@ def set_seed(seed_value):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed_value)
 
+import time
 if __name__ == "__main__":
     torch.set_float32_matmul_precision('medium')
 
     seed_value = 42
     set_seed(seed_value)
+    start = time.perf_counter()
     # torch.multiprocessing.set_start_method('spawn', force=True)
     with multiprocessing.Pool(processes=1) as pool:
         tasks = [
@@ -320,8 +319,9 @@ if __name__ == "__main__":
         ]
 
         pool.map(deepar_train, tasks)
-    
-    # for directory in dirs:
-    #     for file in os.listdir(directory):
-    #         deepar_train(directory, file)
+    end = time.perf_counter()
+    finaltime = end - start
+    print_log(f"EXECUTION TIME: {finaltime}")
+    with open(f"./paper_roma/deepar/execution_time.txt", "w", encoding="utf-8") as arquivo:
+        arquivo.write(str(finaltime))
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
