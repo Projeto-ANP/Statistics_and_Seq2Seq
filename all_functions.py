@@ -976,23 +976,21 @@ def transform_series(series, representation, wavelet, level, shuffle_order=None)
     im_final = combined
 
   elif representation == "CONCAT":
-    coeffs_cwt, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet='morl')
-    coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
-    coeffs_dwt = np.concatenate(coeffs, axis=0) 
     coeffs_swt = pywt.swt(series, wavelet, level=level)
     coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
-    im_final = np.concatenate((coeffs_dwt.flatten(), coeffs_swt.flatten()))
+
+    im_final = np.concatenate((series, coeffs_swt.flatten()))
 
   elif representation == "SWT_GASF":
     coeffs_swt = pywt.swt(series, wavelet, level=level)
     coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
 
     series = series.reshape(1, len(series))
-    gaf = GramianAngularField(method='summation')
-    X_gaf = gaf.fit_transform(series)
-    gasf = X_gaf[0].flatten()
+    rp = RecurrencePlot(threshold='distance')
+    X_rp = rp.fit_transform(series)
+    rp = X_rp[0].flatten()
 
-    im_final = np.concatenate((coeffs_swt.flatten(), gasf))
+    im_final = np.concatenate((coeffs_swt.flatten(), rp))
 
   elif representation == "SWT_MTF":
     coeffs_swt = pywt.swt(series, wavelet, level=level)

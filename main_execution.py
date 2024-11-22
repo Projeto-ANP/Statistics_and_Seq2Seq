@@ -11,6 +11,7 @@ from sklearn.svm import SVR
 from catboost import CatBoostRegressor
 import optuna
 from sklearn.linear_model import Ridge, RidgeCV
+from tsml.feature_based import FPCARegressor
 warnings.filterwarnings("ignore")
 
 def print_log(message):
@@ -158,9 +159,9 @@ def image_error_series(args):
     level = 2 #only DWT/SWT
     horizon = 12
     window = 12
-    regr = 'svr'
+    regr = 'fpca'
     chave = ''
-    model_file = f'{representation}_{regr}{chave}'
+    model_file = f'{representation}_{regr}{chave}_linear_true'
     results_file = f'./paper_roma/{model_file}'
     transformations = ["normal", "deseasonal"]
     cols = ['train_range', 'test_range', 'time','UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
@@ -218,7 +219,7 @@ def image_error_series(args):
                         
                         results_rg = {'alphas': np.logspace(-3, 3, 10)}
                         #necessita fazer isso para nao implicar na sazonalidade do val com train
-                        if regr != "ridge":
+                        if regr != "ridge" and regr != "fpca":
                             data_val = rolling_window_image(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window, representation, wavelet, level)
                             data_val = data_val.dropna()
 
@@ -237,6 +238,15 @@ def image_error_series(args):
                             rg = RidgeCV(**results_rg)
                         elif regr == "svr":
                             rg = SVR(**results_rg)
+                        elif regr == "fpca":
+                            rg = FPCARegressor(
+                                n_jobs=1,
+                                bspline=True,
+                                order=4,
+                                # estimator=RidgeCV(**{'alphas': np.logspace(-3, 3, 10)}),
+                                n_basis=10,
+                                # n_basis=None
+                            )
                         else:
                             raise ValueError('nao existe esse regressor')
                         rg.fit(X_train, y_train)
@@ -275,7 +285,7 @@ def image_error_series(args):
 
 if __name__ == '__main__':
     start = time.perf_counter()
-    with multiprocessing.Pool(processes=1) as pool:
+    with multiprocessing.Pool(processes=10) as pool:
             tasks = [
                 (directory, file) 
                 for directory in dirs 
@@ -286,6 +296,6 @@ if __name__ == '__main__':
     end = time.perf_counter()
     finaltime = end - start
     print_log(f"EXECUTION TIME: {finaltime}")
-    with open(f"./paper_roma/DWT_svr/execution_time.txt", "w", encoding="utf-8") as arquivo:
+    with open(f"./paper_roma/GADF_ridge/execution_time.txt", "w", encoding="utf-8") as arquivo:
         arquivo.write(str(finaltime))
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")

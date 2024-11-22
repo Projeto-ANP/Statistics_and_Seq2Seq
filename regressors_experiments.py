@@ -15,6 +15,7 @@ from sklearn.svm import SVR
 import multiprocessing
 import traceback
 import xgboost
+from tsml.feature_based import FPCARegressor
 from catboost import CatBoostRegressor
 import optuna
 
@@ -225,11 +226,11 @@ regr = 'SEM MODELO'
 def regressor_error_series(args):
     directory, file = args
     global regr 
-    regr = 'ridge'
+    regr = 'fpca'
     chave = ''
     model_file = f'{regr}{chave}'
     window = 12
-    results_file = f'./paper_roma/{model_file}'
+    results_file = f'./paper_roma/{model_file}_linear_true'
     transformations = ["normal", "deseasonal"]
     cols = ['train_range', 'test_range', 'time', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series',
@@ -286,7 +287,7 @@ def regressor_error_series(args):
 
                         results_rg = {'alphas': np.logspace(-3, 3, 10)}
                         #necessita fazer isso para nao implicar na sazonalidade do val com train
-                        if regr != "ridge":
+                        if regr != "ridge" and regr != "fpca":
                             data_val = rolling_window(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window)
                             data_val = data_val.dropna()
 
@@ -309,6 +310,16 @@ def regressor_error_series(args):
                             rg = SVR(**results_rg)
                         elif regr == "ridge":
                             rg = RidgeCV(**results_rg)
+                            
+                        elif regr == "fpca":
+                            rg = FPCARegressor(
+                                n_jobs=1,
+                                bspline=True,
+                                order=4,
+                                # estimator=RidgeCV(**{'alphas': np.logspace(-3, 3, 10)}),
+                                n_basis=10,
+                                # n_basis=None
+                            )
                         else:
                             raise ValueError('nao existe esse regressor')
                         rg.fit(X_train, y_train)
@@ -538,11 +549,11 @@ if __name__ == '__main__':
                 for file in os.listdir(directory) 
             ]
 
-            pool.map(combination_mean, tasks)
+            pool.map(regressor_error_series, tasks)
     end = time.perf_counter()
     finaltime = end - start
     print_log(f"EXECUTION TIME: {finaltime}")
-    with open(f"./results/combination_mean/execution_time.txt", "w", encoding="utf-8") as arquivo:
-        arquivo.write(str(finaltime))
+    # with open(f"./paper_roma/SWT_MTF_fpca/execution_time.txt", "w", encoding="utf-8") as arquivo:
+        # arquivo.write(str(finaltime))
 
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
