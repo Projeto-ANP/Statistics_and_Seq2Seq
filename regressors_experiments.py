@@ -156,7 +156,7 @@ def objective_optuna(trial):
         # Faça previsões
         predictions = recursive_multistep_forecasting(X_test_v, model, horizon)
         preds = pd.Series(predictions, index=test_val.index)
-        preds_real = reverse_regressors(train_original, preds, format=format_v)
+        preds_real = reverse_regressors(train_original, preds, window=12, format=format_v)
         
         # Calcule o MAPE
         mape_result = mape(test_val, preds_real)
@@ -209,7 +209,7 @@ dirs = [
     '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
     '../datasets/venda/mensal/uf/oleodiesel/',
-    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 
@@ -226,11 +226,11 @@ regr = 'SEM MODELO'
 def regressor_error_series(args):
     directory, file = args
     global regr 
-    regr = 'fpca'
+    regr = 'catboost'
     chave = ''
     model_file = f'{regr}{chave}'
     window = 12
-    results_file = f'./paper_roma/{model_file}_linear_true'
+    results_file = f'./paper_roma/{model_file}'
     transformations = ["normal", "deseasonal"]
     cols = ['train_range', 'test_range', 'time', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series',
@@ -326,7 +326,7 @@ def regressor_error_series(args):
 
                         predictions = recursive_multistep_forecasting(X_test, rg, horizon)
                         preds = pd.Series(predictions, index=test.index)
-                        preds_real = reverse_regressors(train_stl, preds,window, format=transform)
+                        preds_real = reverse_regressors(train_stl, preds, window,format=transform)
                         end_exp = time.perf_counter()
                         # preds_real = znorm_reverse(preds_norm, mean, std)
                         error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
@@ -542,7 +542,7 @@ if __name__ == '__main__':
 #   for directory in dirs:
 #     regressors_preds(directory)
     start = time.perf_counter()
-    with multiprocessing.Pool(processes=1) as pool:
+    with multiprocessing.Pool() as pool:
             tasks = [
                 (directory, file) 
                 for directory in dirs 

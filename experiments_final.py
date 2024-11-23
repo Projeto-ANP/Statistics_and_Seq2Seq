@@ -31,7 +31,6 @@ warnings.filterwarnings("ignore")
 
 colunas = ['DATA', 'MCPM', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12',
-           'Test Statistic', 'p-value', 'Lags Used', 'Observations Used', 'Critical Value (1%)', 'Critical Value (5%)', 'Critical Value (10%)', 'Stationary'
            ]
 df_result = pd.DataFrame(columns=colunas)
 format_v = "UNKNOWN"
@@ -149,13 +148,13 @@ def checkFolder(pasta, arquivo, tipo):
 
 
 dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
+    # '../datasets/venda/mensal/uf/gasolinac/',
+    # '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    '../datasets/venda/mensal/uf/glp/',
+    # '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    '../datasets/venda/mensal/uf/oleodiesel/',
-    # '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    # '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
 # pickle_file = './pickle/arima/rolling'
@@ -165,7 +164,7 @@ def arima_error_series(args):
     chave = ''
     model_file = f'arima{chave}'
     results_file = f'./paper_roma/{model_file}'
-    transformations = ["deseasonal"]
+    transformations = ["normal","deseasonal"]
     cols = ['train_range', 'test_range','time', 'UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series'
            ]
@@ -280,6 +279,6 @@ if __name__ == "__main__":
     end = time.perf_counter()
     finaltime = end - start
     print_log(f"EXECUTION TIME: {finaltime}")
-    with open(f"./paper_roma/arima/execution_time.txt", "w", encoding="utf-8") as arquivo:
-        arquivo.write(str(finaltime))
+    # with open(f"./paper_roma/arima/execution_time.txt", "w", encoding="utf-8") as arquivo:
+        # arquivo.write(str(finaltime))
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")

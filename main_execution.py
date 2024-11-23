@@ -130,10 +130,13 @@ def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format
     return study.best_params
 
 dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
-    '../datasets/venda/mensal/uf/glp/',
-    '../datasets/venda/mensal/uf/oleodiesel/',
+    # '../datasets/venda/mensal/uf/gasolinac/',
+    # '../datasets/venda/mensal/uf/etanolhidratado/',
+    # '../datasets/venda/mensal/uf/glp/',
+    # '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/querosenedeaviacao/',
+    # '../datasets/venda/mensal/uf/oleocombustivel/'
+
 ]
 train_tf_v = pd.Series()
 train_v_real = pd.Series()
@@ -154,19 +157,21 @@ def image_error_series(args):
     global representation
     global wavelet
     global level
-    representation = "DWT"
+    representation = "WPT"
     wavelet = "bior2.2"
     level = 2 #only DWT/SWT
     horizon = 12
     window = 12
-    regr = 'fpca'
+    regr = 'ridge'
     chave = ''
-    model_file = f'{representation}_{regr}{chave}_linear_true'
+    model_file = f'{representation}_{regr}{chave}'
     results_file = f'./paper_roma/{model_file}'
     transformations = ["normal", "deseasonal"]
     cols = ['train_range', 'test_range', 'time','UF', 'PRODUCT', 'MODEL', 'PARAMS', 'WINDOW', 'HORIZON', 'RMSE', 'MAPE', 'POCID', 'PBE','MCPM', 'MASE',
            'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10', 'P11', 'P12', 'error_series'
            ]
+
+
     if file.endswith('.csv'):
         
         uf = file.split("_")[1].upper()
@@ -285,7 +290,7 @@ def image_error_series(args):
 
 if __name__ == '__main__':
     start = time.perf_counter()
-    with multiprocessing.Pool(processes=10) as pool:
+    with multiprocessing.Pool() as pool:
             tasks = [
                 (directory, file) 
                 for directory in dirs 
@@ -296,6 +301,6 @@ if __name__ == '__main__':
     end = time.perf_counter()
     finaltime = end - start
     print_log(f"EXECUTION TIME: {finaltime}")
-    with open(f"./paper_roma/GADF_ridge/execution_time.txt", "w", encoding="utf-8") as arquivo:
-        arquivo.write(str(finaltime))
+    # with open(f"./paper_roma/GADF_ridge/execution_time.txt", "w", encoding="utf-8") as arquivo:
+        # arquivo.write(str(finaltime))
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")

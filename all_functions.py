@@ -394,7 +394,7 @@ def transform_deep_train(series_transform, format="deseasonal", horizon=12):
         transform = ConditionalDeseasonalizer(sp=12)
         transform.fit(series_transform)
         series_ts = transform.transform(series_transform)
-        series_ts_norm, mean, std= rolling_window_series(series_ts, horizon)
+        series_ts_norm, mean, std = rolling_window_series(series_ts, horizon)
         return series_ts_norm, mean, std
     elif format == "diff":
         series_diff = series_transform.diff()
