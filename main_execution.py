@@ -157,12 +157,12 @@ def image_error_series(args):
     global representation
     global wavelet
     global level
-    representation = "WPT"
+    representation = "DWT"
     wavelet = "bior2.2"
     level = 2 #only DWT/SWT
     horizon = 12
     window = 12
-    regr = 'ridge'
+    regr = 'catboost'
     chave = ''
     model_file = f'{representation}_{regr}{chave}'
     results_file = f'./paper_roma/{model_file}'
