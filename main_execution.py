@@ -130,10 +130,10 @@ def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format
     return study.best_params
 
 dirs = [
-    # '../datasets/venda/mensal/uf/gasolinac/',
-    # '../datasets/venda/mensal/uf/etanolhidratado/',
-    # '../datasets/venda/mensal/uf/glp/',
-    # '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/gasolinac/',
+    '../datasets/venda/mensal/uf/etanolhidratado/',
+    '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/oleodiesel/',
     '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/oleocombustivel/'
 
@@ -157,12 +157,12 @@ def image_error_series(args):
     global representation
     global wavelet
     global level
-    representation = "DWT"
+    representation = "WPT"
     wavelet = "bior2.2"
     level = 2 #only DWT/SWT
     horizon = 12
     window = 12
-    regr = 'catboost'
+    regr = 'ridge'
     chave = ''
     model_file = f'{representation}_{regr}{chave}'
     results_file = f'./paper_roma/{model_file}'
@@ -184,7 +184,7 @@ def image_error_series(args):
         df.index = df.index.to_period('M')
         series = df['m3']
         train_test_splits = []
-        min_train_size = 36 + (12 * 26)
+        min_train_size = 36 + (12 * 25)
 
         aux_series = series
         while len(aux_series) > horizon + min_train_size:

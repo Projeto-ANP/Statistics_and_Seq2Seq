@@ -108,7 +108,7 @@ def ets_error_series(args):
             #     train_stl = stl.seasonal_ + stl.trend_
 
             train_test_splits = []
-            min_train_size = 36 + (12 * 26)
+            min_train_size = 36 + (12 * 25)
 
             aux_series = series
             while len(aux_series) > horizon + min_train_size:
