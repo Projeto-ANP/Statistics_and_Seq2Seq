@@ -148,12 +148,12 @@ def checkFolder(pasta, arquivo, tipo):
 
 
 dirs = [
-    # '../datasets/venda/mensal/uf/gasolinac/',
-    # '../datasets/venda/mensal/uf/etanolhidratado/',
+    '../datasets/venda/mensal/uf/gasolinac/',
+    '../datasets/venda/mensal/uf/etanolhidratado/',
     # '../datasets/venda/mensal/uf/gasolinadeaviacao/',
-    # '../datasets/venda/mensal/uf/glp/',
+    '../datasets/venda/mensal/uf/glp/',
     # '../datasets/venda/mensal/uf/oleocombustivel/',
-    # '../datasets/venda/mensal/uf/oleodiesel/',
+    '../datasets/venda/mensal/uf/oleodiesel/',
     '../datasets/venda/mensal/uf/querosenedeaviacao/',
     # '../datasets/venda/mensal/uf/queroseneiluminante/',
 ]
@@ -189,7 +189,7 @@ def arima_error_series(args):
             #     train_stl = stl.seasonal_ + stl.trend_
 
             train_test_splits = []
-            min_train_size =  36 + (12 * 26)
+            min_train_size =  36 + (12 * 15)
 
             aux_series = series
             while len(aux_series) > horizon + min_train_size:
