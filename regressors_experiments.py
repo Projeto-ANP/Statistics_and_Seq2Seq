@@ -226,7 +226,7 @@ regr = 'SEM MODELO'
 def regressor_error_series(args):
     directory, file = args
     global regr 
-    regr = 'ridge'
+    regr = 'catboost'
     chave = ''
     model_file = f'{regr}{chave}'
     window = 12
@@ -247,7 +247,7 @@ def regressor_error_series(args):
         df.index = df.index.to_period('M')
         series = df['m3']
         train_test_splits = []
-        min_train_size = 36 + (12 * 25)
+        min_train_size = 36 + (12 * 15)
 
         aux_series = series
         while len(aux_series) > horizon + min_train_size:
