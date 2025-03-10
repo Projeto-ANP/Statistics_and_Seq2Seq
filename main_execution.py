@@ -11,6 +11,7 @@ from sklearn.svm import SVR
 from catboost import CatBoostRegressor
 import optuna
 from sklearn.linear_model import Ridge, RidgeCV
+from cisia.datasets import DatasetLoader
 from tsml.feature_based import FPCARegressor
 warnings.filterwarnings("ignore")
 
@@ -72,8 +73,14 @@ def objective_optuna(trial):
     try:
         model.fit(X_train_v, y_train_v)
 
-        predictions = recursive_step(X_test_v, train_original, model, horizon, window, format_v, representation, wavelet, level)
-        preds_real = pd.Series(predictions, index=test_val.index)
+        #transformados
+        # predictions = recursive_step(X_test_v, train_original, model, horizon, window, format_v, representation, wavelet, level)
+        # preds_real = pd.Series(predictions, index=test_val.index)
+
+        predictions = recursive_multistep_forecasting(X_test_v, model, horizon)
+        preds = pd.Series(predictions, index=test_val.index)
+        preds_real = reverse_regressors(train_original, preds, window=horizon, format=format_v)
+        
         
         mape_result = mape(test_val, preds_real)
     except Exception as e:
@@ -129,15 +136,6 @@ def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format
 
     return study.best_params
 
-dirs = [
-    '../datasets/venda/mensal/uf/gasolinac/',
-    '../datasets/venda/mensal/uf/etanolhidratado/',
-    '../datasets/venda/mensal/uf/glp/',
-    '../datasets/venda/mensal/uf/oleodiesel/',
-    '../datasets/venda/mensal/uf/querosenedeaviacao/',
-    # '../datasets/venda/mensal/uf/oleocombustivel/'
-
-]
 train_tf_v = pd.Series()
 train_v_real = pd.Series()
 test_v_real = pd.Series()
@@ -288,19 +286,354 @@ def image_error_series(args):
                         print_log(f"Error: Not possible to train for {derivado}-{transform} in {uf}\n {e}")
                         traceback.print_exc()
 
-if __name__ == '__main__':
-    start = time.perf_counter()
-    with multiprocessing.Pool() as pool:
-            tasks = [
-                (directory, file) 
-                for directory in dirs 
-                for file in os.listdir(directory) 
-            ]
 
-            pool.map(image_error_series, tasks)
-    end = time.perf_counter()
-    finaltime = end - start
-    print_log(f"EXECUTION TIME: {finaltime}")
-    # with open(f"./paper_roma/GADF_ridge/execution_time.txt", "w", encoding="utf-8") as arquivo:
-        # arquivo.write(str(finaltime))
+
+def run_tsf_image_series(args):
+    frequency, horizon, line, i, regressor = args
+    global regr 
+    global representation
+    global wavelet
+    global level
+    representation = "FT"
+    wavelet = "bior2.2"
+    level = 2 #only DWT/SWT
+    # horizon = 12
+    window = horizon
+    regr = regressor
+    transformations = ["normal"]
+    chave = ''
+
+    cols_serie = ["dataset_index", "horizon","regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", "start_test", "final_test"]
+
+    # transform = "normal"
+    # representation = ""
+    dataset = "ANP_MONTHLY"
+   
+
+    train_test_splits = []
+    min_train_size = 36 #+ (12 * 30)
+
+    series_value = line['series_value'].tolist()
+    start_timestamp = line['start_timestamp']
+
+    freq = "M" if frequency == "monthly" else "Y"
+
+    index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+    series = pd.Series(series_value, index=index_series)
+
+    aux_series = series
+    while len(aux_series) > horizon + min_train_size:
+        train, test = aux_series[:-horizon], aux_series[-horizon:]
+        train_test_splits.append((train, test))
+        aux_series = train
+
+    for (train, test) in train_test_splits:
+        train_stl = train
+        _, test_val = train_test_stats(train, horizon)
+        if 'noresid' in chave:
+            print_log('----------- SEM RESIDUO NA SERIE ---------')
+            transformer = STLTransformer(sp=12) 
+            stl = transformer.fit(train)
+            train_stl = stl.seasonal_ + stl.trend_
+
+        train_val, _ = train_test_stats(train_stl, horizon)
+        start_train = train_stl.index.tolist()[0]
+        final_train = train_stl.index.tolist()[-1]
+
+        start_test = test.index.tolist()[0]
+        final_test = test.index.tolist()[-1]
+
+        train_range = f"{start_train}_{final_train}"
+        test_range = f"{start_test}_{final_test}"
+    
+        for transform in transformations:
+            # path_derivado = f'{results_file}/{derivado}/{transform}'
+            # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
+            exp_name = f"{representation}_{regr}_{transform}"
+            path_experiments = f'../timeseries/mestrado/resultados/{representation}_{regr}/{transform}/'
+            path_csv = f"{path_experiments}/{dataset}.csv"
+            os.makedirs(path_experiments, exist_ok=True)
+            flag = True
+            start_exp = time.perf_counter()
+            if flag:
+                train_tf = transform_regressors(train_stl, transform)
+                train_tf_val = transform_regressors(train_val, format=transform)
+                # try:
+                data = rolling_window_image(pd.concat([train_tf, pd.Series([1,2,3,4,5,6,7,8,9,10,11,12], index=test.index)]), window, representation, wavelet, level) 
+                data = data.dropna()
+                X_train, X_test, y_train, _ = train_test_split(data, horizon)
+                
+                results_rg = {'alphas': np.logspace(-3, 3, 10)}
+                #necessita fazer isso para nao implicar na sazonalidade do val com train
+                if regr != "ridge" and regr != "fpca":
+                    data_val = rolling_window_image(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window, representation, wavelet, level)
+                    data_val = data_val.dropna()
+
+                    X_train_v, X_test_v, y_train_v, _ = train_test_split(data_val, horizon)
+                    results_rg = find_best_parameter_optuna(X_train_v, X_test_v, y_train_v, train_val, test_val, transform)
+                
+                if regr == 'rf':
+                    results_rg['random_state'] = 42
+                    rg = RandomForestRegressor(**results_rg)
+                elif regr == 'knn':
+                    rg = KNeighborsRegressor(**results_rg)
+                elif regr == "catboost":
+                    results_rg['random_state'] = 42
+                    rg = CatBoostRegressor(**results_rg)
+                elif regr == "ridge":
+                    rg = RidgeCV(**results_rg)
+                elif regr == "svr":
+                    rg = SVR(**results_rg)
+                elif regr == "fpca":
+                    rg = FPCARegressor(
+                        n_jobs=1,
+                        bspline=True,
+                        order=4,
+                        # estimator=RidgeCV(**{'alphas': np.logspace(-3, 3, 10)}),
+                        n_basis=10,
+                        # n_basis=None
+                    )
+                else:
+                    raise ValueError('nao existe esse regressor')
+                rg.fit(X_train, y_train)
+
+                predictions = recursive_step(X_test, train_stl, rg, horizon, window, transform, representation, wavelet, level)
+                preds_real = pd.Series(predictions, index=test.index)
+                end_exp = time.perf_counter()
+
+                # error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
+                # y_baseline = train[-horizon*1:].values
+                # rmse_result = rmse(test, preds_real)
+                # mape_result = mape(test, preds_real)
+                # pocid_result = pocid(test, preds_real)
+                # pbe_result = pbe(test, preds_real)
+                # mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
+                # mase_result = mase(test, preds_real, y_baseline)
+
+                preds_real_array = np.array(preds_real.values)
+                preds_real_reshaped = preds_real_array.reshape(1, -1)
+                test_reshaped = test.values.reshape(1, -1)
+                smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
+                # print(smape_result)
+                rmse_result = calculate_rmse(preds_real_reshaped, test_reshaped)
+                msmape_result = calculate_msmape(preds_real_reshaped, test_reshaped)
+                # mase_result = calculate_mase(preds_real_reshaped, test_reshaped, training_set, seasonality)
+                mae_result = calculate_mae(preds_real_reshaped, test_reshaped)
+                mape_result = mape(test.values, preds_real_array)
+                pocid_result = pocid(test.values, preds_real_array)
+
+                data_serie = {
+                    'dataset_index': f'{i}',
+                    'horizon': horizon,
+                    'regressor': exp_name,
+                    'mape': mape_result,
+                    'pocid': pocid_result,
+                    'smape': smape_result,
+                    'rmse': rmse_result,
+                    'msmape': msmape_result,
+                    'mae': mae_result,
+                    'test': [test.tolist()],
+                    'predictions': [preds_real.values],
+                    'start_test': start_test,
+                    'final_test': final_test
+                    # 'training_time': times[0],
+                    # 'prediction_time': times[1],
+                }
+
+                if not os.path.exists(path_csv):
+                    pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+
+                df_new = pd.DataFrame(data_serie)
+                df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+
+
+
+
+                # except Exception as e:
+                #     print_log(e)
+                #     traceback.print_exc()
+
+def run_tsf_normal_series(args):
+    frequency, horizon, line, i, regressor = args
+    global regr 
+    # horizon = 12
+    window = horizon
+    regr = regressor
+    transformations = ["normal"]
+    chave = ''
+
+    cols_serie = ["dataset_index", "horizon","regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", "start_test", "final_test"]
+    dataset = "ANP_MONTHLY"
+   
+    train_test_splits = []
+    min_train_size = 36# + (12 * 25)
+
+    series_value = line['series_value'].tolist()
+    start_timestamp = line['start_timestamp']
+
+    freq = "M" if frequency == "monthly" else "Y"
+
+    index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+    series = pd.Series(series_value, index=index_series)
+
+    aux_series = series
+    while len(aux_series) > horizon + min_train_size:
+        train, test = aux_series[:-horizon], aux_series[-horizon:]
+        train_test_splits.append((train, test))
+        aux_series = train
+
+    for (train, test) in train_test_splits:
+        train_stl = train
+        _, test_val = train_test_stats(train, horizon)
+        if 'noresid' in chave:
+            print_log('----------- SEM RESIDUO NA SERIE ---------')
+            transformer = STLTransformer(sp=12) 
+            stl = transformer.fit(train)
+            train_stl = stl.seasonal_ + stl.trend_
+
+        train_val, _ = train_test_stats(train_stl, horizon)
+        start_test = test.index.tolist()[0]
+        final_test = test.index.tolist()[-1]
+    
+        for transform in transformations:
+            # path_derivado = f'{results_file}/{derivado}/{transform}'
+            # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
+            exp_name = f"{regr}_{transform}"
+            path_experiments = f'../timeseries/mestrado/resultados/{regr}/{transform}/'
+            path_csv = f"{path_experiments}/{dataset}.csv"
+            os.makedirs(path_experiments, exist_ok=True)
+            flag = True
+            start_exp = time.perf_counter()
+            if flag:
+                train_tf = transform_regressors(train_stl, transform)
+                train_tf_val = transform_regressors(train_val, format=transform)
+                try:
+                    data = rolling_window(pd.concat([train_tf, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window)
+                    data = data.dropna()
+                    X_train, X_test, y_train, _ = train_test_split(data, horizon)
+                    
+                    results_rg = {'alphas': np.logspace(-3, 3, 10)}
+                    #necessita fazer isso para nao implicar na sazonalidade do val com train
+                    if regr != "ridge" and regr != "fpca":
+                        data_val = rolling_window(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window)
+                        data_val = data_val.dropna()
+
+                        X_train_v, X_test_v, y_train_v, _ = train_test_split(data_val, horizon)
+                        results_rg = find_best_parameter_optuna(X_train_v, X_test_v, y_train_v, train_val, test_val, transform)
+                    
+                    if regr == 'rf':
+                        results_rg['random_state'] = 42
+                        rg = RandomForestRegressor(**results_rg)
+                    elif regr == 'knn':
+                        rg = KNeighborsRegressor(**results_rg)
+                    elif regr == "catboost":
+                        results_rg['random_state'] = 42
+                        rg = CatBoostRegressor(**results_rg)
+                    elif regr == "ridge":
+                        rg = RidgeCV(**results_rg)
+                    elif regr == "svr":
+                        rg = SVR(**results_rg)
+                    elif regr == "fpca":
+                        rg = FPCARegressor(
+                            n_jobs=1,
+                            bspline=True,
+                            order=4,
+                            # estimator=RidgeCV(**{'alphas': np.logspace(-3, 3, 10)}),
+                            n_basis=10,
+                            # n_basis=None
+                        )
+                    else:
+                        raise ValueError('nao existe esse regressor')
+                    rg.fit(X_train, y_train)
+
+                    predictions = recursive_multistep_forecasting(X_test, rg, horizon)
+                    preds = pd.Series(predictions, index=test.index)
+                    preds_real = reverse_regressors(train_stl, preds, window,format=transform)
+                    end_exp = time.perf_counter()
+
+                    # error_series = [a - b for a, b in zip(test.tolist(), preds_real)]
+                    # y_baseline = train[-horizon*1:].values
+                    # rmse_result = rmse(test, preds_real)
+                    # mape_result = mape(test, preds_real)
+                    # pocid_result = pocid(test, preds_real)
+                    # pbe_result = pbe(test, preds_real)
+                    # mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
+                    # mase_result = mase(test, preds_real, y_baseline)
+
+                    preds_real_array = np.array(preds_real.values)
+                    preds_real_reshaped = preds_real_array.reshape(1, -1)
+                    test_reshaped = test.values.reshape(1, -1)
+                    smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
+                    # print(smape_result)
+                    rmse_result = calculate_rmse(preds_real_reshaped, test_reshaped)
+                    msmape_result = calculate_msmape(preds_real_reshaped, test_reshaped)
+                    # mase_result = calculate_mase(preds_real_reshaped, test_reshaped, training_set, seasonality)
+                    mae_result = calculate_mae(preds_real_reshaped, test_reshaped)
+                    mape_result = mape(test.values, preds_real_array)
+                    pocid_result = pocid(test.values, preds_real_array)
+
+                    data_serie = {
+                        'dataset_index': f'{i}',
+                        'horizon': horizon,
+                        'regressor': exp_name,
+                        'mape': mape_result,
+                        'pocid': pocid_result,
+                        'smape': smape_result,
+                        'rmse': rmse_result,
+                        'msmape': msmape_result,
+                        'mae': mae_result,
+                        'test': [test.tolist()],
+                        'predictions': [preds_real.values],
+                        'start_test': start_test,
+                        'final_test': final_test
+                        # 'training_time': times[0],
+                        # 'prediction_time': times[1],
+                    }
+
+                    if not os.path.exists(path_csv):
+                        pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+
+                    df_new = pd.DataFrame(data_serie)
+                    df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+
+                except Exception as e:
+                    print_log(e)
+                    traceback.print_exc()
+
+
+
+if __name__ == '__main__':
+    # start = time.perf_counter()
+    file_path = '../mes_11_venda_mensal.tsf'
+    loader = DatasetLoader()
+    df, metadata = loader.read_tsf(path_tsf=file_path)
+    df["series_value"] = df["series_value"].apply(np.array)
+    def should_remove(series, window_size=24):
+        for i in range(0, len(series), window_size):
+            window = series[i : i + window_size]
+            if (window == 0).mean() > 0.5:
+                return True
+        
+        return False
+
+
+    mask = df["series_value"].apply(should_remove)
+    # df_removed = df[mask]
+    df = df[~mask]
+    frequency = metadata['frequency']
+    horizon = metadata['horizon']
+    regr = 'catboost'
+    
+
+    # df.iloc[i]
+    def run_wrapper(args):
+        # frequency, horizon, line, i = args
+        run_tsf_image_series(args)
+        # run_tsf_normal_series(args)
+
+    tasks = [(frequency, horizon, df.iloc[i], i, regr) for i in range(len(df))]
+
+    with multiprocessing.Pool() as pool:
+        pool.map(run_wrapper, tasks)
+
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")

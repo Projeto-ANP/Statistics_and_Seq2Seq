@@ -685,13 +685,13 @@ def get_arima_param(path_results, derivado, uf, transform):
     params = ast.literal_eval(params_str)
     return (params['p'], params['d'], params['q'])
 
-def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
+def reverse_transform_norm_preds(series_preds, train, format="deseasonal", w=12):
     if format == "deseasonal":
         transform = Deseasonalizer(sp=12)
         transform.fit(train)
         series_before_norm = transform.transform(train)
         
-        _, mean, std = rolling_window_series(series_before_norm, 12)
+        _, mean, std = rolling_window_series(series_before_norm, w)
         preds_transformed = znorm_reverse(series_preds, mean, std)
         
         series_real = transform.inverse_transform(preds_transformed)
@@ -699,7 +699,7 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
     elif format == "diff":
         series_before_norm = train.diff()
         
-        _, mean, std = rolling_window_series(series_before_norm, 12)
+        _, mean, std = rolling_window_series(series_before_norm, w)
         preds_transformed = znorm_reverse(series_preds, mean, std)
 
         series_preds = pd.concat([train.iloc[[-1]], preds_transformed])
@@ -709,7 +709,7 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
         constante = 10
         series_before_norm = np.log(train + constante)
         
-        _, mean, std = rolling_window_series(series_before_norm, 12)
+        _, mean, std = rolling_window_series(series_before_norm, w)
         preds_transformed = znorm_reverse(series_preds, mean, std)
 
         return np.exp(preds_transformed) - constante
@@ -718,7 +718,7 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
         series_train_log = np.log(train + constante)
         series_before_norm = series_train_log.diff()
         
-        _, mean, std = rolling_window_series(series_before_norm, 12)
+        _, mean, std = rolling_window_series(series_before_norm, w)
         preds_transformed = znorm_reverse(series_preds, mean, std)
 
         series_log = pd.concat([series_train_log.iloc[[-1]], preds_transformed])
@@ -731,7 +731,7 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
         train_des = transform.transform(train)
         train_diff = train_des.diff()
 
-        _, mean, std = rolling_window_series(train_diff, 12)
+        _, mean, std = rolling_window_series(train_diff, w)
         preds_transformed = znorm_reverse(series_preds, mean, std)
 
         completa = pd.concat([train_des.iloc[[-1]], preds_transformed])
@@ -745,7 +745,7 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
         train_des = transform.transform(train)
         train_log = np.log(train_des + constante)
 
-        _, mean, std = rolling_window_series(train_log, 12)
+        _, mean, std = rolling_window_series(train_log, w)
         preds_transformed = znorm_reverse(series_preds, mean, std)
 
         series_ds = np.exp(preds_transformed)
@@ -754,7 +754,9 @@ def reverse_transform_norm_preds(series_preds, train, format="deseasonal"):
         return series_inverse
     
     #normal
-    _, mean, std = rolling_window_series(train, 12)
+    # _, mean, std = rolling_window_series(train, w)
+    mean = np.mean(train)
+    std = np.std(train)
     preds_real = znorm_reverse(series_preds, mean, std)
     return preds_real
 
@@ -932,118 +934,100 @@ def transform_series(series, representation, wavelet, level, shuffle_order=None)
   if representation == "CWT":
     coeffs, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet="morl") # morl
     im_final = coeffs.flatten()
+    # im_final = np.concatenate((series, coeffs.flatten()))
   elif representation == "DWT":
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
-    im_final = np.concatenate(coeffs, axis=0) 
+    coeffs_list = np.concatenate(coeffs, axis=0) 
+    im_final = coeffs_list
+    # im_final = np.concatenate((series, coeffs_list))
+
+  elif representation == "FT":
+    fft_values = np.fft.fft(series)
+   
+    fft_magnitudes = np.abs(fft_values)
+    half_n = len(fft_magnitudes) // 2
+    fft_features = fft_magnitudes[1:half_n].tolist()
+    # im_final = np.array(fft_features)
+    im_final = np.concatenate((series, fft_features))
+
   elif representation == "SWT":
     coeffs_swt = pywt.swt(series, wavelet, level=level)
-    im_final = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
-
-  elif representation == "RANDWAVE":
-    coeffs_cwt, _ = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet="morl")
-    im_cwt = coeffs_cwt.flatten()
-    
-    coeffs_dwt = pywt.wavedec(series, wavelet=wavelet, level=level)
-    im_dwt = np.concatenate(coeffs_dwt, axis=0)
-    
-    coeffs_swt = pywt.swt(series, wavelet=wavelet, level=level)
-    im_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
-    
-
-    from scipy.signal import stft
-    f, t, Zxx = stft(series, nperseg=64)
-
-    coeffs_stft = np.abs(Zxx)
-
-    im_stft = coeffs_stft.flatten()
-
-    series2 = series.reshape(1, len(series))
-    gaf = GramianAngularField(method='summation')
-    X_gaf = gaf.fit_transform(series2)
-    im_gasf = X_gaf[0].flatten()
-
-    mtf = MarkovTransitionField(strategy='normal') #n_bins=4, strategy='uniform'
-    X_mtf = mtf.fit_transform(series2)
-    im_mtf = X_mtf[0].flatten()
-
-    combined = np.concatenate([ im_cwt, im_mtf, im_swt, im_dwt,series, im_gasf, im_stft])
-    
-    combined = combined[shuffle_order]
-
-    # combined = np.concatenate([combined, series])
-
-    
-    im_final = combined
-
-  elif representation == "CONCAT":
-    coeffs_swt = pywt.swt(series, wavelet, level=level)
-    coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
-
-    im_final = np.concatenate((series, coeffs_swt.flatten()))
+    coeffs_list = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
+    im_final = np.concatenate((series, coeffs_list))
 
   elif representation == "SWT_GASF":
     coeffs_swt = pywt.swt(series, wavelet, level=level)
     coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
 
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     rp = RecurrencePlot(threshold='distance')
-    X_rp = rp.fit_transform(series)
+    X_rp = rp.fit_transform(series_reshape)
     rp = X_rp[0].flatten()
 
-    im_final = np.concatenate((coeffs_swt.flatten(), rp))
+    coeffs_list = np.concatenate((coeffs_swt.flatten(), rp))
+    im_final = np.concatenate((series, coeffs_list))
 
   elif representation == "SWT_MTF":
     coeffs_swt = pywt.swt(series, wavelet, level=level)
     coeffs_swt = np.concatenate([coeff[0] for coeff in coeffs_swt] + [coeff[1] for coeff in coeffs_swt], axis=0)
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     mtf = MarkovTransitionField(n_bins=4, strategy='uniform') #n_bins=4, strategy='uniform'
-    X_mtf = mtf.fit_transform(series)
+    X_mtf = mtf.fit_transform(series_reshape)
     mtf = X_mtf[0].flatten()
 
-    im_final = np.concatenate((coeffs_swt.flatten(), mtf))
+    coeffs_list = np.concatenate((coeffs_swt.flatten(), mtf))
+    im_final = np.concatenate((series, coeffs_list))
   elif representation == "WPT":
     wp = pywt.WaveletPacket(data=series, wavelet='db1', mode='symmetric')
 
     nodes = wp.get_level(level, order='freq')
     coeffs_wpt = np.array([n.data for n in nodes])
 
-    im_final = np.concatenate(coeffs_wpt, axis=0)
+    coeffs_list = np.concatenate(coeffs_wpt, axis=0)
+    im_final = np.concatenate((series, coeffs_list))
+
   elif representation == "STFT":
     from scipy.signal import stft
     f, t, Zxx = stft(series, nperseg=64)
 
     coeffs_stft = np.abs(Zxx)
 
-    im_final = coeffs_stft.flatten()
+    coeffs_list = coeffs_stft.flatten()
+    im_final = np.concatenate((series, coeffs_list))
   elif representation == "MTF":
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     mtf = MarkovTransitionField(n_bins=4, strategy='uniform') #n_bins=4, strategy='uniform'
-    X_mtf = mtf.fit_transform(series)
-    im_final = X_mtf[0].flatten()
+    X_mtf = mtf.fit_transform(series_reshape)
+    coeffs_list = X_mtf[0].flatten()
+    im_final = np.concatenate((series, coeffs_list))
   elif representation == "GADF":
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     gaf = GramianAngularField(method='difference')
-    X_gaf = gaf.fit_transform(series)
-    im_final = X_gaf[0].flatten()
+    X_gaf = gaf.fit_transform(series_reshape)
+    coeffs_list = X_gaf[0].flatten()
+    im_final = np.concatenate((series, coeffs_list))
   elif representation == "GASF":
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     gaf = GramianAngularField(method='summation')
-    X_gaf = gaf.fit_transform(series)
-    im_final = X_gaf[0].flatten()
+    X_gaf = gaf.fit_transform(series_reshape)
+    coeffs_list = X_gaf[0].flatten()
+    im_final = np.concatenate((series, coeffs_list))
   elif representation == "RP":
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     rp = RecurrencePlot(threshold='distance')
-    X_rp = rp.fit_transform(series)
-    im_final = X_rp[0].flatten()
+    X_rp = rp.fit_transform(series_reshape)
+    coeffs_list = X_rp[0].flatten()
+    im_final = np.concatenate((series, coeffs_list))
   elif representation == "FIRTS":
-    series = series.reshape(1, len(series))
+    series_reshape = series.reshape(1, len(series))
     mtf = MarkovTransitionField(n_bins=4, strategy='uniform')
-    X_mtf = mtf.fit_transform(series)
+    X_mtf = mtf.fit_transform(series_reshape)
     gaf = GramianAngularField(method='difference')
-    X_gaf = gaf.fit_transform(series)
+    X_gaf = gaf.fit_transform(series_reshape)
     rp = RecurrencePlot(threshold='distance')
-    X_rp = rp.fit_transform(series)
-    im_final = (X_mtf[0] + X_gaf[0] + X_rp[0]).flatten() # FIRTS é fusão entre MTF, GADF e RP (vejam o artigo que passei para vocês)
+    X_rp = rp.fit_transform(series_reshape)
+    coeffs_list = (X_mtf[0] + X_gaf[0] + X_rp[0]).flatten() # FIRTS é fusão entre MTF, GADF e RP (vejam o artigo que passei para vocês)
+    im_final = np.concatenate((series, coeffs_list))
   return im_final
 
 def get_test_real(series, start_date, end_date):
@@ -1588,7 +1572,13 @@ def recursive_step(X_test, train_completo, model, horizon, window, transform, re
     last_window_train_pd = znorm_2(last_window_train_pd)
 
     #pega o valor do proximo index de train para adicionar em predicao
-    index_pred = last_window_train_pd.index[-1] + 1
+    # index_pred = last_window_train_pd.index[-1] + 1
+    index_pred = last_window_train_pd.index[-1] + pd.DateOffset(months=1)
+    # print("LAST WINDOW")
+    # print(last_window_train_pd.index[-1])
+    # print("INDEX PRED")
+    # print(index_pred)
+
     pred_as_pd = pd.Series([pred], index=[index_pred])
     
     #concatena a predicao normalizada no ultimo pedaco do train
@@ -1601,7 +1591,7 @@ def recursive_step(X_test, train_completo, model, horizon, window, transform, re
     pred_real = inverse_tranformation(train_completo, last_window_train_pd, window, format=transform).iloc[-1]
     
     #adiciona preds real ao pedaco do train real para proximas reversoes
-    index_pred_real = train_completo.index[-1] + 1
+    index_pred_real = train_completo.index[-1] + pd.DateOffset(months=1)
     pred_real_as_pd = pd.Series([pred_real], index=[index_pred_real])
     train_completo = pd.concat([train_completo, pred_real_as_pd])
 
