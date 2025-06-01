@@ -9,7 +9,8 @@ from darts.models import TBATS
 from darts.models import TransformerModel
 from darts.models import NaiveSeasonal
 from darts.models import NBEATSModel
-from cisia.datasets import DatasetLoader
+from mlforecast import MLForecast
+from streamfuels.datasets import DatasetLoader
 from darts.models import TFTModel
 from darts.models import NHiTSModel
 from darts.models import NaiveMean
@@ -23,6 +24,7 @@ from pyts.image import MarkovTransitionField
 from pyts.image import GramianAngularField
 from pyts.image import RecurrencePlot
 import time
+from metaforecast.ensembles import MLForecastADE
 import numpy as np
 from sklearn.metrics import mean_absolute_percentage_error as mape
 import os
@@ -33,6 +35,11 @@ from catboost import CatBoostRegressor
 from all_functions import *
 import traceback
 from functools import partial
+from neuralforecast import NeuralForecast
+from neuralforecast.models import NHITS, NBEATS, MLP
+
+from metaforecast.ensembles import ADE
+
 def objective_optuna(trial, train_val_darts, train_val, transform, test_val):
     try:
         my_stopper = EarlyStopping(
@@ -159,7 +166,7 @@ def generate_weights_series(index, exp_name, model, train, test, horizon, transf
     min_train_size = (horizon * 3) + (horizon * 15)
     train_test_splits = []
     aux_series = train
-    path_experiments = f'../timeseries/mestrado/ponderacao/'
+    path_experiments = f'./timeseries/mestrado/ponderacao/'
     path_csv = f"{path_experiments}/{exp_name}.csv"
     
     while len(aux_series) > horizon + min_train_size:
@@ -237,7 +244,7 @@ def run_tsf_file(tsf_file, dataset_name, regr):
     # regr = "ARIMA"
     dataset = dataset_name
     exp_name = f"{regr}_{transform}"
-    path_experiments = f'../timeseries/mestrado/models/{regr}/{transform}/'
+    path_experiments = f'./timeseries/mestrado/models/{regr}/{transform}/'
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
 
@@ -430,7 +437,7 @@ def run_tsf_file(tsf_file, dataset_name, regr):
         'all_training_time': all_train_time,
         'all_prediction_time': all_pred_time,
     }
-    path_dataset = f'../timeseries/' + "results.csv"
+    path_dataset = f'./timeseries/' + "results.csv"
     if not os.path.exists(path_dataset):
         pd.DataFrame(columns=cols_dataset).to_csv(path_dataset, sep=';', index=False)
 
@@ -454,7 +461,7 @@ def run_error_tsf_file(tsf_file, dataset_name):
     regr = "ETS"
     dataset = dataset_name
     exp_name = f"{regr}_{transform}"
-    path_experiments = f'../timeseries/mestrado/combination/normal_mtf_{regr}_error/'
+    path_experiments = f'./timeseries/mestrado/combination/normal_mtf_{regr}_error/'
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
 
@@ -648,7 +655,7 @@ def run_error_tsf_file(tsf_file, dataset_name):
         'all_training_time': all_train_time,
         'all_prediction_time': all_pred_time,
     }
-    path_dataset = f'../timeseries/' + "results.csv"
+    path_dataset = f'./timeseries/' + "results.csv"
     if not os.path.exists(path_dataset):
         pd.DataFrame(columns=cols_dataset).to_csv(path_dataset, sep=';', index=False)
 
@@ -703,7 +710,7 @@ def run_darts_series(args):
             # path_derivado = f'{results_file}/{derivado}/{transform}'
             # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
             exp_name = f"{regr}_{transform}"
-            path_experiments = f'../timeseries/mestrado/resultados/{regr}/{transform}/'
+            path_experiments = f'./timeseries/mestrado/resultados/{regr}/{transform}/'
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
@@ -846,6 +853,151 @@ def run_darts_series(args):
                 except Exception as e:
                     traceback.print_exc()
 
+
+
+def run_ade_series(args):
+    frequency, horizon, line, i, regressor = args
+    global regr 
+    # horizon = 12
+    window = horizon
+    n_lags = window
+    regr = regressor
+    transformations = ["normal"]
+    chave = ''
+
+    cols_serie = ["dataset_index", "horizon","regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", "start_test", "final_test"]
+    dataset = "ANP_MONTHLY"
+   
+    train_test_splits = []
+    min_train_size = 36 + (12 * 30)
+
+    series_value = line['series_value'].tolist()
+    start_timestamp = line['start_timestamp']
+    end_timestamp = line['end_timestamp']
+    unique_id = line['series_name']
+
+    freq = "M" if frequency == "monthly" else "Y"
+    
+    index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+    series = pd.Series(series_value, index=index_series)
+
+    aux_series = series
+    while len(aux_series) > horizon + min_train_size:
+        train, test = aux_series[:-horizon], aux_series[-horizon:]
+        train_test_splits.append((train, test))
+        aux_series = train
+
+    for (train, test) in train_test_splits:
+        train_stl = train
+        _, test_val = train_test_stats(train, horizon)
+        if 'noresid' in chave:
+            print_log('----------- SEM RESIDUO NA SERIE ---------')
+            transformer = STLTransformer(sp=12) 
+            stl = transformer.fit(train)
+            train_stl = stl.seasonal_ + stl.trend_
+
+        train_val, _ = train_test_stats(train_stl, horizon)
+        start_test = test.index.tolist()[0]
+        final_test = test.index.tolist()[-1]
+    
+        for transform in transformations:
+            # path_derivado = f'{results_file}/{derivado}/{transform}'
+            # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
+            exp_name = f"{regr}_{transform}"
+            path_experiments = f'./timeseries/mestrado/resultados/{regr}/{transform}/'
+            path_csv = f"{path_experiments}/{dataset}.csv"
+            os.makedirs(path_experiments, exist_ok=True)
+            flag = True
+            start_exp = time.perf_counter()
+            if flag:
+                train_tf = transform_regressors(train_stl, transform)
+                train_tf, _, _ = rolling_window_series(train_tf, horizon)
+                train_val_tf = transform_regressors(train_val, transform)
+                train_val_tf, _, _ = rolling_window_series(train_val_tf, horizon)
+                
+                if freq == "M":
+                    adjusted_end = train_tf.index[-1] + pd.DateOffset(months=1)
+                else:
+                    adjusted_end = train_tf.index[-1] + pd.DateOffset(years=1)
+
+                date_range = pd.date_range(start=start_timestamp, end=adjusted_end, freq=freq)
+
+                train_ade_df = pd.DataFrame({
+                    'unique_id': [unique_id] * len(date_range),
+                    'ds': date_range,
+                    'y': train_tf.values
+                })
+
+                try:
+                    from catboost import CatBoostRegressor
+                    from sklearn.ensemble import RandomForestRegressor
+                    from sklearn.svm import SVR
+                    from sklearn.neighbors import KNeighborsRegressor
+                    from sklearn.neural_network import MLPRegressor
+                    from sklearn.neighbors import KNeighborsRegressor
+                    
+                    models_ml = {
+                        'MLP': MLPRegressor(random_state=42),
+                        'Catboost': CatBoostRegressor(random_state=42),
+                        'RF': RandomForestRegressor(random_state=42, n_estimators=200),
+                        'SVR': SVR(),
+                        'KNN': KNeighborsRegressor(n_neighbors=5),
+                    }
+
+                    mlf = MLForecast(models=models_ml, freq='M', lags=range(1, n_lags))
+
+                    mlf.fit(df=train_ade_df, fitted=True)
+
+                    ensemble = MLForecastADE(mlf=mlf, trim_ratio=0.5)
+                    ensemble.fit()
+
+                    fcst = ensemble.predict(train=train_ade_df, h=horizon)
+                                    
+                    preds_norm = pd.Series(fcst.tolist(), index=test.index)
+
+                    #para modelos estatisticos
+                    preds_real = reverse_transform_norm_preds(preds_norm, train, transform)
+
+
+                    preds_real_array = np.array(preds_real.values)
+                    preds_real_reshaped = preds_real_array.reshape(1, -1)
+                    test_reshaped = test.values.reshape(1, -1)
+                    smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
+                    # print(smape_result)
+                    rmse_result = calculate_rmse(preds_real_reshaped, test_reshaped)
+                    msmape_result = calculate_msmape(preds_real_reshaped, test_reshaped)
+                    # mase_result = calculate_mase(preds_real_reshaped, test_reshaped, training_set, seasonality)
+                    mae_result = calculate_mae(preds_real_reshaped, test_reshaped)
+                    mape_result = mape(test.values, preds_real_array)
+                    pocid_result = pocid(test.values, preds_real_array)
+
+                    data_serie = {
+                        'dataset_index': f'{i}',
+                        'horizon': horizon,
+                        'regressor': exp_name,
+                        'mape': mape_result,
+                        'pocid': pocid_result,
+                        'smape': smape_result,
+                        'rmse': rmse_result,
+                        'msmape': msmape_result,
+                        'mae': mae_result,
+                        'test': [test.tolist()],
+                        'predictions': [preds_real.values],
+                        'start_test': start_test,
+                        'final_test': final_test
+                        # 'training_time': times[0],
+                        # 'prediction_time': times[1],
+                    }
+
+                    if not os.path.exists(path_csv):
+                        pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+
+                    df_new = pd.DataFrame(data_serie)
+                    df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+
+                except Exception as e:
+                        traceback.print_exc()
+
 import time
 import multiprocessing
 if __name__ == '__main__':
@@ -868,18 +1020,18 @@ if __name__ == '__main__':
     df = df[~mask]
     frequency = metadata['frequency']
     horizon = metadata['horizon']
-    regr = 'NBEATS'
+    regr = 'ADE'
     
 
     # df.iloc[i]
     def run_wrapper(args):
         # frequency, horizon, line, i = args
-        run_darts_series(args)
+        run_ade_series(args)
         # run_tsf_normal_series(args)
 
     tasks = [(frequency, horizon, df.iloc[i], i, regr) for i in range(len(df))]
 
-    with multiprocessing.Pool(processes=6) as pool:
+    with multiprocessing.Pool(processes=10) as pool:
         pool.map(run_wrapper, tasks)
 
     print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
