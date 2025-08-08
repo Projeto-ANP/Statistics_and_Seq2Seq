@@ -290,7 +290,7 @@ def image_error_series(args):
 
 
 def run_tsf_image_series(args):
-    frequency, horizon, line, i, regressor = args
+    frequency, horizon, line, i, regressor, dataset = args
     global regr 
     global representation
     global wavelet
@@ -308,7 +308,7 @@ def run_tsf_image_series(args):
 
     # transform = "normal"
     # representation = ""
-    dataset = "ANP_MONTHLY"
+    # dataset = "ANP_MONTHLY"
    
 
     train_test_splits = []
@@ -317,16 +317,59 @@ def run_tsf_image_series(args):
     series_value = line['series_value'].tolist()
     start_timestamp = line['start_timestamp']
 
-    freq = "M" if frequency == "monthly" else "Y"
+    # freq = "M" if frequency == "monthly" else "Y"
+
+    # index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+    # series = pd.Series(series_value, index=index_series)
+    
+    freq_map = {
+        "yearly": "Y",
+        "monthly": "M",
+        "weekly": "W",
+        "daily": "D",
+        "hourly": "H",
+        "half_hourly": "30min",  #30T
+    }
+
+    freq = freq_map.get(frequency)
+    if freq is None:
+        raise ValueError(f"Frequência desconhecida: {frequency}")
 
     index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
     series = pd.Series(series_value, index=index_series)
+    isProb = False
 
     aux_series = series
-    while len(aux_series) > horizon + min_train_size:
+    max_k = 4
+    min_train_factor = 3
+
+    qtd_series = horizon * max_k
+
+    while (
+        qtd_series >= len(aux_series) or
+        (len(aux_series) - qtd_series) < (horizon * min_train_factor)
+    ):
+        qtd_series -= horizon
+        if qtd_series < horizon:
+            raise ValueError("Série muito curta para satisfazer as condições com esse horizon.")
+
+    min_train_size = len(aux_series) - qtd_series
+    
+    splits_realizados = 0
+    while (
+        len(aux_series) >= min_train_size + horizon and
+        splits_realizados < max_k
+    ):
         train, test = aux_series[:-horizon], aux_series[-horizon:]
         train_test_splits.append((train, test))
         aux_series = train
+        splits_realizados += 1
+
+    # aux_series = series
+    # while len(aux_series) > horizon + min_train_size:
+    #     train, test = aux_series[:-horizon], aux_series[-horizon:]
+    #     train_test_splits.append((train, test))
+    #     aux_series = train
 
     for (train, test) in train_test_splits:
         train_stl = train
@@ -360,14 +403,14 @@ def run_tsf_image_series(args):
                 train_tf = transform_regressors(train_stl, transform)
                 train_tf_val = transform_regressors(train_val, format=transform)
                 # try:
-                data = rolling_window_image(pd.concat([train_tf, pd.Series([1,2,3,4,5,6,7,8,9,10,11,12], index=test.index)]), window, representation, wavelet, level) 
+                data = rolling_window_image(pd.concat([train_tf, pd.Series([0] * horizon, index=test.index)]), window, representation, wavelet, level) 
                 data = data.dropna()
                 X_train, X_test, y_train, _ = train_test_split(data, horizon)
                 
                 results_rg = {'alphas': np.logspace(-3, 3, 10)}
                 #necessita fazer isso para nao implicar na sazonalidade do val com train
                 if regr != "ridge" and regr != "fpca":
-                    data_val = rolling_window_image(pd.concat([train_tf_val, pd.Series([0,0,0,0,0,0,0,0,0,0,0,0], index=test.index)]), window, representation, wavelet, level)
+                    data_val = rolling_window_image(pd.concat([train_tf_val, pd.Series([0] * horizon, index=test.index)]), window, representation, wavelet, level)
                     data_val = data_val.dropna()
 
                     X_train_v, X_test_v, y_train_v, _ = train_test_split(data_val, horizon)
@@ -684,11 +727,11 @@ if __name__ == '__main__':
  
         frequency = metadata['frequency']
         horizon = metadata['horizon']
-        regr = 'svr'
+        regr = 'rf'
         def run_wrapper(args):
             # frequency, horizon, line, i = args
-            # run_tsf_image_series(args)
-            run_tsf_normal_series(args)
+            run_tsf_image_series(args)
+            # run_tsf_normal_series(args)
 
         tasks = [(frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))]
 

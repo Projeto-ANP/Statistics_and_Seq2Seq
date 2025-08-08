@@ -172,16 +172,61 @@ def rolling_window_resid(series, window):
   return df, mean, std
 
 
+# def rolling_window_series(series, window):
+#     result_series = pd.Series(index=series.index)
+#     mean = 0
+#     std = 0
+#     for i in range(len(series)-window):
+#         window_values = series.iloc[i:i+window+1].values
+#         normalized_values = znorm(window_values)
+#         result_series.iloc[i:i+window+1] = normalized_values
+#         mean = np.mean(series.iloc[i:i+window+1])
+#         std = np.std(series.iloc[i:i+window+1])
+#     return result_series, mean, std
+
 def rolling_window_series(series, window):
-    result_series = pd.Series(index=series.index)
+    result_series = pd.Series(index=series.index, dtype=float)
     mean = 0
     std = 0
-    for i in range(len(series)-window):
+    
+    # Verificar se a série tem dados suficientes
+    if len(series) <= window:
+        print(f"Série muito curta: {len(series)} pontos para janela de {window}")
+        return result_series, 0, 0
+    
+    # Verificar se há valores faltantes na série original
+    if series.isnull().any():
+        print(f"Série contém {series.isnull().sum()} valores NaN")
+        series = series.fillna(method='ffill').fillna(method='bfill')
+    
+    # Processar apenas as janelas válidas sem sobreposição
+    for i in range(len(series) - window):
         window_values = series.iloc[i:i+window+1].values
-        normalized_values = znorm(window_values)
-        result_series.iloc[i:i+window+1] = normalized_values
-        mean = np.mean(series.iloc[i:i+window+1])
-        std = np.std(series.iloc[i:i+window+1])
+        
+        # Verificar se a janela contém NaN
+        if np.isnan(window_values).any():
+            continue
+            
+        # Verificar se todos os valores são iguais (std = 0)
+        window_std = np.std(window_values)
+        if window_std == 0:
+            # Se std = 0, todos os valores são iguais, normalizar para 0
+            normalized_values = np.zeros_like(window_values)
+        else:
+            normalized_values = znorm(window_values)
+        
+        # Preencher apenas a posição final da janela (sem sobreposição)
+        result_series.iloc[i + window] = normalized_values[-1]
+        
+        # Atualizar mean e std com a última janela processada
+        mean = np.mean(window_values)
+        std = window_std
+    
+    # Preencher valores NaN restantes com interpolação
+    if result_series.isnull().any():
+        result_series = result_series.interpolate(method='linear')
+        result_series = result_series.fillna(method='ffill').fillna(method='bfill')
+    
     return result_series, mean, std
 
 def train_test_split(data, horizon):
