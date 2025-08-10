@@ -978,8 +978,8 @@ def transform_series(series, representation, wavelet, level, shuffle_order=None)
   # series = np.array(znorm(series))
   if representation == "CWT":
     coeffs, freqs = pywt.cwt(series, scales=np.arange(1, len(series) + 1), wavelet="morl") # morl
-    im_final = coeffs.flatten()
-    # im_final = np.concatenate((series, coeffs.flatten()))
+    # im_final = coeffs.flatten()
+    im_final = np.concatenate((series, coeffs.flatten()))
   elif representation == "DWT":
     coeffs = pywt.wavedec(series, wavelet=wavelet, level=level)
     coeffs_list = np.concatenate(coeffs, axis=0) 
