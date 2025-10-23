@@ -76,7 +76,8 @@ def extract_values(list_str):
 
 def read_model_preds(model_name, dataset_index):
     df = pd.read_csv(
-        f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        # f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
         sep=";",
     )
     df = df[df["dataset_index"] == dataset_index]
@@ -323,7 +324,8 @@ async def main():
         """
 
         df_ade = pd.read_csv(
-            f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
+            # f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
+            f"./timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
             sep=";",
         )
 
