@@ -39,31 +39,46 @@ from neuralforecast.models import NHITS, NBEATS, MLP
 
 from metaforecast.ensembles import ADE
 
+
 def objective_optuna(trial, train_val_darts, train_val, transform, test_val):
     try:
         my_stopper = EarlyStopping(
-                            monitor="train_loss",
-                            patience=5,
-                            min_delta=0.05,
-                            mode='min',
-                        )
-        pl_trainer_kwargs={"accelerator": "gpu", "devices": [1], "callbacks": [my_stopper]}
+            monitor="train_loss",
+            patience=5,
+            min_delta=0.05,
+            mode="min",
+        )
+        pl_trainer_kwargs = {
+            "accelerator": "gpu",
+            "devices": [1],
+            "callbacks": [my_stopper],
+        }
         param = {
-            'num_layers': trial.suggest_int('num_layers', 2, 6),
-            'num_stacks': trial.suggest_int('num_stacks', 5, 20),
-            'layer_widths': trial.suggest_categorical('layer_widths', [64, 128, 256, 512]),    
-        }                
-        model = NBEATSModel(**param, input_chunk_length=12, output_chunk_length=12, random_state=42, n_epochs=100, pl_trainer_kwargs=pl_trainer_kwargs,activation='ReLU')
+            "num_layers": trial.suggest_int("num_layers", 2, 6),
+            "num_stacks": trial.suggest_int("num_stacks", 5, 20),
+            "layer_widths": trial.suggest_categorical(
+                "layer_widths", [64, 128, 256, 512]
+            ),
+        }
+        model = NBEATSModel(
+            **param,
+            input_chunk_length=12,
+            output_chunk_length=12,
+            random_state=42,
+            n_epochs=100,
+            pl_trainer_kwargs=pl_trainer_kwargs,
+            activation="ReLU",
+        )
         model.fit(train_val_darts)
 
-        #transformados
+        # transformados
         # predictions = recursive_step(X_test_v, train_original, model, horizon, window, format_v, representation, wavelet, level)
         # preds_real = pd.Series(predictions, index=test_val.index)
 
         result = model.predict(n=12)
         preds_norm = pd.Series(result.values().flatten().tolist(), index=test_val.index)
 
-        #para modelos estatisticos
+        # para modelos estatisticos
         preds_real = reverse_transform_norm_preds(preds_norm, train_val, transform)
         print_log("test_val")
         print_log(test_val)
@@ -72,24 +87,33 @@ def objective_optuna(trial, train_val_darts, train_val, transform, test_val):
         mape_result = mape(test_val, preds_real)
     except Exception as e:
         print(e)
-        return float('inf')
+        return float("inf")
 
     return mape_result
 
+
 def find_best_parameter_optuna(train_val_darts, train_val, transform, test_val):
-    objective_function = partial(objective_optuna, train_val_darts=train_val_darts, train_val=train_val, transform=transform, test_val=test_val)
-    
-    study = optuna.create_study(direction='minimize')
+    objective_function = partial(
+        objective_optuna,
+        train_val_darts=train_val_darts,
+        train_val=train_val,
+        transform=transform,
+        test_val=test_val,
+    )
+
+    study = optuna.create_study(direction="minimize")
     study.optimize(objective_function, n_trials=35)
 
     return study.best_params
+
 
 def custom_year_encoder(idx):
     return (idx.year - 1990) + (idx.month - 1) / 12
 
 
-
-def generate_error_series(model, n_partes, train_tf, train, test, horizon, window, transform, regr="ridge"):    
+def generate_error_series(
+    model, n_partes, train_tf, train, test, horizon, window, transform, regr="ridge"
+):
     min_train_size = horizon * 2
     all_preds = pd.Series(dtype=float)
     all_test = pd.Series(dtype=float)
@@ -107,17 +131,23 @@ def generate_error_series(model, n_partes, train_tf, train, test, horizon, windo
         test_val = train.iloc[val_start:val_end]
 
         if len(train) < min_train_size:
-            print(f"Iteração {i + 1}: Conjunto de treino está menor que o tamanho mínimo. Parando.")
+            print(
+                f"Iteração {i + 1}: Conjunto de treino está menor que o tamanho mínimo. Parando."
+            )
             break
-        
+
         train_tf_val_darts = TimeSeries.from_series(train_tf_val)
 
         model.fit(train_tf_val_darts)
 
         result_val = model.predict(n=horizon)
-        preds_val_norm = pd.Series(result_val.values().flatten().tolist(), index=test_val.index)
+        preds_val_norm = pd.Series(
+            result_val.values().flatten().tolist(), index=test_val.index
+        )
 
-        preds_val_real = reverse_transform_norm_preds(preds_val_norm, train_val, transform)
+        preds_val_real = reverse_transform_norm_preds(
+            preds_val_norm, train_val, transform
+        )
         all_preds = pd.concat([all_preds, preds_val_real])
         all_preds = all_preds.sort_index()
 
@@ -126,23 +156,32 @@ def generate_error_series(model, n_partes, train_tf, train, test, horizon, windo
 
         all_errors = all_test - all_preds
 
-
-    all_errors.index = all_errors.index.to_period('M')
+    all_errors.index = all_errors.index.to_period("M")
     # data = rolling_window_image(pd.concat([all_errors, pd.Series([0] * horizon, index=test_val.index)]), window, representation, wavelet, level)
-    data = rolling_window(pd.concat([all_errors, pd.Series([0] * horizon, index=test_val.index)]), window)               
+    data = rolling_window(
+        pd.concat([all_errors, pd.Series([0] * horizon, index=test_val.index)]), window
+    )
     data = data.dropna()
     mean_data_error = np.mean(data)
     std_data_error = np.mean(np.std(data))
     if std_data_error == 0:
         return pd.Series([0] * horizon, index=test.index)
-    
+
     X_train, X_test, y_train, _ = train_test_split(data, horizon)
     if regr == "ridge":
-        results_rg = {'alphas': np.logspace(-3, 3, 10)}
+        results_rg = {"alphas": np.logspace(-3, 3, 10)}
         rg = RidgeCV(**results_rg)
         rg.fit(X_train, y_train)
     elif regr == "catboost":
-        rg = CatBoostRegressor(**{'iterations': 200, 'learning_rate': 0.01018185095858352, 'depth': 8, 'loss_function': 'RMSE', 'random_state': 42})
+        rg = CatBoostRegressor(
+            **{
+                "iterations": 200,
+                "learning_rate": 0.01018185095858352,
+                "depth": 8,
+                "loss_function": "RMSE",
+                "random_state": 42,
+            }
+        )
         rg.fit(X_train, y_train, verbose=False)
 
     # train_val2 = train_val
@@ -154,39 +193,56 @@ def generate_error_series(model, n_partes, train_tf, train, test, horizon, windo
     preds = pd.Series(predictions_error, index=test.index)
     preds_real_error = reverse_regressors(all_errors, preds, window, format=transform)
 
-
-
     return preds_real_error
 
 
-def generate_weights_series(index, exp_name, model, train, test, horizon, transform):    
-    cols_serie = ["dataset_index", "horizon" ,"regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", 'start_test', 'final_test']
-    
+def generate_weights_series(index, exp_name, model, train, test, horizon, transform):
+    cols_serie = [
+        "dataset_index",
+        "horizon",
+        "regressor",
+        "mape",
+        "pocid",
+        "smape",
+        "rmse",
+        "msmape",
+        "mae",
+        "test",
+        "predictions",
+        "start_test",
+        "final_test",
+    ]
+
     min_train_size = (horizon * 3) + (horizon * 15)
     train_test_splits = []
     aux_series = train
-    path_experiments = f'./timeseries/mestrado/ponderacao/'
+    path_experiments = f"./timeseries/mestrado/ponderacao/"
     path_csv = f"{path_experiments}/{exp_name}.csv"
-    
+
     while len(aux_series) > horizon + min_train_size:
         train_val, test_val = aux_series[:-horizon], aux_series[-horizon:]
         train_test_splits.append((train_val, test_val))
         aux_series = train_val
-    
-    for (train_val, test_val) in train_test_splits:
 
-        print(f"Iteração: Data range do conjunto de treino: {train_val.index[0]} - {train_val.index[-1]}")
+    for train_val, test_val in train_test_splits:
+
+        print(
+            f"Iteração: Data range do conjunto de treino: {train_val.index[0]} - {train_val.index[-1]}"
+        )
         train_tf_val, _, _ = rolling_window_series(train_val, horizon)
 
-        
         train_tf_val_darts = TimeSeries.from_series(train_tf_val)
         model.fit(train_tf_val_darts)
 
         result_val = model.predict(n=horizon)
-        preds_val_norm = pd.Series(result_val.values().flatten().tolist(), index=test_val.index)
+        preds_val_norm = pd.Series(
+            result_val.values().flatten().tolist(), index=test_val.index
+        )
 
-        preds_val_real = reverse_transform_norm_preds(preds_val_norm, train_val, transform)
-        
+        preds_val_real = reverse_transform_norm_preds(
+            preds_val_norm, train_val, transform
+        )
+
         preds_real_array = np.array(preds_val_real.values)
         preds_real_reshaped = preds_real_array.reshape(1, -1)
         test_reshaped = test_val.values.reshape(1, -1)
@@ -203,39 +259,63 @@ def generate_weights_series(index, exp_name, model, train, test, horizon, transf
         final_test = test_val.index.tolist()[-1]
 
         data_serie = {
-                    'dataset_index': f'{index}',
-                    'horizon': horizon,
-                    'regressor': exp_name,
-                    'mape': mape_result,
-                    'pocid': pocid_result,
-                    'smape': smape_result,
-                    'rmse': rmse_result,
-                    'msmape': msmape_result,
-                    'mae': mae_result,
-                    'test': [test_val.tolist()],
-                    'predictions': [preds_val_real.values],
-                    'start_test': start_test,
-                    'final_test': final_test
-                }
-
+            "dataset_index": f"{index}",
+            "horizon": horizon,
+            "regressor": exp_name,
+            "mape": mape_result,
+            "pocid": pocid_result,
+            "smape": smape_result,
+            "rmse": rmse_result,
+            "msmape": msmape_result,
+            "mae": mae_result,
+            "test": [test_val.tolist()],
+            "predictions": [preds_val_real.values],
+            "start_test": start_test,
+            "final_test": final_test,
+        }
 
         if not os.path.exists(path_csv):
-            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=";", index=False)
 
         df_new = pd.DataFrame(data_serie)
-        df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+        df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
 
-            
+
 def run_tsf_file(tsf_file, dataset_name, regr):
     loader = DatasetLoader()
 
-    # df, frequency, horizon, contain_missing_values, contain_equal_length 
+    # df, frequency, horizon, contain_missing_values, contain_equal_length
     df, metadata = loader.read_tsf(path_tsf=tsf_file)
 
-    frequency = metadata['frequency']
-    horizon = metadata['horizon']
-    cols_serie = ["dataset_index", "horizon","regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", "training_time", "prediction_time"]
-    cols_dataset = ["dataset", "regressor", "mape_mean", "pocid_mean", "smape_mean", "rmse_mean", "msmape_mean", "mae_mean", "all_training_time", "all_prediction_time"]
+    frequency = metadata["frequency"]
+    horizon = metadata["horizon"]
+    cols_serie = [
+        "dataset_index",
+        "horizon",
+        "regressor",
+        "mape",
+        "pocid",
+        "smape",
+        "rmse",
+        "msmape",
+        "mae",
+        "test",
+        "predictions",
+        "training_time",
+        "prediction_time",
+    ]
+    cols_dataset = [
+        "dataset",
+        "regressor",
+        "mape_mean",
+        "pocid_mean",
+        "smape_mean",
+        "rmse_mean",
+        "msmape_mean",
+        "mae_mean",
+        "all_training_time",
+        "all_prediction_time",
+    ]
 
     transform = "normal"
     print(regr)
@@ -243,7 +323,7 @@ def run_tsf_file(tsf_file, dataset_name, regr):
     # regr = "ARIMA"
     dataset = dataset_name
     exp_name = f"{regr}_{transform}"
-    path_experiments = f'./timeseries/mestrado/models/{regr}/{transform}/'
+    path_experiments = f"./timeseries/mestrado/models/{regr}/{transform}/"
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
 
@@ -253,27 +333,29 @@ def run_tsf_file(tsf_file, dataset_name, regr):
     for i in range(len(df)):
         isProb = False
         times = []
-        series_value = df.iloc[i]['series_value'].tolist()
-        start_timestamp = df.iloc[i]['start_timestamp']
+        series_value = df.iloc[i]["series_value"].tolist()
+        start_timestamp = df.iloc[i]["start_timestamp"]
 
         freq = "ME" if frequency == "monthly" else "Y"
 
-        index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+        index_series = pd.date_range(
+            start=start_timestamp, periods=len(series_value), freq=freq
+        )
         pd_series = pd.Series(series_value, index=index_series)
         # series = TimeSeries.from_series(pd_series)
 
         train, test = pd_series[:-horizon], pd_series[-horizon:]
 
-        #normalizacao para estatisticos
+        # normalizacao para estatisticos
         train_tf, _, _ = rolling_window_series(train, horizon)
-        
+
         train_darts = TimeSeries.from_series(train_tf)
 
         add_encoders = {
-            'cyclic': {'future': ['month']},
-            'datetime_attribute': {'future': ['year']},
-            'position': {'past': ['relative'], 'future': ['relative']},
-            'custom': {'past': [custom_year_encoder]},
+            "cyclic": {"future": ["month"]},
+            "datetime_attribute": {"future": ["year"]},
+            "position": {"past": ["relative"], "future": ["relative"]},
+            "custom": {"past": [custom_year_encoder]},
             # 'transformer': Scaler(),
             # 'tz': 'CET',
         }
@@ -303,61 +385,62 @@ def run_tsf_file(tsf_file, dataset_name, regr):
             )
         elif regr == "CatBoost":
             model = CatBoostModel(
-                lags=horizon,
-                output_chunk_length=horizon,
-                use_static_covariates=False
+                lags=horizon, output_chunk_length=horizon, use_static_covariates=False
             )
         elif regr == "NBEATS":
 
             my_stopper = EarlyStopping(
-                    monitor="train_loss",
-                    patience=5,
-                    min_delta=0.05,
-                    mode='min',
-                )
-            
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0], "callbacks": [my_stopper]}
+                monitor="train_loss",
+                patience=5,
+                min_delta=0.05,
+                mode="min",
+            )
+
+            pl_trainer_kwargs = {
+                "accelerator": "gpu",
+                "devices": [0],
+                "callbacks": [my_stopper],
+            }
             model = NBEATSModel(
                 input_chunk_length=horizon * 2,
                 output_chunk_length=horizon,
                 n_epochs=100,
-                activation='ReLU',
+                activation="ReLU",
                 layer_widths=512,
                 num_stacks=10,
                 num_blocks=3,
                 num_layers=4,
-                random_state = 42,
+                random_state=42,
                 nr_epochs_val_period=1,
-                pl_trainer_kwargs=pl_trainer_kwargs
-                
+                pl_trainer_kwargs=pl_trainer_kwargs,
             )
 
         elif regr == "Transformer":
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+            pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
             model = TransformerModel(
                 input_chunk_length=horizon,
                 output_chunk_length=horizon,
                 n_epochs=15,
-                pl_trainer_kwargs=pl_trainer_kwargs
+                pl_trainer_kwargs=pl_trainer_kwargs,
             )
         elif regr == "TFT":
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+            pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
             model = TFTModel(
                 input_chunk_length=horizon,
                 output_chunk_length=horizon,
                 n_epochs=15,
                 pl_trainer_kwargs=pl_trainer_kwargs,
-                add_encoders=add_encoders
+                add_encoders=add_encoders,
             )
             isProb = True
         elif regr == "NHiTS":
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+            pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
             model = NHiTSModel(
                 input_chunk_length=horizon,
                 output_chunk_length=horizon,
                 num_blocks=2,
                 n_epochs=15,
-                pl_trainer_kwargs=pl_trainer_kwargs
+                pl_trainer_kwargs=pl_trainer_kwargs,
             )
         # future_cov = datetime_attribute_timeseries(train_darts, "month", cyclic=True, add_length=horizon)
         time_training_start = time.perf_counter()
@@ -374,7 +457,7 @@ def run_tsf_file(tsf_file, dataset_name, regr):
             result = model.predict(n=horizon)
         preds_norm = pd.Series(result.values().flatten().tolist(), index=test.index)
 
-        #para modelos estatisticos
+        # para modelos estatisticos
         preds_real = reverse_transform_norm_preds(preds_norm, train, transform)
         time_preds_end = time.perf_counter()
         times.append(time_preds_end - time_preds_start)
@@ -393,26 +476,26 @@ def run_tsf_file(tsf_file, dataset_name, regr):
         pocid_result = pocid(test.values, preds_real_array)
 
         data_serie = {
-                    'dataset_index': f'{i}',
-                    'horizon': horizon,
-                    'regressor': exp_name,
-                    'mape': mape_result,
-                    'pocid': pocid_result,
-                    'smape': smape_result,
-                    'rmse': rmse_result,
-                    'msmape': msmape_result,
-                    'mae': mae_result,
-                    'test': [test.tolist()],
-                    'predictions': [preds_real.values],
-                    'training_time': times[0],
-                    'prediction_time': times[1],
-                }
+            "dataset_index": f"{i}",
+            "horizon": horizon,
+            "regressor": exp_name,
+            "mape": mape_result,
+            "pocid": pocid_result,
+            "smape": smape_result,
+            "rmse": rmse_result,
+            "msmape": msmape_result,
+            "mae": mae_result,
+            "test": [test.tolist()],
+            "predictions": [preds_real.values],
+            "training_time": times[0],
+            "prediction_time": times[1],
+        }
 
         if not os.path.exists(path_csv):
-            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=";", index=False)
 
         df_new = pd.DataFrame(data_serie)
-        df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+        df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
 
         maes.append(mae_result)
         rmses.append(rmse_result)
@@ -421,46 +504,78 @@ def run_tsf_file(tsf_file, dataset_name, regr):
         mapes.append(mape_result)
         pocids.append(pocid_result)
 
-        generate_weights_series(i, exp_name, model=model, train=train, test=test, horizon=horizon, transform=transform)
-
+        generate_weights_series(
+            i,
+            exp_name,
+            model=model,
+            train=train,
+            test=test,
+            horizon=horizon,
+            transform=transform,
+        )
 
     data_dataset = {
-        "dataset": dataset, 
-        "regressor": exp_name, 
+        "dataset": dataset,
+        "regressor": exp_name,
         "mape_mean": np.nanmean(mapes),
         "pocid_mean": np.nanmean(pocids),
-        "smape_mean": np.nanmean(smapes), 
-        "rmse_mean": np.nanmean(rmses), 
-        "msmape_mean": np.nanmean(msmapes), 
+        "smape_mean": np.nanmean(smapes),
+        "rmse_mean": np.nanmean(rmses),
+        "msmape_mean": np.nanmean(msmapes),
         "mae_mean": np.nanmean(maes),
-        'all_training_time': all_train_time,
-        'all_prediction_time': all_pred_time,
+        "all_training_time": all_train_time,
+        "all_prediction_time": all_pred_time,
     }
-    path_dataset = f'./timeseries/' + "results.csv"
+    path_dataset = f"./timeseries/" + "results.csv"
     if not os.path.exists(path_dataset):
-        pd.DataFrame(columns=cols_dataset).to_csv(path_dataset, sep=';', index=False)
+        pd.DataFrame(columns=cols_dataset).to_csv(path_dataset, sep=";", index=False)
 
     df_final = pd.DataFrame([data_dataset])
-    df_final.to_csv(path_dataset, sep=';', mode='a', header=False, index=False)
+    df_final.to_csv(path_dataset, sep=";", mode="a", header=False, index=False)
 
 
 def run_error_tsf_file(tsf_file, dataset_name):
     loader = DatasetLoader()
 
-    # df, frequency, horizon, contain_missing_values, contain_equal_length 
+    # df, frequency, horizon, contain_missing_values, contain_equal_length
     df, metadata = loader.read_tsf(path_tsf=tsf_file)
 
-    frequency = metadata['frequency']
-    horizon = metadata['horizon']
-    cols_serie = ["dataset_index", "horizon","regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", "training_time", "prediction_time"]
-    cols_dataset = ["dataset", "regressor", "mape_mean", "pocid_mean", "smape_mean", "rmse_mean", "msmape_mean", "mae_mean", "all_training_time", "all_prediction_time"]
+    frequency = metadata["frequency"]
+    horizon = metadata["horizon"]
+    cols_serie = [
+        "dataset_index",
+        "horizon",
+        "regressor",
+        "mape",
+        "pocid",
+        "smape",
+        "rmse",
+        "msmape",
+        "mae",
+        "test",
+        "predictions",
+        "training_time",
+        "prediction_time",
+    ]
+    cols_dataset = [
+        "dataset",
+        "regressor",
+        "mape_mean",
+        "pocid_mean",
+        "smape_mean",
+        "rmse_mean",
+        "msmape_mean",
+        "mae_mean",
+        "all_training_time",
+        "all_prediction_time",
+    ]
 
     transform = "normal"
     # representation = ""
     regr = "ETS"
     dataset = dataset_name
     exp_name = f"{regr}_{transform}"
-    path_experiments = f'./timeseries/mestrado/combination/normal_mtf_{regr}_error/'
+    path_experiments = f"./timeseries/mestrado/combination/normal_mtf_{regr}_error/"
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
 
@@ -470,27 +585,29 @@ def run_error_tsf_file(tsf_file, dataset_name):
     for i in range(len(df)):
         isProb = False
         times = []
-        series_value = df.iloc[i]['series_value'].tolist()
-        start_timestamp = df.iloc[i]['start_timestamp']
+        series_value = df.iloc[i]["series_value"].tolist()
+        start_timestamp = df.iloc[i]["start_timestamp"]
 
         freq = "ME" if frequency == "monthly" else "Y"
 
-        index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+        index_series = pd.date_range(
+            start=start_timestamp, periods=len(series_value), freq=freq
+        )
         pd_series = pd.Series(series_value, index=index_series)
         # series = TimeSeries.from_series(pd_series)
 
         train, test = pd_series[:-horizon], pd_series[-horizon:]
 
-        #normalizacao para estatisticos
+        # normalizacao para estatisticos
         train_tf, _, _ = rolling_window_series(train, horizon)
-        
+
         train_darts = TimeSeries.from_series(train_tf)
 
         add_encoders = {
-            'cyclic': {'future': ['month']},
-            'datetime_attribute': {'future': ['year']},
-            'position': {'past': ['relative'], 'future': ['relative']},
-            'custom': {'past': [custom_year_encoder]},
+            "cyclic": {"future": ["month"]},
+            "datetime_attribute": {"future": ["year"]},
+            "position": {"past": ["relative"], "future": ["relative"]},
+            "custom": {"past": [custom_year_encoder]},
             # 'transformer': Scaler(),
             # 'tz': 'CET',
         }
@@ -514,70 +631,80 @@ def run_error_tsf_file(tsf_file, dataset_name):
 
         elif regr == "CatBoost":
             model = CatBoostModel(
-                lags=12,
-                output_chunk_length=horizon,
-                use_static_covariates=False
+                lags=12, output_chunk_length=horizon, use_static_covariates=False
             )
         elif regr == "NBEATS":
 
             my_stopper = EarlyStopping(
-                    monitor="train_loss",
-                    patience=5,
-                    min_delta=0.05,
-                    mode='min',
-                )
-            
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0], "callbacks": [my_stopper]}
+                monitor="train_loss",
+                patience=5,
+                min_delta=0.05,
+                mode="min",
+            )
+
+            pl_trainer_kwargs = {
+                "accelerator": "gpu",
+                "devices": [0],
+                "callbacks": [my_stopper],
+            }
             model = NBEATSModel(
                 input_chunk_length=horizon * 2,
                 output_chunk_length=horizon,
                 n_epochs=100,
-                activation='ReLU',
+                activation="ReLU",
                 layer_widths=512,
                 num_stacks=10,
                 num_blocks=3,
                 num_layers=4,
-                random_state = 42,
+                random_state=42,
                 nr_epochs_val_period=1,
-                pl_trainer_kwargs=pl_trainer_kwargs
-                
+                pl_trainer_kwargs=pl_trainer_kwargs,
             )
 
         elif regr == "Transformer":
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+            pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
             model = TransformerModel(
                 input_chunk_length=horizon,
                 output_chunk_length=horizon,
                 n_epochs=15,
-                pl_trainer_kwargs=pl_trainer_kwargs
+                pl_trainer_kwargs=pl_trainer_kwargs,
             )
         elif regr == "TFT":
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+            pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
             model = TFTModel(
                 input_chunk_length=horizon,
                 output_chunk_length=horizon,
                 n_epochs=15,
                 pl_trainer_kwargs=pl_trainer_kwargs,
-                add_encoders=add_encoders
+                add_encoders=add_encoders,
             )
             isProb = True
         elif regr == "NHiTS":
-            pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+            pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
             model = NHiTSModel(
                 input_chunk_length=horizon,
                 output_chunk_length=horizon,
                 num_blocks=2,
                 n_epochs=15,
-                pl_trainer_kwargs=pl_trainer_kwargs
+                pl_trainer_kwargs=pl_trainer_kwargs,
             )
         # future_cov = datetime_attribute_timeseries(train_darts, "month", cyclic=True, add_length=horizon)
         time_training_start = time.perf_counter()
 
-        #previsão do modelo com base nos anos anteriores
-        preds_real_error = generate_error_series(regr='catboost', model=model, n_partes=10, train_tf=train_tf, train=train, test=test, horizon=horizon, window=12, transform=transform)
+        # previsão do modelo com base nos anos anteriores
+        preds_real_error = generate_error_series(
+            regr="catboost",
+            model=model,
+            n_partes=10,
+            train_tf=train_tf,
+            train=train,
+            test=test,
+            horizon=horizon,
+            window=12,
+            transform=transform,
+        )
 
-
-        #fit no modelo normal para previsao ser combinada com preds_real_error
+        # fit no modelo normal para previsao ser combinada com preds_real_error
         model.fit(train_darts)
         time_training_end = time.perf_counter()
         times.append(time_training_end - time_training_start)
@@ -588,17 +715,20 @@ def run_error_tsf_file(tsf_file, dataset_name):
             result_model_test = model.predict(n=horizon, num_samples=100)
         else:
             result_model_test = model.predict(n=horizon)
-        preds_model_norm = pd.Series(result_model_test.values().flatten().tolist(), index=test.index)
+        preds_model_norm = pd.Series(
+            result_model_test.values().flatten().tolist(), index=test.index
+        )
 
-        preds_model_real = reverse_transform_norm_preds(preds_model_norm, train, transform)
+        preds_model_real = reverse_transform_norm_preds(
+            preds_model_norm, train, transform
+        )
         preds_combined = preds_model_real + preds_real_error
 
         time_preds_end = time.perf_counter()
         times.append(time_preds_end - time_preds_start)
         all_pred_time = all_pred_time + (time_preds_end - time_preds_start)
 
-
-        #predicao combinada para metrica
+        # predicao combinada para metrica
         preds_real_array = np.array(preds_combined.values)
 
         preds_real_reshaped = preds_real_array.reshape(1, -1)
@@ -613,26 +743,26 @@ def run_error_tsf_file(tsf_file, dataset_name):
         pocid_result = pocid(test.values, preds_real_array)
 
         data_serie = {
-                    'dataset_index': f'{i}',
-                    'horizon': horizon,
-                    'regressor': exp_name,
-                    'mape': mape_result,
-                    'pocid': pocid_result,
-                    'smape': smape_result,
-                    'rmse': rmse_result,
-                    'msmape': msmape_result,
-                    'mae': mae_result,
-                    'test': [test.tolist()],
-                    'predictions': [preds_combined.values],
-                    'training_time': times[0],
-                    'prediction_time': times[1],
-                }
+            "dataset_index": f"{i}",
+            "horizon": horizon,
+            "regressor": exp_name,
+            "mape": mape_result,
+            "pocid": pocid_result,
+            "smape": smape_result,
+            "rmse": rmse_result,
+            "msmape": msmape_result,
+            "mae": mae_result,
+            "test": [test.tolist()],
+            "predictions": [preds_combined.values],
+            "training_time": times[0],
+            "prediction_time": times[1],
+        }
 
         if not os.path.exists(path_csv):
-            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=";", index=False)
 
         df_new = pd.DataFrame(data_serie)
-        df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+        df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
 
         maes.append(mae_result)
         rmses.append(rmse_result)
@@ -641,43 +771,56 @@ def run_error_tsf_file(tsf_file, dataset_name):
         mapes.append(mape_result)
         pocids.append(pocid_result)
 
-
     data_dataset = {
-        "dataset": dataset, 
-        "regressor": exp_name, 
+        "dataset": dataset,
+        "regressor": exp_name,
         "mape_mean": np.nanmean(mapes),
         "pocid_mean": np.nanmean(pocids),
-        "smape_mean": np.nanmean(smapes), 
-        "rmse_mean": np.nanmean(rmses), 
-        "msmape_mean": np.nanmean(msmapes), 
+        "smape_mean": np.nanmean(smapes),
+        "rmse_mean": np.nanmean(rmses),
+        "msmape_mean": np.nanmean(msmapes),
         "mae_mean": np.nanmean(maes),
-        'all_training_time': all_train_time,
-        'all_prediction_time': all_pred_time,
+        "all_training_time": all_train_time,
+        "all_prediction_time": all_pred_time,
     }
-    path_dataset = f'./timeseries/' + "results.csv"
+    path_dataset = f"./timeseries/" + "results.csv"
     if not os.path.exists(path_dataset):
-        pd.DataFrame(columns=cols_dataset).to_csv(path_dataset, sep=';', index=False)
+        pd.DataFrame(columns=cols_dataset).to_csv(path_dataset, sep=";", index=False)
 
     df_final = pd.DataFrame([data_dataset])
-    df_final.to_csv(path_dataset, sep=';', mode='a', header=False, index=False)
+    df_final.to_csv(path_dataset, sep=";", mode="a", header=False, index=False)
 
 
 def run_darts_series(args):
     frequency, horizon, line, i, regressor, dataset = args
-    global regr 
+    global regr
     # horizon = 12
     window = horizon
     regr = regressor
     transformations = ["normal"]
-    chave = ''
+    chave = ""
 
-    cols_serie = ["dataset_index", "horizon","regressor", "mape", "pocid", "smape", "rmse", "msmape", "mae", "test", "predictions", "start_test", "final_test"]
+    cols_serie = [
+        "dataset_index",
+        "horizon",
+        "regressor",
+        "mape",
+        "pocid",
+        "smape",
+        "rmse",
+        "msmape",
+        "mae",
+        "test",
+        "predictions",
+        "start_test",
+        "final_test",
+    ]
     # dataset = "ANP_MONTHLY"
-   
+
     train_test_splits = []
 
-    series_value = line['series_value'].tolist()
-    start_timestamp = line['start_timestamp']
+    series_value = line["series_value"].tolist()
+    start_timestamp = line["start_timestamp"]
 
     # freq = "M" if frequency == "monthly" else "Y"
     freq_map = {
@@ -686,14 +829,16 @@ def run_darts_series(args):
         "weekly": "W",
         "daily": "D",
         "hourly": "H",
-        "half_hourly": "30min",  #30T
+        "half_hourly": "30min",  # 30T
     }
 
     freq = freq_map.get(frequency)
     if freq is None:
         raise ValueError(f"Frequência desconhecida: {frequency}")
 
-    index_series = pd.date_range(start=start_timestamp, periods=len(series_value), freq=freq)
+    index_series = pd.date_range(
+        start=start_timestamp, periods=len(series_value), freq=freq
+    )
     series = pd.Series(series_value, index=index_series)
     isProb = False
 
@@ -703,44 +848,42 @@ def run_darts_series(args):
 
     qtd_series = horizon * max_k
 
-    while (
-        qtd_series >= len(aux_series) or
-        (len(aux_series) - qtd_series) < (horizon * min_train_factor)
+    while qtd_series >= len(aux_series) or (len(aux_series) - qtd_series) < (
+        horizon * min_train_factor
     ):
         qtd_series -= horizon
         if qtd_series < horizon:
-            raise ValueError("Série muito curta para satisfazer as condições com esse horizon.")
+            raise ValueError(
+                "Série muito curta para satisfazer as condições com esse horizon."
+            )
 
     min_train_size = len(aux_series) - qtd_series
-    
+
     splits_realizados = 0
-    while (
-        len(aux_series) >= min_train_size + horizon and
-        splits_realizados < max_k
-    ):
+    while len(aux_series) >= min_train_size + horizon and splits_realizados < max_k:
         train, test = aux_series[:-horizon], aux_series[-horizon:]
         train_test_splits.append((train, test))
         aux_series = train
         splits_realizados += 1
 
-    for (train, test) in train_test_splits:
+    for train, test in train_test_splits:
         train_stl = train
         _, test_val = train_test_stats(train, horizon)
-        if 'noresid' in chave:
-            print_log('----------- SEM RESIDUO NA SERIE ---------')
-            transformer = STLTransformer(sp=12) 
+        if "noresid" in chave:
+            print_log("----------- SEM RESIDUO NA SERIE ---------")
+            transformer = STLTransformer(sp=12)
             stl = transformer.fit(train)
             train_stl = stl.seasonal_ + stl.trend_
 
         train_val, _ = train_test_stats(train_stl, horizon)
         start_test = test.index.tolist()[0]
         final_test = test.index.tolist()[-1]
-    
+
         for transform in transformations:
             # path_derivado = f'{results_file}/{derivado}/{transform}'
             # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
             exp_name = f"{regr}_{transform}"
-            path_experiments = f'./timeseries/mestrado/resultados/{regr}/{transform}/'
+            path_experiments = f"./timeseries/mestrado/resultados/{regr}/{transform}/"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
@@ -751,10 +894,10 @@ def run_darts_series(args):
                 train_val_tf = transform_regressors(train_val, transform)
                 train_val_tf, _, _ = rolling_window_series(train_val_tf, horizon)
                 # train_tf_val = transform_regressors(train_val, format=transform)
-        
+
                 train_darts = TimeSeries.from_series(train_tf)
-                train_val_darts =TimeSeries.from_series(train_val_tf)
-                
+                train_val_darts = TimeSeries.from_series(train_val_tf)
+
                 try:
                     if regr == "ARIMA":
                         model = StatsForecastAutoARIMA(season_length=12)
@@ -771,7 +914,9 @@ def run_darts_series(args):
                     elif regr == "NaiveMovingAverage":
                         model = NaiveMovingAverage(input_chunk_length=horizon)
                     elif regr == "TBATS":
-                        model = TBATS(use_arma_errors=True, use_trend=True, seasonal_periods=[12])
+                        model = TBATS(
+                            use_arma_errors=True, use_trend=True, seasonal_periods=[12]
+                        )
                     elif regr == "RandomForest":
                         model = RandomForest(
                             lags=horizon,
@@ -783,53 +928,64 @@ def run_darts_series(args):
                         model = CatBoostModel(
                             lags=horizon,
                             output_chunk_length=horizon,
-                            use_static_covariates=False
+                            use_static_covariates=False,
                         )
                     elif regr == "NBEATS":
 
                         my_stopper = EarlyStopping(
-                                monitor="train_loss",
-                                patience=5,
-                                min_delta=0.05,
-                                mode='min',
-                            )
-                        
-                        pl_trainer_kwargs={"accelerator": "gpu", "devices": [0], "callbacks": [my_stopper]}
-                        
-                        result_params = find_best_parameter_optuna(train_val_darts, train_val, transform, test_val)
-                        
+                            monitor="train_loss",
+                            patience=5,
+                            min_delta=0.05,
+                            mode="min",
+                        )
+
+                        pl_trainer_kwargs = {
+                            "accelerator": "gpu",
+                            "devices": [0],
+                            "callbacks": [my_stopper],
+                        }
+
+                        result_params = find_best_parameter_optuna(
+                            train_val_darts, train_val, transform, test_val
+                        )
+
                         model = NBEATSModel(
-                           **result_params,
-                           input_chunk_length=horizon, output_chunk_length=horizon, random_state=42, n_epochs=100, pl_trainer_kwargs=pl_trainer_kwargs,activation='ReLU'
+                            **result_params,
+                            input_chunk_length=horizon,
+                            output_chunk_length=horizon,
+                            random_state=42,
+                            n_epochs=100,
+                            pl_trainer_kwargs=pl_trainer_kwargs,
+                            activation="ReLU",
                         )
 
                     elif regr == "Transformer":
-                        pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+                        pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
                         model = TransformerModel(
                             input_chunk_length=horizon,
                             output_chunk_length=horizon,
                             n_epochs=15,
-                            pl_trainer_kwargs=pl_trainer_kwargs
+                            pl_trainer_kwargs=pl_trainer_kwargs,
                         )
                     elif regr == "TFT":
-                        pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+                        pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
                         model = TFTModel(
                             input_chunk_length=horizon,
                             output_chunk_length=horizon,
                             n_epochs=15,
                             pl_trainer_kwargs=pl_trainer_kwargs,
                             # add_encoders=add_encoders
-                            use_static_covariates=False
+                            use_static_covariates=False,
                         )
                         isProb = True
                     elif regr == "NHiTS":
-                        pl_trainer_kwargs={"accelerator": "gpu", "devices": [0]}
+                        pl_trainer_kwargs = {"accelerator": "gpu", "devices": [0]}
                         model = NHiTSModel(
                             input_chunk_length=horizon,
                             output_chunk_length=horizon,
                             num_blocks=2,
                             n_epochs=15,
-                            pl_trainer_kwargs=pl_trainer_kwargs
+                            pl_trainer_kwargs=pl_trainer_kwargs,
                         )
                     # future_cov = datetime_attribute_timeseries(train_darts, "month", cyclic=True, add_length=horizon)
                     model.fit(train_darts)
@@ -838,11 +994,14 @@ def run_darts_series(args):
                         result = model.predict(n=horizon, num_samples=100)
                     else:
                         result = model.predict(n=horizon)
-                    preds_norm = pd.Series(result.values().flatten().tolist(), index=test.index)
+                    preds_norm = pd.Series(
+                        result.values().flatten().tolist(), index=test.index
+                    )
 
-                    #para modelos estatisticos
-                    preds_real = reverse_transform_norm_preds(preds_norm, train, transform)
-
+                    # para modelos estatisticos
+                    preds_real = reverse_transform_norm_preds(
+                        preds_norm, train, transform
+                    )
 
                     preds_real_array = np.array(preds_real.values)
                     preds_real_reshaped = preds_real_array.reshape(1, -1)
@@ -857,38 +1016,42 @@ def run_darts_series(args):
                     pocid_result = pocid(test.values, preds_real_array)
 
                     data_serie = {
-                        'dataset_index': f'{i}',
-                        'horizon': horizon,
-                        'regressor': exp_name,
-                        'mape': mape_result,
-                        'pocid': pocid_result,
-                        'smape': smape_result,
-                        'rmse': rmse_result,
-                        'msmape': msmape_result,
-                        'mae': mae_result,
-                        'test': [test.tolist()],
-                        'predictions': [preds_real.tolist()],
-                        'start_test': start_test,
-                        'final_test': final_test
+                        "dataset_index": f"{i}",
+                        "horizon": horizon,
+                        "regressor": exp_name,
+                        "mape": mape_result,
+                        "pocid": pocid_result,
+                        "smape": smape_result,
+                        "rmse": rmse_result,
+                        "msmape": msmape_result,
+                        "mae": mae_result,
+                        "test": [test.tolist()],
+                        "predictions": [preds_real.tolist()],
+                        "start_test": start_test,
+                        "final_test": final_test,
                         # 'training_time': times[0],
                         # 'prediction_time': times[1],
                     }
 
                     if not os.path.exists(path_csv):
-                        pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=';', index=False)
+                        pd.DataFrame(columns=cols_serie).to_csv(
+                            path_csv, sep=";", index=False
+                        )
 
                     df_new = pd.DataFrame(data_serie)
-                    df_new.to_csv(path_csv, sep=';', mode='a', header=False, index=False)
+                    df_new.to_csv(
+                        path_csv, sep=";", mode="a", header=False, index=False
+                    )
 
                 except Exception as e:
                     print_log(f" ==== DATASET {i}")
                     traceback.print_exc()
 
 
-
 import time
 import multiprocessing
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # start = time.perf_counter()
     # file_path = '../mes_11_venda_mensal.tsf'
     # df["series_value"] = df["series_value"].apply(np.array)
@@ -897,39 +1060,43 @@ if __name__ == '__main__':
     #         window = series[i : i + window_size]
     #         if (window == 0).mean() > 0.5:
     #             return True
-        
-    #     return False
 
+    #     return False
 
     # mask = df["series_value"].apply(should_remove)
     # df = df[~mask]
     files = [
-        # "m4_daily_dataset.tsf", 
-        "m4_hourly_dataset.tsf", "m4_weekly_dataset.tsf", "nn5_daily_dataset_without_missing_values.tsf", "nn5_weekly_dataset.tsf","pedestrian_counts_dataset.tsf", "us_births_dataset.tsf","australian_electricity_demand_dataset.tsf" 
-        # "traffic_hourly_dataset.tsf", 
-        # "traffic_weekly_dataset.tsf",  
-         ]
+        # "m4_daily_dataset.tsf",
+        "m4_hourly_dataset.tsf",
+        "m4_weekly_dataset.tsf",
+        "nn5_daily_dataset_without_missing_values.tsf",
+        "nn5_weekly_dataset.tsf",
+        "pedestrian_counts_dataset.tsf",
+        "us_births_dataset.tsf",
+        "australian_electricity_demand_dataset.tsf",
+        # "traffic_hourly_dataset.tsf",
+        # "traffic_weekly_dataset.tsf",
+    ]
 
     for tsf_file in files:
-        dataset = tsf_file.split('.')[0].upper()
-        file_path = f'../forecasting_datasets/{tsf_file}'
+        dataset = tsf_file.split(".")[0].upper()
+        file_path = f"../forecasting_datasets/{tsf_file}"
         loader = DatasetLoader()
         df, metadata = loader.read_tsf(path_tsf=file_path)
-        
-        if metadata['horizon'] == None:
-            if metadata['frequency'] == 'hourly':
-                metadata['horizon'] = 24
-            elif metadata['frequency'] == 'daily':
-                metadata['horizon'] = 14
-            elif metadata['frequency'] == 'half_hourly':
-                metadata['horizon'] = 48
-                
+
+        if metadata["horizon"] == None:
+            if metadata["frequency"] == "hourly":
+                metadata["horizon"] = 24
+            elif metadata["frequency"] == "daily":
+                metadata["horizon"] = 14
+            elif metadata["frequency"] == "half_hourly":
+                metadata["horizon"] = 48
+
         df["series_value"] = df["series_value"].apply(np.array)
- 
-        frequency = metadata['frequency']
-        horizon = metadata['horizon']
-        regr = 'ETS'
-        
+
+        frequency = metadata["frequency"]
+        horizon = metadata["horizon"]
+        regr = "THETA"
 
         # df.iloc[i]
         def run_wrapper(args):
@@ -937,9 +1104,13 @@ if __name__ == '__main__':
             # run_ade_series(args)
             run_darts_series(args)
 
-        tasks = [(frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))]
+        tasks = [
+            (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
+        ]
 
-        with multiprocessing.Pool(processes=10) as pool:
+        with multiprocessing.Pool(processes=1) as pool:
             pool.map(run_wrapper, tasks)
 
-    print_log("--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------")
+    print_log(
+        "--------------------- [FIM DE TODOS EXPERIMENTOS] ------------------------"
+    )

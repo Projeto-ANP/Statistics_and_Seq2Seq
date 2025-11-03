@@ -1,8 +1,10 @@
+from time import time
 from urllib import response
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 import asyncio
 import os
+import httpx
 import pandas as pd
 import re
 from agno.db.json import JsonDb
@@ -76,8 +78,8 @@ def extract_values(list_str):
 
 def read_model_preds(model_name, dataset_index):
     df = pd.read_csv(
-        # f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
-        f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        # f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
         sep=";",
     )
     df = df[df["dataset_index"] == dataset_index]
@@ -184,6 +186,7 @@ def train_split_agent(models, dataset_index=0, final_test="2024-11-30"):
 async def main():
     GOOGLE_API_KEY = "AIzaSyC6yMJ3yCihm9TDfyoydv2diqtEWuIKeeE"
     # CEREBRAS_API_KEY = "csk-45wwjdx4fwyrvvekmxrjd29hf6382w9rnwwk5rttvwt42hkr"
+    # CEREBRAS_API_KEY = "csk_396yv6vjee9xkhce3xvyrtxdk4t649kyh48nyxtwk5x9ewdh"
     CEREBRAS_API_KEY = "csk_396yv6vjee9xkhce3xvyrtxdk4t649kyh48nyxtwk5x9ewdh"
     MISTRAL_API_KEY = (
         "VtBuj7crXH7dVVxXVlvj6l5m6lC5rHYn"  # Replace with your actual Mistral API key
@@ -231,7 +234,7 @@ async def main():
     path_experiments = f"./timeseries/mestrado/resultados/{exp_name}/"
     path_csv = f"{path_experiments}/ANP_MONTHLY.csv"
     os.makedirs(path_experiments, exist_ok=True)
-    for dataset_index in range(71, 182):
+    for dataset_index in range(179, 182):
         # dataset_index = 70
         final_test = "2024-11-30"
 
@@ -259,7 +262,11 @@ async def main():
                 temperature=0.7,
                 top_p=0.6,
                 max_completion_tokens=4096,
-                extra_body={"seed": 42},
+                extra_body={
+                    "seed": 42,
+                    # "timeout": httpx.Timeout(60.0, read=5.0, write=10.0, connect=2.0),
+                },
+                timeout=60,
             ),
             output_schema=PredictionInformation,
             # model=MistralChat(id=model_name, random_seed=42),
@@ -324,8 +331,8 @@ async def main():
         """
 
         df_ade = pd.read_csv(
-            # f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
-            f"./timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
+            f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
+            # f"./timeseries/mestrado/resultados/ADE/ANP_MONTHLY.csv",
             sep=";",
         )
 
@@ -392,7 +399,7 @@ async def main():
 
         df_new = pd.DataFrame(data_serie)
         df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
-
+        # time.sleep(3)
     # x = np.arange(len(test_values))
     # plt.figure(figsize=(10, 6))
     # plt.plot(x, test_values, label="Valores Reais", marker="o")
