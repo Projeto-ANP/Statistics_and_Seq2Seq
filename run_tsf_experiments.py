@@ -1067,10 +1067,10 @@ if __name__ == "__main__":
     # df = df[~mask]
     files = [
         # "m4_daily_dataset.tsf",
-        "m4_hourly_dataset.tsf",
+        #"m4_hourly_dataset.tsf",
         "m4_weekly_dataset.tsf",
-        "nn5_daily_dataset_without_missing_values.tsf",
-        "nn5_weekly_dataset.tsf",
+        #"nn5_daily_dataset_without_missing_values.tsf",
+        #"nn5_weekly_dataset.tsf",
         "pedestrian_counts_dataset.tsf",
         "us_births_dataset.tsf",
         "australian_electricity_demand_dataset.tsf",
@@ -1108,7 +1108,7 @@ if __name__ == "__main__":
             (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
         ]
 
-        with multiprocessing.Pool(processes=1) as pool:
+        with multiprocessing.Pool(processes=10) as pool:
             pool.map(run_wrapper, tasks)
 
     print_log(
