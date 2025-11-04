@@ -187,5 +187,313 @@ async def main():
     print(response.content)
 
 
+import numpy as np
+from streamfuels.datasets import DatasetLoader
+
+
+def timellm():
+    import torch
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+    import numpy as np
+    from streamfuels.datasets import DatasetLoader
+
+    # 1. CARREGAR DADOS
+    tsf_file = "australian_electricity_demand_dataset"
+    dataset = tsf_file.split(".")[0].upper()
+    file_path = f"../forecasting_datasets/{tsf_file}.tsf"
+    loader = DatasetLoader()
+    df, metadata = loader.read_tsf(path_tsf=file_path)
+
+    if metadata["horizon"] == None:
+        if metadata["frequency"] == "hourly":
+            metadata["horizon"] = 24
+        elif metadata["frequency"] == "daily":
+            metadata["horizon"] = 14
+        elif metadata["frequency"] == "half_hourly":
+            metadata["horizon"] = 48
+
+    df["series_value"] = df["series_value"].apply(np.array)
+    series = df.iloc[0]["series_value"]
+    print(series)
+
+    # Parâmetros
+    seq_len = 512  # Tamanho do contexto
+    pred_len = metadata["horizon"]  # Horizonte de previsão
+    patch_len = 16  # Tamanho de cada patch
+    stride = 8  # Stride para criar patches
+
+    # =========================================================================
+    # STEP 1: NORMALIZAÇÃO (Z-NORM)
+    # =========================================================================
+    def znorm(x):
+        """Z-normalization (média 0, desvio 1)"""
+        mean = np.mean(x)
+        std = np.std(x)
+        if std == 0:
+            return x - mean, mean, 1e-5
+        return (x - mean) / std, mean, std
+
+    # Pegar últimos seq_len valores
+    if len(series) > seq_len:
+        x_raw = series[-seq_len:]
+    else:
+        x_raw = series
+
+    # Normalizar
+    x_norm, mean_val, std_val = znorm(x_raw)
+    x_norm_tensor = torch.tensor(x_norm).float()
+
+    print("=" * 80)
+    print("STEP 1: NORMALIZAÇÃO (Z-NORM)")
+    print(f"Série original (shape): {x_raw.shape}")
+    print(f"Mean: {mean_val:.4f}, Std: {std_val:.4f}")
+    print(f"Série normalizada (primeiros 10): {x_norm[:10]}")
+
+    # =========================================================================
+    # STEP 2: CRIAR PATCHES EM JANELAS DO HORIZON
+    # =========================================================================
+    def create_patches(x, patch_len, stride):
+        """Cria patches com stride"""
+        patches = []
+        for i in range(0, len(x) - patch_len + 1, stride):
+            patch = x[i : i + patch_len]
+            patches.append(patch)
+        return torch.stack(patches) if patches else torch.tensor([])
+
+    patches = create_patches(x_norm_tensor, patch_len, stride)
+    num_patches = patches.shape[0]
+
+    print("\n" + "=" * 80)
+    print("STEP 2: CRIAR PATCHES")
+    print(f"Patch length: {patch_len}, Stride: {stride}")
+    print(f"Número de patches: {num_patches}")
+    print(f"Shape dos patches: {patches.shape}")  # [num_patches, patch_len]
+    print(f"Primeiro patch: {patches[0]}")
+
+    # =========================================================================
+    # STEP 3: EMBEDDINGS DOS PATCHES
+    # =========================================================================
+    def patch_embedding(patches, d_model=768):
+        """
+        Cria embeddings dos patches usando projeção linear
+        Similar ao patch embedding em Vision Transformers
+        """
+        # Projeção linear: [num_patches, patch_len] -> [num_patches, d_model]
+        projection = torch.nn.Linear(patch_len, d_model)
+        embeddings = projection(patches)
+
+        # Adicionar positional encoding
+        num_patches = embeddings.shape[0]
+        position = torch.arange(num_patches).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+
+        pos_encoding = torch.zeros(num_patches, d_model)
+        pos_encoding[:, 0::2] = torch.sin(position * div_term)
+        pos_encoding[:, 1::2] = torch.cos(position * div_term)
+
+        embeddings = embeddings + pos_encoding
+
+        return embeddings, projection
+
+    embeddings, projection_layer = patch_embedding(patches)
+
+    print("\n" + "=" * 80)
+    print("STEP 3: EMBEDDINGS DOS PATCHES")
+    print(f"Shape dos embeddings: {embeddings.shape}")  # [num_patches, d_model]
+    print(f"Embedding do primeiro patch (primeiros 10 dims): {embeddings[0, :10]}")
+
+    # =========================================================================
+    # STEP 4: REPROGRAMAÇÃO DOS PATCHES (Patch Reprogramming)
+    # =========================================================================
+    def patch_reprogramming(embeddings, projection_layer):
+        """
+        Reprograma os patches para formato textual compreensível pela LLM
+        Converte embeddings numéricos em tokens textuais
+        """
+        # Converter embeddings em representação textual estatística
+        patch_descriptions = []
+
+        for i, emb in enumerate(embeddings):
+            # Estatísticas do embedding
+            mean_emb = emb.mean().item()
+            std_emb = emb.std().item()
+            min_emb = emb.min().item()
+            max_emb = emb.max().item()
+
+            # Pegar o patch original correspondente
+            patch_data = patches[i].numpy()
+
+            # Criar descrição textual do patch
+            patch_desc = (
+                f"Patch {i+1}/{num_patches}: "
+                f"[{', '.join([f'{v:.3f}' for v in patch_data[:5]])}...] "
+                f"(mean={np.mean(patch_data):.3f}, "
+                f"std={np.std(patch_data):.3f}, "
+                f"trend={'↑' if patch_data[-1] > patch_data[0] else '↓'})"
+            )
+            patch_descriptions.append(patch_desc)
+
+        # Criar representação compacta
+        compact_repr = []
+        for i in range(0, len(patch_descriptions), 5):
+            batch = patch_descriptions[i : i + 5]
+            compact_repr.append("\n".join(batch))
+
+        return "\n\n".join(compact_repr), patch_descriptions
+
+    reprogrammed_text, patch_descriptions = patch_reprogramming(
+        embeddings, projection_layer
+    )
+
+    print("\n" + "=" * 80)
+    print("STEP 4: REPROGRAMAÇÃO DOS PATCHES")
+    print(f"Número de descrições: {len(patch_descriptions)}")
+    print("\nPrimeiros 3 patches reprogramados:")
+    for desc in patch_descriptions[:3]:
+        print(f"  {desc}")
+
+    # =========================================================================
+    # STEP 5: CRIAR PROMPT PARA LLM
+    # =========================================================================
+    global_stats = {
+        "mean": mean_val,
+        "std": std_val,
+        "min": x_raw.min(),
+        "max": x_raw.max(),
+        "trend": "increasing" if x_raw[-1] > x_raw[0] else "decreasing",
+    }
+
+    prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You are a time series forecasting expert. You analyze patch-based representations of time series data to make predictions.
+<|eot_id|>
+
+<|start_header_id|>user<|end_header_id|>
+Dataset: {dataset}
+Frequency: {metadata["frequency"]}
+Task: Predict next {pred_len} values
+
+GLOBAL STATISTICS:
+- Original Mean: {global_stats['mean']:.4f}
+- Original Std: {global_stats['std']:.4f}
+- Min: {global_stats['min']:.4f}
+- Max: {global_stats['max']:.4f}
+- Overall Trend: {global_stats['trend']}
+
+PATCH-BASED REPRESENTATION:
+(Each patch contains {patch_len} consecutive normalized time points)
+
+{reprogrammed_text}
+
+INSTRUCTIONS:
+1. Analyze the patterns in these patches
+2. Identify trends, seasonality, and anomalies
+3. Generate {pred_len} future normalized values
+4. Output format: comma-separated numbers only
+
+Prediction:
+<|eot_id|>
+
+<|start_header_id|>assistant<|end_header_id|>
+"""
+
+    print("\n" + "=" * 80)
+    print("STEP 5: PROMPT GERADO")
+    print(f"Tamanho do prompt: {len(prompt)} caracteres")
+
+    # =========================================================================
+    # STEP 6: GERAR PREVISÃO COM LLM
+    # =========================================================================
+    if not torch.cuda.is_available():
+        model_name = "google/flan-t5-large"  # Modelo menor
+        print(f"GPU não disponível, usando modelo menor: {model_name}")
+
+        from transformers import AutoModelForSeq2SeqLM
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_name,
+            low_cpu_mem_usage=True,
+        )
+
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+
+        print("Gerando previsão...")
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=200,
+                temperature=0.7,
+                do_sample=True,
+            )
+    else:
+        model_name = "mistralai/Mistral-7B-Instruct-v0.2"
+        print(f"GPU disponível, usando: {model_name}")
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+        ).to("cuda")
+
+        inputs = tokenizer(
+            prompt, return_tensors="pt", truncation=True, max_length=4096
+        ).to("cuda")
+
+        print("Gerando previsão...")
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=300,
+                temperature=0.7,
+                do_sample=True,
+                top_p=0.9,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+    print("Gerando previsão...")
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=300,
+            temperature=0.7,
+            do_sample=True,
+            top_p=0.9,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    print("\n\n\n TEXTO Gerado:")
+    print(generated_text)
+    prediction_text = generated_text.split("assistant<|end_header_id|>")[-1].strip()
+
+    # =========================================================================
+    # STEP 7: PROCESSAR SAÍDA E DESNORMALIZAR
+    # =========================================================================
+    import re
+
+    numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", prediction_text)
+    predictions_norm = [float(num) for num in numbers[:pred_len]]
+
+    # Desnormalizar
+    predictions_denorm = [p * std_val + mean_val for p in predictions_norm]
+
+    print("\n" + "=" * 80)
+    print("STEP 7: RESULTADO FINAL")
+    print(f"\nResposta da LLM:")
+    print(prediction_text[:500])
+    print(f"\nPrevisões normalizadas: {predictions_norm}")
+    print(f"\nPrevisões desnormalizadas: {predictions_denorm}")
+
+    return {
+        "predictions_normalized": predictions_norm,
+        "predictions": predictions_denorm,
+        "mean": mean_val,
+        "std": std_val,
+        "num_patches": num_patches,
+        "patch_len": patch_len,
+    }
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    result = timellm()
