@@ -363,49 +363,46 @@ def timellm():
         "trend": "increasing" if x_raw[-1] > x_raw[0] else "decreasing",
     }
 
+    # Usar apenas os últimos 10 patches (mais relevantes)
+    recent_patches = patch_descriptions[-10:]
+    patches_summary = "\n".join(recent_patches)
+
+    # PROMPT SIMPLIFICADO E MAIS DIRETO
     prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-You are a time series forecasting expert. You analyze patch-based representations of time series data to make predictions.
-<|eot_id|>
+    You are a time series forecasting expert. Generate numerical predictions.
+    <|eot_id|>
 
-<|start_header_id|>user<|end_header_id|>
-Dataset: {dataset}
-Frequency: {metadata["frequency"]}
-Task: Predict next {pred_len} values
+    <|start_header_id|>user<|end_header_id|>
+    Task: Forecast the next {pred_len} values for time series data.
 
-GLOBAL STATISTICS:
-- Original Mean: {global_stats['mean']:.4f}
-- Original Std: {global_stats['std']:.4f}
-- Min: {global_stats['min']:.4f}
-- Max: {global_stats['max']:.4f}
-- Overall Trend: {global_stats['trend']}
+    Dataset: {dataset} ({metadata["frequency"]} frequency)
 
-PATCH-BASED REPRESENTATION:
-(Each patch contains {patch_len} consecutive normalized time points)
+    Recent patterns (last 10 patches):
+    {patches_summary}
 
-{reprogrammed_text}
+    Statistics: mean={global_stats['mean']:.2f}, std={global_stats['std']:.2f}, trend={global_stats['trend']}
 
-INSTRUCTIONS:
-1. Analyze the patterns in these patches
-2. Identify trends, seasonality, and anomalies
-3. Generate {pred_len} future normalized values
-4. Output format: comma-separated numbers only
+    Output EXACTLY {pred_len} comma-separated numbers (normalized values between -2 and 2).
+    Example format: 0.15, 0.23, -0.11, 0.45, 0.67, ...
 
-Prediction:
-<|eot_id|>
+    Generate {pred_len} predictions now:
+    <|eot_id|>
 
-<|start_header_id|>assistant<|end_header_id|>
-"""
+    <|start_header_id|>assistant<|end_header_id|>
+    """
 
     print("\n" + "=" * 80)
     print("STEP 5: PROMPT GERADO")
     print(f"Tamanho do prompt: {len(prompt)} caracteres")
+    print("\nPrompt completo:")
+    print(prompt)
 
     # =========================================================================
     # STEP 6: GERAR PREVISÃO COM LLM
     # =========================================================================
     if not torch.cuda.is_available():
-        model_name = "google/flan-t5-large"  # Modelo menor
-        print(f"GPU não disponível, usando modelo menor: {model_name}")
+        model_name = "google/flan-t5-large"
+        print(f"\nGPU não disponível, usando modelo menor: {model_name}")
 
         from transformers import AutoModelForSeq2SeqLM
 
@@ -415,19 +412,34 @@ Prediction:
             low_cpu_mem_usage=True,
         )
 
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+        # Prompt ainda mais simples para T5
+        simple_prompt = f"""forecast time series: {metadata["frequency"]} data, 
+    last values: {', '.join([f'{v:.2f}' for v in x_norm[-20:]])}, 
+    trend: {global_stats['trend']}, 
+    generate next {pred_len} normalized values:"""
 
-        print("Gerando previsão...")
+        inputs = tokenizer(
+            simple_prompt, return_tensors="pt", truncation=True, max_length=512
+        )
+
+        print("Gerando previsão com T5...")
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=200,
-                temperature=0.7,
+                max_new_tokens=500,
+                min_new_tokens=pred_len * 5,  # Garantir geração mínima
+                temperature=1.0,
                 do_sample=True,
+                top_p=0.95,
+                repetition_penalty=1.2,  # Evitar repetição
             )
+
+        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        prediction_text = generated_text
+
     else:
         model_name = "mistralai/Mistral-7B-Instruct-v0.2"
-        print(f"GPU disponível, usando: {model_name}")
+        print(f"\nGPU disponível, usando: {model_name}")
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForCausalLM.from_pretrained(
@@ -437,53 +449,82 @@ Prediction:
         ).to("cuda")
 
         inputs = tokenizer(
-            prompt, return_tensors="pt", truncation=True, max_length=4096
+            prompt, return_tensors="pt", truncation=True, max_length=2048
         ).to("cuda")
 
-        print("Gerando previsão...")
+        print("Gerando previsão com Mistral...")
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=300,
-                temperature=0.7,
+                max_new_tokens=500,
+                min_new_tokens=pred_len * 5,
+                temperature=0.8,
                 do_sample=True,
                 top_p=0.9,
+                repetition_penalty=1.2,
                 pad_token_id=tokenizer.eos_token_id,
             )
 
-    print("Gerando previsão...")
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=300,
-            temperature=0.7,
-            do_sample=True,
-            top_p=0.9,
-            pad_token_id=tokenizer.eos_token_id,
-        )
+        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        print("\n" + "=" * 80)
+        print("TEXTO COMPLETO GERADO:")
+        print(generated_text)
+        print("=" * 80)
 
-    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    print("\n\n\n TEXTO Gerado:")
+        # Extrair apenas a parte após "assistant"
+        if "assistant<|end_header_id|>" in generated_text:
+            prediction_text = generated_text.split("assistant<|end_header_id|>")[
+                -1
+            ].strip()
+        else:
+            prediction_text = generated_text
+
+    print("\n" + "=" * 80)
+    print("TEXTO COMPLETO GERADO:")
     print(generated_text)
-    prediction_text = generated_text.split("assistant<|end_header_id|>")[-1].strip()
-
+    print("=" * 80)
     # =========================================================================
     # STEP 7: PROCESSAR SAÍDA E DESNORMALIZAR
     # =========================================================================
     import re
 
+    print("\n" + "=" * 80)
+    print("STEP 7: EXTRAIR PREVISÕES")
+    print(f"\nTexto da previsão extraído:")
+    print(prediction_text)
+
     numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", prediction_text)
+    print(numbers[0])
+    print(f"\nNúmeros encontrados: {len(numbers)}")
+    print(f"Primeiros números: {numbers[:20]}")
+
     predictions_norm = [float(num) for num in numbers[:pred_len]]
+
+    if len(predictions_norm) < pred_len:
+        print(f"\n⚠️ AVISO: Apenas {len(predictions_norm)}/{pred_len} valores gerados!")
+        print("Usando estratégia de fallback (extrapolação da tendência)...")
+
+        # Calcular tendência dos últimos patches
+        last_patch_values = patches[-5:].flatten().tolist()
+        trend_value = (last_patch_values[-1] - last_patch_values[0]) / len(
+            last_patch_values
+        )
+
+        # Gerar valores baseado na tendência
+        last_value = x_norm[-1] if len(predictions_norm) == 0 else predictions_norm[-1]
+        for i in range(len(predictions_norm), pred_len):
+            next_val = last_value + trend_value * (i + 1 - len(predictions_norm))
+            predictions_norm.append(next_val)
 
     # Desnormalizar
     predictions_denorm = [p * std_val + mean_val for p in predictions_norm]
 
     print("\n" + "=" * 80)
-    print("STEP 7: RESULTADO FINAL")
-    print(f"\nResposta da LLM:")
-    print(prediction_text[:500])
-    print(f"\nPrevisões normalizadas: {predictions_norm}")
-    print(f"\nPrevisões desnormalizadas: {predictions_denorm}")
+    print("STEP 8: RESULTADO FINAL")
+    print(f"\nPrevisões normalizadas ({len(predictions_norm)} valores):")
+    print(predictions_norm)
+    print(f"\nPrevisões desnormalizadas ({len(predictions_denorm)} valores):")
+    print(predictions_denorm)
 
     return {
         "predictions_normalized": predictions_norm,
@@ -492,6 +533,7 @@ Prediction:
         "std": std_val,
         "num_patches": num_patches,
         "patch_len": patch_len,
+        "generated_text": prediction_text,
     }
 
 
