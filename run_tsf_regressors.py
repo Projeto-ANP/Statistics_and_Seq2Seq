@@ -130,6 +130,25 @@ def checkFolder(pasta, arquivo, tipo):
         print_log(f"Erro em: {caminho_arquivo} | {e}")
     return False
 
+def generate_experiment(caminho_arquivo, dataset_index, start_test):
+    try:
+        if not os.path.exists(caminho_arquivo):
+            return True
+
+        df = pd.read_csv(caminho_arquivo, sep=";")
+        df = df[df['dataset_index'] == dataset_index]
+
+        if "start_test" not in df.columns:
+            return True
+
+        if start_test not in df["start_test"].values:
+            print_log(f'Continuando... {start_test} em "{caminho_arquivo}".')
+            return True
+    except Exception as e:
+        print_log(f"Erro em: {caminho_arquivo} | {e}")
+    return False
+
+
 
 def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format):
     global X_train_v
@@ -766,8 +785,8 @@ def run_tsf_normal_series(args):
             path_experiments = f"./timeseries/mestrado/resultados/{regr}/{transform}/"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
-            flag = True
-            start_exp = time.perf_counter()
+            # flag = True
+            flag = generate_experiment(path_csv, i, start_test)
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
                 train_tf_val = transform_regressors(train_val, format=transform)
