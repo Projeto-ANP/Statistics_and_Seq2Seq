@@ -114,6 +114,7 @@ def exec_dataset(models):
             "predictions": [preds_real],
             "start_test": "INICIO",
             "final_test": final_test,
+            "description": description,
             # 'training_time': times[0],
             # 'prediction_time': times[1],
         }
