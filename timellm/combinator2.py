@@ -98,6 +98,7 @@ def calculate_metrics_tool(validation_test: list, validation_predictions: dict) 
         }
         
     print(f"[TOOL RESULT] Calculated metrics for {len(results)} models")
+    print(json.dumps(results, indent=2))
     return json.dumps(results, indent=2)
 
 
@@ -209,4 +210,5 @@ if __name__ == "__main__":
     test_series = [22026.58]*12
     predictions = {"ARIMA": [19197.09]*12, "ETS": [18251.15]*12, "THETA": [18345.69]*12}
 
-    simple_agent(validation_test, validation_predictions, predictions)
+    description, result = simple_agent(validation_test, validation_predictions, predictions)
+    print(result)

@@ -123,6 +123,7 @@ def exec_dataset(models):
                 path_csv, sep=";", index=False
             )
 
+        print("Salvando resultados...\n")
         df_new = pd.DataFrame(data_serie)
         df_new.to_csv(
             path_csv, sep=";", mode="a", header=False, index=False
