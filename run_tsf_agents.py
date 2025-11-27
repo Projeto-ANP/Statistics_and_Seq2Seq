@@ -111,7 +111,7 @@ def exec_dataset(models):
             "msmape": msmape_result,
             "mae": mae_result,
             "test": [test.tolist()],
-            "predictions": [preds_real.values],
+            "predictions": [preds_real],
             "start_test": "INICIO",
             "final_test": final_test,
             # 'training_time': times[0],
