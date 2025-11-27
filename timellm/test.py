@@ -1,117 +1,52 @@
-import torch
-import torch.nn as nn
-from transformers import AutoTokenizer, AutoModel
-import numpy as np
-import pandas as pd
+"""
+Teste simples do agente de combinação com LLM local (Ollama)
+"""
 
-# ======================================================
-# 1. Configurações
-# ======================================================
-MODEL_NAME = "meta-llama/Llama-2-7b-hf"  # ou outro LLaMA compatível
-SEQ_LEN = 24  # janela de tempo
-PRED_HORIZON = 6  # passos à frente para prever
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+from agent import run_combination_agent
 
-# ======================================================
-# 2. Dataset sintético (exemplo)
-# ======================================================
-np.random.seed(42)
-time = np.arange(200)
-series = np.sin(time / 6) + np.random.normal(0, 0.1, len(time))
-df = pd.DataFrame({"value": series})
+print("="*80)
+print("🤖 TESTE DO AGENTE DE COMBINAÇÃO COM LLM LOCAL")
+print("="*80)
+
+test_series = [22026.58, 21691.041, 18155.248, 17892.518, 18338.645, 11259.7, 18852.424, 17437.912, 17794.103, 13666.352, 14124.142, 12543.652]
 
 
-def create_patches(data, seq_len, pred_horizon):
-    X, y = [], []
-    for i in range(len(data) - seq_len - pred_horizon):
-        X.append(data[i : i + seq_len])
-        y.append(data[i + seq_len : i + seq_len + pred_horizon])
-    return np.array(X), np.array(y)
+predictions = {
+    "ARIMA": [19197.09616343, 19218.19911323, 18289.75028673, 18991.53921425, 17830.29109381, 18676.75281918, 18991.222043, 19210.49939444, 19533.24147234, 18841.98662861, 19274.82557375, 18851.34984505],
+            "ETS": [18251.1580763, 17924.35960825, 16248.24412114, 17766.15931347, 16819.15680994, 17510.64335004, 18319.57207669, 18979.65520757, 19563.43835807, 18870.87997772, 19539.15669582, 19149.92014317],
+            "THETA": [18345.6940208, 17874.10983595, 16222.97612274, 17834.21723458, 16755.47385476, 17504.31572072, 18362.58535134, 18904.91805159, 19501.2955687, 18887.74346103, 19515.8698591, 19162.3682469],
+            "svr": [17452.4221411, 17234.64753482, 16975.16681594, 17024.21102249, 16998.12236703, 17137.08981868, 17287.56864945, 17385.94955304, 17468.65515164, 17483.75247101, 17499.0596454, 17475.40451716],
+            "rf": [17594.56713935, 16988.53851451, 15220.13799115, 16405.03819754, 16229.28107273, 16487.60403589, 17313.70069943, 17700.77143317, 18067.47250334, 18644.77847774, 18686.94990243, 18284.22764055],
+            "catboost": [17480.08436303, 17300.88465267, 14527.8578392, 16118.70803821, 16789.43842464, 16225.13660246, 18107.8765838, 18216.16281705, 18866.88706808, 19729.19736026, 20467.58901349, 19236.18076527],
+            "CWT_svr": [17473.40367069, 17027.65583789, 16479.605163, 16581.08392297, 16392.44084997, 16969.30862415, 17189.00332273, 17331.74512162, 17340.43932507, 17247.77175877, 17135.69334263, 16981.97050238],
+            "DWT_svr": [17926.94347244, 17258.82698246, 15882.86857631, 17277.4223869, 16914.33628065, 16568.21928437, 17860.31031934, 17692.72656005, 18223.70572647, 18016.41987286, 17756.22133002, 17672.8968208],
+            "FT_svr": [17824.29082877, 17374.40021011, 15444.34116769, 16953.06272067, 17102.35871569, 16499.87199132, 17537.28623046, 17877.09881465, 17625.97791532, 18124.59991469, 18276.50134908, 17877.46019979],
+            "CWT_rf": [16567.05519459, 16059.52855682, 15258.51218364, 16467.14154321, 15747.6389172, 16229.90071796, 16424.2071959, 16586.9576747, 16970.48077076, 16522.73725021, 16235.52296597, 16107.1922324],
+            "DWT_rf": [18098.46198988, 16985.5179056, 15451.3318093, 15725.41631389, 14862.19180381, 15917.73977454, 16228.85838407, 16255.4209196, 16832.75047669, 16778.2652245, 16604.76938011, 16289.94931507],
+            "FT_rf": [17348.61122703, 16849.82524113, 15096.18413635, 15324.5564488, 15305.54604854, 15838.24011944, 16340.51110191, 16686.36627673, 16886.05694192, 16705.58555394, 16368.801103, 16160.07672048],
+            "CWT_catboost": [17377.02753016, 16427.94456663, 14510.93589461, 15876.21508147, 15308.66034944, 15532.97247311, 16428.67357426, 16937.23082187, 17263.57037257, 16645.22903114, 16518.70702744, 16039.16339444],
+            "DWT_catboost": [17842.93000058, 17500.06127439, 16702.69910431, 16955.12667547, 16820.62850256, 17339.22385666, 17528.69917841, 17642.78761942, 17726.55757098, 17571.69823637, 17548.1240138, 17409.61835574],
+            "FT_catboost": [17729.70542317, 17367.36165659, 16797.76082268, 17016.07584365, 16779.51393948, 17312.56091945, 17543.29106472, 17704.00934383, 17732.31867146, 17519.12232138, 17485.72105834, 17363.68890376]
+}
 
+print("\nDADOS DE ENTRADA:")
+print(f"Test Series: {test_series}")
+print(f"Predições disponíveis: {list(predictions.keys())}")
 
-X, y = create_patches(df["value"].values, SEQ_LEN, PRED_HORIZON)
-X_train, y_train = torch.tensor(X[:150], dtype=torch.float32), torch.tensor(
-    y[:150], dtype=torch.float32
-)
-X_test, y_test = torch.tensor(X[150:], dtype=torch.float32), torch.tensor(
-    y[150:], dtype=torch.float32
-)
-
-
-# ======================================================
-# 3. Quantização (opcional)
-# ======================================================
-def quantize(x, num_bins=64):
-    min_val, max_val = x.min(), x.max()
-    bins = torch.linspace(min_val, max_val, num_bins)
-    quantized = torch.bucketize(x, bins)
-    return quantized, bins
-
-
-# ======================================================
-# 4. Modelo: LLaMA congelado + cabeça de regressão
-# ======================================================
-class TimeLLM(nn.Module):
-    def __init__(self, model_name, embed_dim=768, pred_horizon=6):
-        super().__init__()
-        # Tokenizer + modelo congelado
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.llm = AutoModel.from_pretrained(
-            model_name, torch_dtype=torch.float16, device_map="auto"
-        )
-        for p in self.llm.parameters():
-            p.requires_grad = False
-
-        # Camadas aprendíveis
-        self.patch_embed = nn.Linear(SEQ_LEN, embed_dim)
-        self.regressor = nn.Sequential(
-            nn.Linear(embed_dim, 256), nn.ReLU(), nn.Linear(256, pred_horizon)
-        )
-
-    def forward(self, x):
-        # x: (batch, seq_len)
-        x = self.patch_embed(x)  # (batch, embed_dim)
-
-        # Convertemos para formato textual "prompt-like"
-        prompts = [
-            " ".join([f"{v:.3f}" for v in seq]) for seq in x.detach().cpu().numpy()
-        ]
-        inputs = self.tokenizer(
-            prompts, return_tensors="pt", padding=True, truncation=True
-        ).to(DEVICE)
-
-        # Passagem pelo LLaMA congelado
-        with torch.no_grad():
-            outputs = self.llm(**inputs)
-            features = outputs.last_hidden_state.mean(dim=1)  # pooling
-
-        # Previsão via MLP
-        out = self.regressor(features)
-        return out
-
-
-# ======================================================
-# 5. Treinamento leve
-# ======================================================
-model = TimeLLM(MODEL_NAME, embed_dim=768, pred_horizon=PRED_HORIZON).to(DEVICE)
-optimizer = torch.optim.Adam(model.regressor.parameters(), lr=1e-3)
-criterion = nn.MSELoss()
-
-for epoch in range(5):  # poucos epochs bastam
-    model.train()
-    optimizer.zero_grad()
-    pred = model(X_train.to(DEVICE))
-    loss = criterion(pred, y_train.to(DEVICE))
-    loss.backward()
-    optimizer.step()
-    print(f"Epoch {epoch+1} | Loss: {loss.item():.6f}")
-
-# ======================================================
-# 6. Avaliação
-# ======================================================
-model.eval()
-with torch.no_grad():
-    preds = model(X_test.to(DEVICE)).cpu().numpy()
-
-mse = np.mean((preds - y_test.numpy()) ** 2)
-print(f"\nMSE no conjunto de teste: {mse:.6f}")
+try:
+    result = run_combination_agent(
+        predictions=predictions,
+        time_series=test_series,
+        model_id="qwen3:8b",  
+        temperature=0.1,      
+        reasoning_mode=True,
+        verbose=True
+    )
+    
+    print(f"\n{result}")
+    
+except Exception as e:
+    print("1. Certifique-se que Ollama está instalado: curl -fsSL https://ollama.com/install.sh | sh")
+    print("2. Baixe um modelo: ollama pull llama3.1:7b")
+    print("3. Inicie o servidor: ollama serve")
+    print("4. Veja OLLAMA_SETUP.md para mais detalhes")
