@@ -6,9 +6,25 @@ import sys
 import json
 import re
 import numpy as np
-from typing import List
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 from sklearn.metrics import mean_absolute_percentage_error as mape
+
+# --- Memória Compartilhada ---
+# Armazena dados que as tools podem acessar diretamente
+SHARED_CONTEXT = {
+    "validation_test": None,
+    "validation_predictions": None,
+    "final_predictions": None,
+    "calculated_metrics": None
+}
+
+def set_shared_context(validation_test, validation_predictions, final_predictions):
+    """Define os dados compartilhados que as tools irão usar."""
+    SHARED_CONTEXT["validation_test"] = validation_test
+    SHARED_CONTEXT["validation_predictions"] = validation_predictions
+    SHARED_CONTEXT["final_predictions"] = final_predictions
+    SHARED_CONTEXT["calculated_metrics"] = None
 
 # --- Funções Auxiliares ---
 
@@ -25,6 +41,7 @@ def full_combination(predictions):
 
 def clean_json_string(text: str) -> dict:
     text = text.strip()
+    
     text = re.sub(r'^```json\s*', '', text, flags=re.IGNORECASE)
     text = re.sub(r'^```\s*', '', text)
     text = re.sub(r'\s*```$', '', text)
@@ -40,7 +57,7 @@ def clean_json_string(text: str) -> dict:
                 return json.loads(text[start:end])
         except:
             pass
-        print(f"Erro ao parsear JSON: {e}")
+        print(f"Erro ao parsear JSON final: {e}")
         print(f"Texto recebido: {text[:200]}...")
         raise
 
@@ -52,16 +69,20 @@ class CombinationResult(BaseModel):
 # --- Tools ---
 
 @tool
-def calculate_metrics_tool(validation_test: list, validation_predictions: dict) -> dict:
+def calculate_metrics_tool() -> str:
     """
     Calculates performance metrics (MAPE, RMSE, SMAPE, POCID) for each model.
-    Use this tool FIRST to analyze which models are performing best on validation data.
+    Uses validation data from shared context - no parameters needed.
+    Call this first to analyze model performance.
+    
+    Returns:
+        JSON string with metrics for each model.
     """
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     try:
         import all_functions
     except ImportError:
-        print("Warning: all_functions module not found. Using mock functions for demonstration.")
+        print("Warning: all_functions module not found. Using mock functions.")
         class MockFunctions:
             @staticmethod
             def calculate_rmse(p, t): return [np.sqrt(np.mean((p-t)**2))]
@@ -73,14 +94,25 @@ def calculate_metrics_tool(validation_test: list, validation_predictions: dict) 
     
     print(f"\n[TOOL CALL] calculate_metrics_tool called")
     
+    # Usar dados da memória compartilhada
+    validation_test = SHARED_CONTEXT["validation_test"]
+    validation_predictions = SHARED_CONTEXT["validation_predictions"]
+    
+    if validation_test is None or validation_predictions is None:
+        return json.dumps({"error": "Shared context not initialized. Call set_shared_context first."})
+
     results = {}
     y_true = np.array(validation_test)
     
     for model_name, y_pred_list in validation_predictions.items():
+        if not y_pred_list:
+            continue
+
         y_pred = np.array(y_pred_list)
         
         min_len = min(len(y_true), len(y_pred))
-        if min_len == 0: continue
+        if min_len == 0:
+            continue
             
         curr_y_true = y_true[:min_len]
         curr_y_pred = y_pred[:min_len]
@@ -88,28 +120,43 @@ def calculate_metrics_tool(validation_test: list, validation_predictions: dict) 
         mape_value = mape(curr_y_true, curr_y_pred)
         rmse = all_functions.calculate_rmse(curr_y_pred.reshape(1, -1), curr_y_true.reshape(1, -1))[0]
         smape = all_functions.calculate_smape(curr_y_pred.reshape(1, -1), curr_y_true.reshape(1, -1))[0]
-        pocid = all_functions.pocid(curr_y_true, curr_y_pred)
+        pocid_value = all_functions.pocid(curr_y_true, curr_y_pred)
 
         results[model_name] = {
-            "MAPE": float(mape_value),
-            "RMSE": float(rmse),
-            "SMAPE": float(smape),
-            "POCID": float(pocid)
+            "MAPE": round(float(mape_value), 4),
+            "RMSE": round(float(rmse), 2),
+            "SMAPE": round(float(smape), 4),
+            "POCID": round(float(pocid_value), 2)
         }
+    
+    # Salvar métricas na memória compartilhada
+    SHARED_CONTEXT["calculated_metrics"] = results
         
     print(f"[TOOL RESULT] Calculated metrics for {len(results)} models")
     return json.dumps(results, indent=2)
 
 
 @tool
-def selective_combine_tool(predictions: dict, models_to_combine: list) -> dict:
+def selective_combine_tool(models_to_combine: List[str]) -> str:
     """
-    Combines predictions from specified models.
-    Use this tool SECOND, after choosing the best models based on the metrics.
+    Combines predictions from specified models using mean averaging.
+    Uses final predictions from shared context.
+    
+    Args:
+        models_to_combine: List of model names to combine. Example: ["ARIMA", "ETS", "THETA"]
+    
+    Returns:
+        JSON string with combined predictions and method description.
     """
     print(f"\n[TOOL CALL] selective_combine_tool called")
     print(f"[TOOL INFO] Models to combine: {models_to_combine}")
     
+    # Usar dados da memória compartilhada
+    predictions = SHARED_CONTEXT["final_predictions"]
+    
+    if predictions is None:
+        return json.dumps({"error": "Shared context not initialized.", "result": []})
+
     valid_models = [m for m in models_to_combine if m in predictions]
     
     if not valid_models:
@@ -119,34 +166,43 @@ def selective_combine_tool(predictions: dict, models_to_combine: list) -> dict:
     print(f"[TOOL INFO] Combining {len(valid_models)} models: {valid_models}")
     
     pred_arrays = {k: np.array(v) for k, v in predictions.items() if k in valid_models}
+    
+    if not pred_arrays:
+        return json.dumps({"result": [], "error": "No valid prediction arrays found."})
+
     combined = full_combination(pred_arrays)
+    combined_list = [round(x, 2) for x in combined.tolist()]
+    
     print(f"[TOOL RESULT] Combined predictions generated.")
     
-    return {
-        "result": combined.tolist(),
+    return json.dumps({
+        "result": combined_list,
         "models_used": valid_models,
-        "method": f"Mean combination of {len(valid_models)} selected models"
-    }
+        "method": f"Mean combination of {len(valid_models)} models: {', '.join(valid_models)}"
+    })
 
 # --- Agente ---
 
 def agent_combinator(model_id: str, temperature: float):
-    instructions = """You are an expert time series analyst. Your goal is to combine model predictions to achieve the best forecast.
+    instructions = """You are a Time Series Analyst Agent with access to tools.
 
-    PROTOCOL - FOLLOW STRICTLY:
-    1. CALL `calculate_metrics_tool` with the validation data.
-    2. ANALYZE the metrics returned by the tool. Look for low MAPE/SMAPE/RMSE or higher POCID.
-    3. SELECT the top performing models (e.g., top 3, top 4 or top n models).
-    4. CALL `selective_combine_tool` using ONLY these selected models and the 'final_test_predictions' provided in the prompt.
-    5. AFTER the tool returns the combination, output the final JSON.
+YOUR TASK: Analyze model performance and combine the best predictions.
 
-    OUTPUT FORMAT:
-    You must output a VALID JSON object at the very end:
-    {
-        "description": "Brief explanation of which models were selected and why (based on which metric).",
-        "result": [list of float values returned by selective_combine_tool]
-    }
-    """
+AVAILABLE TOOLS:
+1. calculate_metrics_tool() - No parameters needed. Calculates MAPE, RMSE, SMAPE, POCID for all models.
+2. selective_combine_tool(models_to_combine) - Takes a list of model names to combine.
+
+EXECUTION STEPS:
+1. Call calculate_metrics_tool() to get metrics for all models
+2. Analyze the results: Lower MAPE/RMSE/SMAPE is better, Higher POCID is better
+3. Select the top 3 best performing models
+4. Call selective_combine_tool with the list of selected model names
+5. Return final JSON with description and result
+
+IMPORTANT: 
+- calculate_metrics_tool takes NO parameters
+- selective_combine_tool takes ONLY a list of model names like ["ARIMA", "ETS", "THETA"]
+"""
     
     return Agent(
         model=Ollama(
@@ -164,8 +220,11 @@ def agent_combinator(model_id: str, temperature: float):
     
 
 def simple_agent(validation_test, validation_predictions, final_test_predictions):
+    # Configurar memória compartilhada ANTES de criar o agente
+    set_shared_context(validation_test, validation_predictions, final_test_predictions)
+    
     agent = agent_combinator(
-        model_id="qwen2.5:7b", 
+        model_id="qwen3:14b", 
         temperature=0.0
     )
     
@@ -173,27 +232,26 @@ def simple_agent(validation_test, validation_predictions, final_test_predictions
     print("AGENT EXECUTION")
     print("=" * 80)
     print(f"Model: {agent.model.id}")
+    print(f"Models Available: {list(validation_predictions.keys())}")
     print("=" * 80 + "\n")
     
-    prompt = f"""
-    Here is the data for your analysis:
+    prompt = f"""Analyze the following models and combine the best predictions.
 
-    1. Validation Actuals: {validation_test}
-    
-    2. Validation Predictions (use this with calculate_metrics_tool):
-    {json.dumps(validation_predictions)}
+Available models: {list(validation_predictions.keys())}
 
-    3. Final Test Predictions (use this with selective_combine_tool):
-    {json.dumps(final_test_predictions)}
-
-    Start by calculating the metrics. Do not generate the final JSON until you have called both tools.
-    """
+STEPS:
+1. Call calculate_metrics_tool() to get performance metrics (no parameters needed)
+2. Identify the top 3 models with best performance (low MAPE/RMSE/SMAPE, high POCID)
+3. Call selective_combine_tool with a list of the selected model names
+4. Return a JSON with "description" and "result" fields
+"""
     
     print("Sending prompt to agent...")
     print("-" * 80)
     try:
         response = agent.run(prompt)
-        print(f"\n[RAW RESPONSE]:\n{response.content}\n")
+        print("\n[AGENT RAW RESPONSE]:\n")
+        print(response.content)
         
         output = clean_json_string(response.content)
         return output.get("description", ""), output.get("result", [])
@@ -201,12 +259,25 @@ def simple_agent(validation_test, validation_predictions, final_test_predictions
         print(f"ERROR: {e}")
         import traceback
         traceback.print_exc()
-        return "Error in processing", []
+        return "Error", []
 
 if __name__ == "__main__":
     validation_test = [17656.623, 19507.078, 15680.762, 19775.546, 13736.136, 17221.028, 18352.012, 20327.377, 21175.424, 18516.637, 19864.665, 18523.176]
-    validation_predictions = {"ARIMA": [20189.34]*12, "ETS": [18062.62]*12, "THETA": [17866.08]*12}
-    test_series = [22026.58]*12
-    predictions = {"ARIMA": [19197.09]*12, "ETS": [18251.15]*12, "THETA": [18345.69]*12}
+    
+    validation_predictions = {
+        "ARIMA": [x * 1.05 for x in validation_test], 
+        "ETS": [x * 0.95 for x in validation_test], 
+        "THETA": [x * 1.02 for x in validation_test]
+    }
+    
+    final_test_series = [22026.58] * 12
+    final_predictions = {
+        "ARIMA": [22000.0] * 12, 
+        "ETS": [21500.0] * 12, 
+        "THETA": [21800.0] * 12
+    }
 
-    simple_agent(validation_test, validation_predictions, predictions)
+    desc, res = simple_agent(validation_test, validation_predictions, final_predictions)
+    print("\n--- FINAL OUTPUT ---")
+    print(f"Description: {desc}")
+    print(f"Result: {res}")

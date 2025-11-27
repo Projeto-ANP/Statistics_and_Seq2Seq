@@ -69,7 +69,7 @@ def get_predictions_models(models, dataset_index, final_test):
     return final_test_predictions, final_test_data
 def exec_dataset(models):
     dataset = "ANP_MONTHLY"
-    exp_name = "simple_agent_combinator"
+    exp_name = "simple_agent_qwen2.5=7b"
     horizon = 12
     final_test = "2024-11-30"
     
@@ -83,7 +83,7 @@ def exec_dataset(models):
         
         from timellm.combinator import simple_agent
         
-        description, preds_real = simple_agent(val_predictions, val_test, predictions)
+        description, preds_real = simple_agent(val_test, val_predictions, predictions)
         print(f"----- DATASET INDEX: {i} -----")
         print("Description: ", description)
         print("Predictions: ", preds_real)
@@ -149,6 +149,15 @@ if __name__ == "__main__":
         "CWT_catboost",
         "DWT_catboost",
         "FT_catboost",
+        "ONLY_CWT_catboost",
+        "ONLY_CWT_rf",
+        "ONLY_CWT_svr",
+        "ONLY_DWT_catboost",
+        "ONLY_DWT_rf",
+        "ONLY_DWT_svr",
+        "ONLY_FT_catboost",
+        "ONLY_FT_rf",
+        "ONLY_FT_svr",
     ]
 
     exec_dataset(models)
