@@ -129,7 +129,6 @@ def calculate_metrics_tool() -> str:
             "POCID": round(float(pocid_value), 2)
         }
     
-    # Salvar métricas na memória compartilhada
     SHARED_CONTEXT["calculated_metrics"] = results
         
     print(f"[TOOL RESULT] Calculated metrics for {len(results)} models")
@@ -146,12 +145,11 @@ def selective_combine_tool(models_to_combine: List[str]) -> str:
         models_to_combine: List of model names to combine. Example: ["ARIMA", "ETS", "THETA"]
     
     Returns:
-        JSON string with combined predictions and method description.
+        List with combined predictions.
     """
     print(f"\n[TOOL CALL] selective_combine_tool called")
     print(f"[TOOL INFO] Models to combine: {models_to_combine}")
     
-    # Usar dados da memória compartilhada
     predictions = SHARED_CONTEXT["final_predictions"]
     
     if predictions is None:
@@ -175,13 +173,8 @@ def selective_combine_tool(models_to_combine: List[str]) -> str:
     
     print(f"[TOOL RESULT] Combined predictions generated.")
     
-    return json.dumps({
-        "result": combined_list,
-        "models_used": valid_models,
-        "method": f"Mean combination of {len(valid_models)} models: {', '.join(valid_models)}"
-    })
+    return combined_list
 
-# --- Agente ---
 
 def agent_combinator(model_id: str, temperature: float):
     instructions = """You are a Time Series Analyst Agent with access to tools.
@@ -220,7 +213,6 @@ IMPORTANT:
     
 
 def simple_agent(validation_test, validation_predictions, final_test_predictions):
-    # Configurar memória compartilhada ANTES de criar o agente
     set_shared_context(validation_test, validation_predictions, final_test_predictions)
     
     agent = agent_combinator(
