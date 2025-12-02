@@ -69,21 +69,21 @@ def get_predictions_models(models, dataset_index, final_test):
     return final_test_predictions, final_test_data
 def exec_dataset(models):
     dataset = "ANP_MONTHLY"
-    exp_name = "simple_agent_qwen3=14b"
+    exp_name = "simple_selective_agent_qwen3=14b"
     horizon = 12
     final_test = "2024-11-30"
     
     path_experiments = f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{exp_name}/"
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
-    for i in range (32, 182):
+    for i in range (0, 182):
         
         val_predictions, val_test = get_predictions_models(models, dataset_index=i, final_test="2023-11-30")
         predictions, test = get_predictions_models(models, dataset_index=i, final_test=final_test)
         
-        from timellm.combinator import simple_agent
+        from timellm.combinator import simple_selective_agent
         
-        description, preds_real = simple_agent(val_test, val_predictions, predictions)
+        description, preds_real = simple_selective_agent(val_test, val_predictions, predictions)
         print(f"----- DATASET INDEX: {i} -----")
         print("Description: ", description)
         print("Predictions: ", preds_real)
@@ -159,6 +159,8 @@ if __name__ == "__main__":
         "ONLY_FT_catboost",
         "ONLY_FT_rf",
         "ONLY_FT_svr",
+        "NaiveSeasonal",
+        "NaiveMovingAverage"
     ]
 
     exec_dataset(models)

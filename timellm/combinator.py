@@ -10,14 +10,14 @@ from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 from sklearn.metrics import mean_absolute_percentage_error as mape
 
-# --- Memória Compartilhada ---
-# Armazena dados que as tools podem acessar diretamente
 SHARED_CONTEXT = {
     "validation_test": None,
     "validation_predictions": None,
     "final_predictions": None,
     "calculated_metrics": None
 }
+
+CONTEXT_MEMORY = {}
 
 def set_shared_context(validation_test, validation_predictions, final_predictions):
     """Define os dados compartilhados que as tools irão usar."""
@@ -26,7 +26,8 @@ def set_shared_context(validation_test, validation_predictions, final_prediction
     SHARED_CONTEXT["final_predictions"] = final_predictions
     SHARED_CONTEXT["calculated_metrics"] = None
 
-# --- Funções Auxiliares ---
+def set_context(key: str, value: Any):
+    CONTEXT_MEMORY[key] = value
 
 def full_combination(predictions):
     """
@@ -212,6 +213,7 @@ IMPORTANT:
     )
     
 
+    
 def simple_agent(validation_test, validation_predictions, final_test_predictions):
     set_shared_context(validation_test, validation_predictions, final_test_predictions)
     
@@ -253,6 +255,86 @@ STEPS:
         traceback.print_exc()
         return "Error", []
 
+
+def simple_selective_agent(validation_test, validation_predictions, final_test_predictions):
+    # set_context("validation_test", validation_test)
+    # set_context("validation_predictions", validation_predictions)
+    # set_context("final_predictions", final_test_predictions)
+    
+    set_shared_context(validation_test, validation_predictions, final_test_predictions)
+    
+    
+    temperature = 0.0
+    model_id = "qwen3:14b"
+    
+    instructions = """You are a Time Series Analyst Agent with access to tools.
+
+YOUR TASK: Analyze model performance and combine the best predictions by each category.
+
+AVAILABLE TOOLS:
+1. calculate_metrics_tool() - No parameters needed. Calculates MAPE, RMSE, SMAPE, POCID for all models and return a list of the models_to_combine.
+2. selective_combine_tool(models_to_combine) - Takes a list of model names to combine.
+
+EXECUTION STEPS:
+1. Call calculate_metrics_tool() to get metrics for all models
+2. Analyze the results: Lower MAPE/RMSE/SMAPE is better, Higher POCID is better
+3. Select the top best performed models by RMSE from each category: Statistical, Naive and between each ML model for each representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT)
+4. Call selective_combine_tool with the list of selected model names
+5. Return final JSON with description and result
+
+IMPORTANT: 
+- calculate_metrics_tool takes NO parameters
+- selective_combine_tool takes ONLY a list of model names like ["ARIMA", "NaiveSeasonal", "CWT_rf", "FT_svr"...]
+"""
+    
+    agent = Agent(
+        model=Ollama(
+            id=model_id, 
+            options={
+                "temperature": temperature, 
+                "num_ctx": 8192,
+                "keep_alive": "5m"
+            }
+        ),
+        tools=[calculate_metrics_tool, selective_combine_tool],
+        instructions=instructions,
+        markdown=True,
+    )
+    
+    print("=" * 80)
+    print("AGENT EXECUTION")
+    print("=" * 80)
+    print(f"Model: {agent.model.id}")
+    print(f"Models Available: {list(validation_predictions.keys())}")
+    print("=" * 80 + "\n")
+    
+    prompt = f"""Analyze the following models and combine the best predictions.
+
+Available models: {list(validation_predictions.keys())}
+
+STEPS:
+1. Call calculate_metrics_tool() to get performance metrics (no parameters needed)
+2. Identify the best top model by RMSE for each category: Statistical, Naive, and ML models by representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT which could be "CWT_rf", "DWT_rf", "ONLY_FT_rf", "ONLY_CWT_rf" or just "rf" if no representation is used)
+3. Call selective_combine_tool with a list of the selected model names
+4. Return a JSON with "description" and "result" fields
+"""
+    
+    print("Sending prompt to agent...")
+    print("-" * 80)
+    try:
+        response = agent.run(prompt)
+        print("\n[AGENT RAW RESPONSE]:\n")
+        print(response.content)
+        
+        output = clean_json_string(response.content)
+        return output.get("description", ""), output.get("result", [])
+    except Exception as e:
+        print(f"ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return "Error", []
+
+    
 if __name__ == "__main__":
     validation_test = [17656.623, 19507.078, 15680.762, 19775.546, 13736.136, 17221.028, 18352.012, 20327.377, 21175.424, 18516.637, 19864.665, 18523.176]
     
