@@ -271,7 +271,7 @@ def simple_selective_agent(validation_test, validation_predictions, final_test_p
 
 YOUR TASK: Analyze model performance and combine the best predictions by each category.
 
-AVAILABLE TOOLS:
+AVAILABLE TOOLS that you will use by order:
 1. calculate_metrics_tool() - No parameters needed. Calculates MAPE, RMSE, SMAPE, POCID for all models and return a list of the models_to_combine.
 2. selective_combine_tool(models_to_combine) - Takes a list of model names to combine.
 
@@ -279,12 +279,12 @@ EXECUTION STEPS:
 1. Call calculate_metrics_tool() to get metrics for all models
 2. Analyze the results: Lower MAPE/RMSE/SMAPE is better, Higher POCID is better
 3. Select the top best performed models by RMSE from each category: Statistical, Naive and between each ML model for each representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT)
-4. Call selective_combine_tool with the list of selected model names
+4. After the result from calculate_metrics_tool, call selective_combine_tool with the list of selected model names
 5. Return final JSON with description and result
 
 IMPORTANT: 
 - calculate_metrics_tool takes NO parameters
-- selective_combine_tool takes ONLY a list of model names like ["ARIMA", "NaiveSeasonal", "CWT_rf", "FT_svr"...]
+- selective_combine_tool takes ONLY a list of model names like ["ARIMA", "NaiveSeasonal", "CWT_rf", "FT_svr"...] and will return the combined predictions from each model selected.
 """
     
     agent = Agent(
@@ -315,8 +315,8 @@ Available models: {list(validation_predictions.keys())}
 STEPS:
 1. Call calculate_metrics_tool() to get performance metrics (no parameters needed)
 2. Identify the best top model by RMSE for each category: Statistical, Naive, and ML models by representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT which could be "CWT_rf", "DWT_rf", "ONLY_FT_rf", "ONLY_CWT_rf" or just "rf" if no representation is used)
-3. Call selective_combine_tool with a list of the selected model names
-4. Return a JSON with "description" and "result" fields
+3. After the result from calculate_metrics_tool, call selective_combine_tool with a list of the selected model names
+4. Return a JSON with "description" and "result" fields, where the result is the combined predictions from the selected models received from selective_combine_tool
 """
     
     print("Sending prompt to agent...")
