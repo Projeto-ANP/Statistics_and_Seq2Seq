@@ -282,7 +282,8 @@ EXECUTION STEPS:
 4. After the result from calculate_metrics_tool, call selective_combine_tool with the list of selected model names
 5. Return final JSON with description and result
 
-IMPORTANT: 
+IMPORTANT:
+ALWAYS CALL THE TOOLS 
 - calculate_metrics_tool takes NO parameters
 - selective_combine_tool takes ONLY a list of model names like ["ARIMA", "NaiveSeasonal", "CWT_rf", "FT_svr"...] and will return the combined predictions from each model selected.
 """
@@ -312,10 +313,12 @@ IMPORTANT:
 
 Available models: {list(validation_predictions.keys())}
 
+Always use the tools provided to you in order to get the best results.
+
 STEPS:
 1. Call calculate_metrics_tool() to get performance metrics (no parameters needed)
 2. Identify the best top model by RMSE for each category: Statistical, Naive, and ML models by representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT which could be "CWT_rf", "DWT_rf", "ONLY_FT_rf", "ONLY_CWT_rf" or just "rf" if no representation is used)
-3. After the result from calculate_metrics_tool, call selective_combine_tool with a list of the selected model names
+3. After the result from calculate_metrics_tool, call the tool selective_combine_tool with a list of the selected model names
 4. Return a JSON with "description" and "result" fields, where the result is the combined predictions from the selected models received from selective_combine_tool
 """
     
