@@ -76,7 +76,7 @@ def exec_dataset(models):
     path_experiments = f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{exp_name}/"
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
-    for i in range (46, 182):
+    for i in range (159, 182):
         
         val_predictions, val_test = get_predictions_models(models, dataset_index=i, final_test="2023-11-30")
         predictions, test = get_predictions_models(models, dataset_index=i, final_test=final_test)
