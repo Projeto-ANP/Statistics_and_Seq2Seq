@@ -4,11 +4,14 @@ import numpy as np
 from all_functions import *
 import os
 from sklearn.metrics import mean_absolute_percentage_error as mape
+
+
 def extract_values(list_str):
     if isinstance(list_str, str):
         numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", list_str)
         return [float(num) for num in numbers]
     return []
+
 
 def read_model_preds(model_name, dataset_index):
     df = pd.read_csv(
@@ -23,21 +26,25 @@ def read_model_preds(model_name, dataset_index):
 
     return df
 
+
 cols_serie = [
-        "dataset_index",
-        "horizon",
-        "regressor",
-        "mape",
-        "pocid",
-        "smape",
-        "rmse",
-        "msmape",
-        "mae",
-        "test",
-        "predictions",
-        "start_test",
-        "final_test",
-    ]
+    "dataset_index",
+    "horizon",
+    "regressor",
+    "mape",
+    "pocid",
+    "smape",
+    "rmse",
+    "msmape",
+    "mae",
+    "test",
+    "predictions",
+    "start_test",
+    "final_test",
+    "description",
+]
+
+
 def get_predictions_models(models, dataset_index, final_test):
     all_data = {}
     final_test_predictions = {}
@@ -64,26 +71,35 @@ def get_predictions_models(models, dataset_index, final_test):
             final_row = test_df.iloc[0]
             final_test_predictions[model] = extract_values(final_row["predictions"])
             final_test_data = extract_values(final_row["test"])
-        
-    
+
     return final_test_predictions, final_test_data
+
+
 def exec_dataset(models):
     dataset = "ANP_MONTHLY"
     exp_name = "simple_selective_agent_qwen3=14b"
     horizon = 12
     final_test = "2024-11-30"
-    
-    path_experiments = f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{exp_name}/"
+
+    path_experiments = (
+        f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{exp_name}/"
+    )
     path_csv = f"{path_experiments}/{dataset}.csv"
     os.makedirs(path_experiments, exist_ok=True)
-    for i in range (0, 182):
-        
-        val_predictions, val_test = get_predictions_models(models, dataset_index=i, final_test="2023-11-30")
-        predictions, test = get_predictions_models(models, dataset_index=i, final_test=final_test)
-        
+    for i in range(0, 182):
+
+        val_predictions, val_test = get_predictions_models(
+            models, dataset_index=i, final_test="2023-11-30"
+        )
+        predictions, test = get_predictions_models(
+            models, dataset_index=i, final_test=final_test
+        )
+
         from timellm.combinator import simple_selective_agent
-        
-        description, preds_real = simple_selective_agent(val_test, val_predictions, predictions)
+
+        description, preds_real = simple_selective_agent(
+            val_test, val_predictions, predictions
+        )
         print(f"----- DATASET INDEX: {i} -----")
         print("Description: ", description)
         print("Predictions: ", preds_real)
@@ -120,17 +136,11 @@ def exec_dataset(models):
         }
 
         if not os.path.exists(path_csv):
-            pd.DataFrame(columns=cols_serie).to_csv(
-                path_csv, sep=";", index=False
-            )
+            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=";", index=False)
 
         print("Salvando resultados...\n")
         df_new = pd.DataFrame(data_serie)
-        df_new.to_csv(
-            path_csv, sep=";", mode="a", header=False, index=False
-        )
-
-    
+        df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
 
 
 if __name__ == "__main__":
@@ -160,7 +170,7 @@ if __name__ == "__main__":
         "ONLY_FT_rf",
         "ONLY_FT_svr",
         "NaiveSeasonal",
-        "NaiveMovingAverage"
+        "NaiveMovingAverage",
     ]
 
     exec_dataset(models)
