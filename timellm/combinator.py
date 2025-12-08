@@ -289,16 +289,16 @@ def simple_selective_agent(
 
     instructions = """You are a Time Series Analyst Agent with access to tools.
 YOUR LANGUAGE IS ENGLISH
-YOUR TASK: Analyze model performance and combine the best predictions by each category.
+YOUR TASK: Analyze model performance and combine the best predictions by each category (Statistical, Naive, RF, CWT, SVR between all transformations for each model).
 
 AVAILABLE TOOLS that you will use by order:
-1. calculate_metrics_tool() - No parameters needed. Calculates RMSE, POCID, SMAPE, MAPE for all models and return a list of the models_to_combine based on the best score from RMSE.
+1. calculate_metrics_tool() - No parameters needed. Calculates RMSE, POCID, SMAPE, MAPE for all models and return a list of the models_to_combine based on the best score from RMSE for each category (Statistical, Naive, RF, CWT, SVR with all transformations).
 2. selective_combine_tool(models_to_combine) - Takes a list of model names to combine received from calculate_metrics_tool().
 
 EXECUTION STEPS:
 1. Call calculate_metrics_tool() to get metrics for all models
-2. Analyze the results: GET ONLY THE MODELS WITH THE LOWEST RMSE, compare RMSE between each category. Select the best model RMSE in each category: Statistical, Naive and ML models by representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT)
-3. Select the top best lower rmse values from each category: Statistical, Naive and between each ML model for each representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT)
+2. Analyze the results: GET ONLY THE MODELS WITH THE LOWEST RMSE, compare RMSE between each category. Select the best model RMSE in each category: Statistical, Naive and ML models by representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT, for svr select the best between RF with CWT, DWT, RAW, FT) and the same for catboost.
+3. Select the top best lower rmse values from each category: Statistical, Naive and between each ML model for each representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT, for svr select the best between RF with CWT, DWT, RAW, FT) and the same for catboost.
 4. After the result from calculate_metrics_tool, call selective_combine_tool with the list of selected model names
 5. Return final JSON with description and result
 
