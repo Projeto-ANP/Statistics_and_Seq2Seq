@@ -130,13 +130,14 @@ def checkFolder(pasta, arquivo, tipo):
         print_log(f"Erro em: {caminho_arquivo} | {e}")
     return False
 
+
 def generate_experiment(caminho_arquivo, dataset_index, start_test):
     try:
         if not os.path.exists(caminho_arquivo):
             return True
 
         df = pd.read_csv(caminho_arquivo, sep=";")
-        df = df[df['dataset_index'] == dataset_index]
+        df = df[df["dataset_index"] == dataset_index]
 
         if "start_test" not in df.columns:
             return True
@@ -147,7 +148,6 @@ def generate_experiment(caminho_arquivo, dataset_index, start_test):
     except Exception as e:
         print_log(f"Erro em: {caminho_arquivo} | {e}")
     return False
-
 
 
 def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format):
@@ -939,8 +939,8 @@ if __name__ == "__main__":
         # "m4_weekly_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
         # "nn5_weekly_dataset.tsf",
-        "pedestrian_counts_dataset.tsf",
-        "us_births_dataset.tsf",
+        # "pedestrian_counts_dataset.tsf",
+        # "us_births_dataset.tsf",
         "australian_electricity_demand_dataset.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
