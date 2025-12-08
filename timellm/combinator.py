@@ -159,6 +159,8 @@ def calculate_metrics_tool() -> str:
     SHARED_CONTEXT["calculated_metrics"] = results
 
     print(f"[TOOL RESULT] Calculated metrics for {len(results)} models")
+
+    print(json.dumps(results, indent=2))
     return json.dumps(results, indent=2)
 
 
