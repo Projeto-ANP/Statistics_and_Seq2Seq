@@ -291,6 +291,7 @@ def simple_selective_agent(
 
     instructions = """You are a Time Series Analyst Agent with access to tools.
 YOUR LANGUAGE IS ENGLISH
+USE ALWAYS THE TOOLS TO GET THE BEST RESULTS
 YOUR TASK: Analyze model performance and combine the best predictions by each category (Statistical, Naive, RF, CWT, SVR between all transformations for each model).
 
 AVAILABLE TOOLS that you will use by order:
@@ -311,6 +312,7 @@ ALWAYS CALL THE TOOLS
 """
 
     agent = Agent(
+        tool_choice="required",
         model=Ollama(
             id=model_id,
             options={"temperature": temperature, "num_ctx": 8192, "keep_alive": "5m"},
@@ -332,7 +334,7 @@ ALWAYS CALL THE TOOLS
 Available models: {list(validation_predictions.keys())}
 
 Always use the tools provided to you in order to get the best results.
-
+USE THE TOOLS IN THE ORDER SPECIFIED IN THE INSTRUCTIONS.
 STEPS:
 1. Call calculate_metrics_tool() to get performance metrics (no parameters needed)
 2. Identify the best top model by RMSE for each category: Statistical, Naive, and ML models by representation (e.g., for RF select the best between RF with CWT, DWT, RAW, FT which could be "CWT_rf", "DWT_rf", "ONLY_FT_rf", "ONLY_CWT_rf" or just "rf" if no representation is used)
