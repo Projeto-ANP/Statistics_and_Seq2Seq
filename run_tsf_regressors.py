@@ -445,7 +445,7 @@ def run_tsf_image_series(args):
     global representation
     global wavelet
     global level
-    representation = "FT"
+    representation = "CWT"
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
     # horizon = 12
@@ -935,13 +935,19 @@ if __name__ == "__main__":
 
     files = [
         # "m4_daily_dataset.tsf",
-        # "m4_hourly_dataset.tsf",
-        # "m4_weekly_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
         # "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
         # "us_births_dataset.tsf",
         "australian_electricity_demand_dataset.tsf",
+        "m4_hourly_dataset.tsf",
+        "m4_weekly_dataset.tsf",
+        "nn5_daily_dataset_without_missing_values.tsf",
+        "nn5_weekly_dataset.tsf",
+        "ETTh1.tsf",
+        "ETTh2.tsf",
+        "ETTm1.tsf",
+        "ETTm2.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
     ]
@@ -964,12 +970,12 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "svr"
+        regr = "rf"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
-            # run_tsf_image_series(args)
-            run_tsf_normal_series(args)
+            run_tsf_image_series(args)
+            # run_tsf_normal_series(args)
 
         tasks = [
             (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
