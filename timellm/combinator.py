@@ -15,6 +15,7 @@ SHARED_CONTEXT = {
     "validation_predictions": None,
     "final_predictions": None,
     "calculated_metrics": None,
+    "tools_called": [],
 }
 
 CONTEXT_MEMORY = {}
@@ -159,6 +160,7 @@ def calculate_metrics_tool() -> str:
     SHARED_CONTEXT["calculated_metrics"] = results
 
     print(f"[TOOL RESULT] Calculated metrics for {len(results)} models")
+    SHARED_CONTEXT["tools_called"].append("calculate_metrics_tool")
 
     print(json.dumps(results, indent=2))
     return json.dumps(results, indent=2)
@@ -201,7 +203,7 @@ def selective_combine_tool(models_to_combine: List[str]) -> str:
     combined_list = [round(x, 2) for x in combined.tolist()]
 
     print(f"[TOOL RESULT] Combined predictions generated.")
-
+    SHARED_CONTEXT["tools_called"].append("selective_combine_tool")
     return combined_list
 
 
@@ -355,6 +357,11 @@ STEPS:
             print(response.content)
 
             output = clean_json_string(response.content)
+            if (
+                "calculate_metrics_tool"
+                and "selective_combine_tool" not in SHARED_CONTEXT["tools_called"]
+            ):
+                raise ValueError("Agent did not use the required tools.")
             return output.get("description", ""), output.get("result", [])
         except Exception as e:
             error_msg = f"""
