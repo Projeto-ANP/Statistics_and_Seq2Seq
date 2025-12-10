@@ -2,7 +2,7 @@
 Teste simples do agente de combinação com LLM local (Ollama)
 """
 
-from agent import run_combination_agent
+from Statistics_and_Seq2Seq.agent.analysis_tools import run_combination_agent
 
 print("="*80)
 print("🤖 TESTE DO AGENTE DE COMBINAÇÃO COM LLM LOCAL")

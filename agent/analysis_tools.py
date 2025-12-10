@@ -13,9 +13,7 @@ import all_functions
 
 from typing import List
 from pydantic import BaseModel, Field
-
-CONTEXT_MEMORY = {}
-
+from agent import CONTEXT_MEMORY
 
 @tool
 def calculate_metrics_tool() -> str:
@@ -96,99 +94,3 @@ def calculate_metrics_tool() -> str:
     CONTEXT_MEMORY["tools_called"].append("calculate_metrics_tool")
 
     return json.dumps(results, indent=2)
-
-
-@tool
-def mean_combination_tool(
-    model_names: List[str] = Field(
-        ..., description="List of model names to combine predictions from."
-    )
-) -> List[float]:
-    """
-    Combines predictions from specified models by calculating the mean.
-
-    Args:
-        model_names (List[str]): List of model names to combine predictions from.
-
-    Returns:
-        List[float]: Combined predictions as a list of floats.
-    """
-    print(f"\nTOOL [mean_combination_tool] | called with models: {model_names}")
-
-    predictions = CONTEXT_MEMORY["predictions"]
-
-    if predictions is None:
-        print(
-            "TOOL [mean_combination_tool] | ERROR Shared context not initialized for predictions"
-        )
-        return []
-
-    preds_to_combine = []
-    for model_name in model_names:
-        if model_name in predictions:
-            preds_to_combine.append(np.array(predictions[model_name]))
-        else:
-            print(
-                f"TOOL [mean_combination_tool] | Warning: Model {model_name} not found in predictions."
-            )
-            return []
-
-    if not preds_to_combine:
-        return []
-
-    combined = np.mean(preds_to_combine, axis=0)
-    combined_list = [round(x, 2) for x in combined.tolist()]
-
-    print(f"TOOL [mean_combination_tool] | FINISHED TOOL CALL.")
-    CONTEXT_MEMORY["tools_called"].append("mean_combination_tool")
-
-    return combined_list
-
-
-@tool
-def weight_combination_tool(
-    model_weights: dict = Field(
-        ..., description="Dictionary of model names and their corresponding weights."
-    )
-) -> List[float]:
-    """
-    Combines predictions from specified models using weighted average.
-
-    Args:
-        model_weights (dict): Dictionary with model names as keys and their weights as values.
-
-    Returns:
-        List[float]: Combined predictions as a list of floats.
-    """
-    print(
-        f"\nTOOL [weight_combination_tool] | called with model weights: {model_weights}"
-    )
-
-    predictions = CONTEXT_MEMORY["predictions"]
-
-    if predictions is None:
-        print(
-            "TOOL [weight_combination_tool] | ERROR Shared context not initialized for predictions"
-        )
-        return []
-
-    preds_to_combine = []
-    weights = []
-    for model_name, weight in model_weights.items():
-        if model_name in predictions:
-            preds_to_combine.append(np.array(predictions[model_name]))
-            weights.append(weight)
-        else:
-            print(
-                f"TOOL [weight_combination_tool] | Warning: Model {model_name} not found in predictions."
-            )
-            return []
-
-    if not preds_to_combine:
-        return []
-    combined = np.average(preds_to_combine, axis=0, weights=weights)
-    combined_list = [round(x, 2) for x in combined.tolist()]
-    print(f"TOOL [weight_combination_tool] | FINISHED TOOL CALL.")
-    CONTEXT_MEMORY["tools_called"].append("weight_combination_tool")
-
-    return combined_list
