@@ -445,7 +445,7 @@ def run_tsf_image_series(args):
     global representation
     global wavelet
     global level
-    representation = "CWT"
+    representation = "DWT"
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
     # horizon = 12
@@ -970,7 +970,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "rf"
+        regr = "catboost"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
