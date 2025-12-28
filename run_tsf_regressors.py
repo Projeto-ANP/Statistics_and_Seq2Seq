@@ -445,7 +445,8 @@ def run_tsf_image_series(args):
     global representation
     global wavelet
     global level
-    representation = "DWT"
+    representation = "CWT"
+    only_features = True
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
     # horizon = 12
@@ -574,6 +575,7 @@ def run_tsf_image_series(args):
                     representation,
                     wavelet,
                     level,
+                    only_features,
                 )
                 data = data.dropna()
                 X_train, X_test, y_train, _ = train_test_split(data, horizon)
@@ -589,6 +591,7 @@ def run_tsf_image_series(args):
                         representation,
                         wavelet,
                         level,
+                        only_features,
                     )
                     data_val = data_val.dropna()
 
