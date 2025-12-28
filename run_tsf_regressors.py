@@ -568,6 +568,7 @@ def run_tsf_image_series(args):
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
             start_exp = time.perf_counter()
+            flag = generate_experiment(path_csv, i, start_test)
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
                 train_tf_val = transform_regressors(train_val, format=transform)
@@ -946,14 +947,14 @@ if __name__ == "__main__":
         # "pedestrian_counts_dataset.tsf",
         # "us_births_dataset.tsf",
         # "australian_electricity_demand_dataset.tsf",
-        # "m4_hourly_dataset.tsf",
+        "m4_hourly_dataset.tsf",
         # "m4_weekly_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
         # "nn5_weekly_dataset.tsf",
         # "ETTh1.tsf",
         # "ETTh2.tsf",
-        "ETTm1.tsf",
-        "ETTm2.tsf",
+        # "ETTm1.tsf",
+        # "ETTm2.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
     ]
