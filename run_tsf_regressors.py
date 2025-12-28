@@ -557,10 +557,12 @@ def run_tsf_image_series(args):
         for transform in transformations:
             # path_derivado = f'{results_file}/{derivado}/{transform}'
             # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
-            exp_name = f"{representation}_{regr}_{transform}"
-            path_experiments = (
-                f"./timeseries/mestrado/resultados/{representation}_{regr}/{transform}/"
-            )
+            if only_features:
+                representation_mod = f"ONLY_{representation}"
+            else:
+                representation_mod = representation
+            exp_name = f"{representation_mod}_{regr}_{transform}"
+            path_experiments = f"./timeseries/mestrado/resultados/{representation_mod}_{regr}/{transform}/"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
