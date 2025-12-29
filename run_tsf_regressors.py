@@ -131,19 +131,21 @@ def checkFolder(pasta, arquivo, tipo):
     return False
 
 
-def generate_experiment(caminho_arquivo, dataset_index, start_test):
+def generate_experiment(caminho_arquivo, dataset_index, final_test):
     try:
         if not os.path.exists(caminho_arquivo):
+            print_log(f"Arquivo nao encontrado: {caminho_arquivo}")
             return True
 
         df = pd.read_csv(caminho_arquivo, sep=";")
         df = df[df["dataset_index"] == dataset_index]
 
-        if "start_test" not in df.columns:
+        if "final_test" not in df.columns:
+            print_log("Coluna 'final_test' nao encontrada no arquivo.")
             return True
 
-        if start_test not in df["start_test"].values:
-            print_log(f'Continuando... {start_test} em "{caminho_arquivo}".')
+        if str(final_test) not in df["final_test"].values:
+            print_log(f'Continuando... {final_test} em "{caminho_arquivo}".')
             return True
     except Exception as e:
         print_log(f"Erro em: {caminho_arquivo} | {e}")
@@ -568,7 +570,7 @@ def run_tsf_image_series(args):
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
             start_exp = time.perf_counter()
-            flag = generate_experiment(path_csv, i, start_test)
+            flag = generate_experiment(path_csv, i, final_test)
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
                 train_tf_val = transform_regressors(train_val, format=transform)
@@ -946,15 +948,15 @@ if __name__ == "__main__":
         # "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
         # "us_births_dataset.tsf",
-        # "australian_electricity_demand_dataset.tsf",
+        "australian_electricity_demand_dataset.tsf",
         "m4_hourly_dataset.tsf",
-        # "m4_weekly_dataset.tsf",
-        # "nn5_daily_dataset_without_missing_values.tsf",
-        # "nn5_weekly_dataset.tsf",
-        # "ETTh1.tsf",
-        # "ETTh2.tsf",
-        # "ETTm1.tsf",
-        # "ETTm2.tsf",
+        "m4_weekly_dataset.tsf",
+        "nn5_daily_dataset_without_missing_values.tsf",
+        "nn5_weekly_dataset.tsf",
+        "ETTh1.tsf",
+        "ETTh2.tsf",
+        "ETTm1.tsf",
+        "ETTm2.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
     ]
@@ -977,7 +979,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "catboost"
+        regr = "rf"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
