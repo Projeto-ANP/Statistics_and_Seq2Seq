@@ -643,6 +643,7 @@ def run_tsf_image_series(args):
                     representation,
                     wavelet,
                     level,
+                    only_features=only_features,
                 )
                 preds_real = pd.Series(predictions, index=test.index)
                 end_exp = time.perf_counter()
