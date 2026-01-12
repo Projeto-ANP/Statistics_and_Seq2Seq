@@ -9,13 +9,13 @@ Two specialized agents working in sequence:
 from typing import Dict, List, Optional, Any
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from context import CONTEXT_MEMORY, generate_all_validations_context, init_context, get_context, set_context
-from analysis_tools import (
+from agent.context import CONTEXT_MEMORY, generate_all_validations_context, init_context, get_context, set_context
+from agent.analysis_tools import (
     calculate_metrics_tool,
     generate_ade_point_models_tool,
     generate_ade_weighted_point_models_tool,
 )
-from combination_tools import (
+from agent.combination_tools import (
     mean_combination_tool,
     weight_combination_tool,
     point_combination_tool,
@@ -63,25 +63,11 @@ OUTPUT FORMAT (JSON):
 IMPORTANT: strategy_parameters must be the COMPLETE parameters dict ready to pass to the combination tool!
 """
 
-COMBINATION_AGENT_DESCRIPTION = """You are a forecasting COMBINER. Your job is to execute combination tools.
+COMBINATION_AGENT_DESCRIPTION = """You are a tool executor. Your ONLY job is to call combination tools.
 
-AVAILABLE TOOLS:
-1. mean_combination_tool(model_names: List[str]) - Average specified models
-2. weight_combination_tool(model_weights: Dict[str, float]) - Weighted average
-3. point_combination_tool(model_points: Dict[str, int]) - Each model predicts one point
-4. ade_point_selection_tool(point_models: Dict[int, List[str]]) - Multiple models per point (average)
-5. ade_weighted_point_tool(point_model_weights: Dict[int, Dict[str, float]]) - Weighted models per point
+When you receive a message, you must IMMEDIATELY call the appropriate tool with the provided parameters.
 
-YOUR TASK:
-You will receive analysis results with a recommended strategy and parameters.
-You MUST call the appropriate tool with the provided parameters.
-
-IMPORTANT:
-- You must CALL A TOOL, not just describe what to do
-- Extract parameters from strategy_parameters in the analysis
-- Pass parameters directly to the tool function
-- Return the tool's result
-"""
+DO NOT explain. DO NOT describe. CALL THE TOOL."""
 
 
 # =============================================================================
@@ -169,11 +155,8 @@ def create_combination_agent(
         tools=tools,
         description=COMBINATION_AGENT_DESCRIPTION,
         instructions=[
-            "Read the analysis result JSON carefully",
-            "Find the 'recommended_strategy' field",
-            "Find the 'strategy_parameters' field", 
-            "Call the matching tool with the parameters from strategy_parameters",
-            "YOU MUST CALL A TOOL - do not just explain, actually execute the function",
+            "Call the tool immediately with the provided parameters",
+            "Do not explain or describe - execute the function",
         ],
         markdown=True,
         debug_mode=debug,
@@ -302,40 +285,28 @@ EXAMPLE for ade_point_selection:
         self._print_phase_header("PHASE 2: COMBINATION")
         self._log("Starting combination agent...")
         
-        combination_prompt = f"""
-Based on the analysis below, execute the recommended combination strategy by calling the appropriate tool.
+        # Parse analysis to extract key information
+        import json
+        try:
+            analysis_json = json.loads(analysis_result)
+            strategy = analysis_json.get("recommended_strategy", "")
+            params = analysis_json.get("strategy_parameters", {})
+        except:
+            strategy = "ade_point_selection"
+            params = {}
+        
+        combination_prompt = f"""Execute combination strategy: {strategy}
 
-ANALYSIS RESULT:
-{analysis_result}
+Parameters: {json.dumps(params, indent=2)}
 
-INSTRUCTIONS:
-1. Parse the JSON above to extract "recommended_strategy" and "strategy_parameters"
-2. Identify which tool to call based on the strategy
-3. Extract the parameters and call the tool
+Call the appropriate tool NOW:
+- ade_point_selection_tool(point_models=params["point_models"])
+- ade_weighted_point_tool(point_model_weights=params["point_model_weights"])
+- mean_combination_tool(model_names=params["model_names"])
+- weight_combination_tool(model_weights=params["model_weights"])
+- point_combination_tool(model_points=params["model_points"])
 
-TOOL MAPPING:
-- If recommended_strategy = "ade_point_selection":
-  Extract point_models = strategy_parameters["point_models"]
-  Call: ade_point_selection_tool(point_models=point_models)
-
-- If recommended_strategy = "ade_weighted_point":
-  Extract point_model_weights = strategy_parameters["point_model_weights"]
-  Call: ade_weighted_point_tool(point_model_weights=point_model_weights)
-
-- If recommended_strategy = "mean_combination":
-  Extract model_names = strategy_parameters["model_names"]
-  Call: mean_combination_tool(model_names=model_names)
-
-- If recommended_strategy = "weight_combination":
-  Extract model_weights = strategy_parameters["model_weights"]
-  Call: weight_combination_tool(model_weights=model_weights)
-
-- If recommended_strategy = "point_combination":
-  Extract model_points = strategy_parameters["model_points"]
-  Call: point_combination_tool(model_points=model_points)
-
-YOU MUST CALL ONE OF THE TOOLS ABOVE. Do not just return text - execute the tool function.
-"""
+CALL THE TOOL IMMEDIATELY. Do not explain, just execute."""
         
         result = self.combination_agent.run(combination_prompt)
         self.last_combination = result
