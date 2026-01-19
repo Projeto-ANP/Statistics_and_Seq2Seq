@@ -14,7 +14,7 @@ import all_functions
 
 from typing import List
 from pydantic import BaseModel, Field
-from context import get_context, set_context
+from agent.context import get_context, set_context
 
 @tool
 def mean_combination_tool(

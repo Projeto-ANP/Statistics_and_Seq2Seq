@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import all_functions
 
 from typing import List, Dict
-from context import get_context, set_context, init_context
+from agent.context import get_context, set_context, init_context
 
 @tool
 def calculate_metrics_tool() -> str:

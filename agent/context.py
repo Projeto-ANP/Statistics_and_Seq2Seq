@@ -67,7 +67,7 @@ def clear_context() -> None:
 
 def read_model_preds(model_name, dataset_index):
     df = pd.read_csv(
-        f"../timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
         sep=";",
     )
     df = df[df["dataset_index"] == dataset_index]

@@ -142,6 +142,81 @@ def exec_dataset(models):
         df_new = pd.DataFrame(data_serie)
         df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
 
+from agent.context import CONTEXT_MEMORY, generate_all_validations_context, init_context, get_context, set_context
+from agent.pipeline import create_pipeline
+
+def exec_dataset_hybrid(models):
+    dataset = "ANP_MONTHLY"
+    exp_name = "hybrid_agent_qwen3=14b_mychen76"
+    horizon = 12
+    final_test = "2024-11-30"
+
+    path_experiments = (
+        f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{exp_name}/"
+    )
+    path_csv = f"{path_experiments}/{dataset}.csv"
+    os.makedirs(path_experiments, exist_ok=True)
+    for i in range(0, 182):
+        init_context()
+        CONTEXT_MEMORY["models_available"] = models
+        generate_all_validations_context(models, i)
+        if "all_validations" in CONTEXT_MEMORY:
+            print(f"[DEBUG] all_validations keys: {list(CONTEXT_MEMORY['all_validations'].keys())}")
+        
+        pipeline = create_pipeline(debug=False, model_id="mychen76/qwen3_cline_roocode:14b")
+        result = pipeline.run()
+        
+        _, test = get_predictions_models(
+            models, dataset_index=i, final_test=final_test
+        )
+
+
+        description = result.get("description", "")
+        preds_real = result.get("result", [])
+        
+        print(f"----- DATASET INDEX: {i} -----")
+        print("Description: ", description)
+        print("Predictions: ", preds_real)
+        test = np.array(test)
+        preds_real_array = np.array(preds_real)
+        preds_real_reshaped = preds_real_array.reshape(1, -1)
+        test_reshaped = test.reshape(1, -1)
+        smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
+        # print(smape_result)
+        rmse_result = calculate_rmse(preds_real_reshaped, test_reshaped)
+        msmape_result = calculate_msmape(preds_real_reshaped, test_reshaped)
+        # mase_result = calculate_mase(preds_real_reshaped, test_reshaped, training_set, seasonality)
+        mae_result = calculate_mae(preds_real_reshaped, test_reshaped)
+        mape_result = mape(test, preds_real_array)
+        pocid_result = pocid(test, preds_real_array)
+
+        data_serie = {
+            "dataset_index": f"{i}",
+            "horizon": horizon,
+            "regressor": exp_name,
+            "mape": mape_result,
+            "pocid": pocid_result,
+            "smape": smape_result,
+            "rmse": rmse_result,
+            "msmape": msmape_result,
+            "mae": mae_result,
+            "test": [test.tolist()],
+            "predictions": [preds_real],
+            "start_test": "INICIO",
+            "final_test": final_test,
+            "description": description,
+            # 'training_time': times[0],
+            # 'prediction_time': times[1],
+        }
+
+        if not os.path.exists(path_csv):
+            pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=";", index=False)
+
+        print("Salvando resultados...\n")
+        df_new = pd.DataFrame(data_serie)
+        df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
+
+
 
 if __name__ == "__main__":
     models = [
@@ -173,4 +248,4 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
-    exec_dataset(models)
+    exec_dataset_hybrid(models)
