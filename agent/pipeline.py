@@ -7,6 +7,10 @@ Two specialized agents working in sequence:
 """
 
 from typing import Dict, List, Optional, Any
+import os
+import re
+import json
+import ast
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 from agent.context import CONTEXT_MEMORY, generate_all_validations_context, init_context, get_context, set_context
@@ -22,6 +26,7 @@ from agent.combination_tools import (
     ade_point_selection_tool,
     ade_weighted_point_tool,
 )
+from agent.tool_logging import log_tool_event
 
 
 # =============================================================================
@@ -119,9 +124,10 @@ def create_analysis_agent(
         description=ANALYSIS_AGENT_DESCRIPTION,
         instructions=[
             "Always call calculate_metrics_tool first",
-            "Then call generate_ade_point_models_tool to analyze per-point performance",
-            "IMPORTANT: Use the dict returned by generate_ade_point_models_tool as your strategy_parameters",
-            "The strategy_parameters must be wrapped: {'point_models': <result_from_tool>}",
+            "Choose exactly ONE recommended_strategy from: mean_combination, weight_combination, point_combination, ade_point_selection, ade_weighted_point",
+            "If you choose ade_point_selection OR point_combination: call generate_ade_point_models_tool(top_k=3) (use top_k=1 only if explicitly needed)",
+            "If you choose ade_weighted_point: call generate_ade_weighted_point_models_tool(top_k=3)",
+            "For mean_combination/weight_combination you may skip per-point tools if not needed",
             "Output your final recommendation in valid JSON format",
             "Be specific about which models to use and with what parameters",
         ],
@@ -224,6 +230,139 @@ class ForecastPipeline:
         print("\n" + "=" * 60)
         print(f"  {phase_name}")
         print("=" * 60 + "\n")
+
+    def _dataset_id(self) -> str:
+        dataset_index = get_context("dataset_index", None)
+        if dataset_index is None:
+            return "dataset_unknown"
+        return f"dataset_{dataset_index}"
+
+    def _log_dir(self) -> str:
+        return os.path.join(os.path.dirname(__file__), "tool_logs")
+
+    def _log_event(self, event: str, payload: Dict[str, Any]) -> None:
+        try:
+            log_tool_event(
+                base_dir=self._log_dir(),
+                dataset_id=self._dataset_id(),
+                event=event,
+                payload=payload,
+            )
+        except Exception as e:
+            # Never fail the pipeline due to logging
+            if self.debug:
+                print(f"[PIPELINE] Logging failed: {e}")
+
+    def _execute_combination_strategy(self, strategy: str, params: Dict[str, Any]) -> Any:
+        """Deterministically execute the selected combination via Python tool call."""
+        def _call_tool(tool_obj: Any, *args: Any, **kwargs: Any) -> Any:
+            # agno.tools.function.Function is not callable; use `.entrypoint()`.
+            entrypoint = getattr(tool_obj, "entrypoint", None)
+            if callable(entrypoint):
+                return entrypoint(*args, **kwargs)
+            if callable(tool_obj):
+                return tool_obj(*args, **kwargs)
+            raise TypeError(f"Tool object is not callable and has no callable entrypoint: {tool_obj}")
+
+        tool_map = {
+            "ade_point_selection": ade_point_selection_tool,
+            "ade_weighted_point": ade_weighted_point_tool,
+            "mean_combination": mean_combination_tool,
+            "weight_combination": weight_combination_tool,
+            "point_combination": point_combination_tool,
+        }
+        if strategy not in tool_map:
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        # Prepare context for combination tools (they read from context[\"point_parameter\"]).
+        if strategy == "ade_point_selection":
+            set_context("point_parameter", params.get("point_models", {}))
+        elif strategy == "ade_weighted_point":
+            set_context("point_parameter", params.get("point_model_weights", {}))
+        elif strategy == "mean_combination":
+            set_context("point_parameter", params.get("model_names", []))
+        elif strategy == "weight_combination":
+            set_context("point_parameter", params.get("model_weights", {}))
+        elif strategy == "point_combination":
+            set_context("point_parameter", params.get("model_points", {}))
+
+        before_tools = list(get_context("tools_called", []))
+        self._log_event(
+            "combination_start",
+            {
+                "strategy": strategy,
+                "strategy_parameters": params,
+                "tools_called_before": before_tools,
+            },
+        )
+
+        tool_obj = tool_map[strategy]
+        result = _call_tool(tool_obj)
+
+        after_tools = list(get_context("tools_called", []))
+        self._log_event(
+            "combination_end",
+            {
+                "strategy": strategy,
+                "tools_called_after": after_tools,
+                "tool_called": getattr(tool_obj, "name", None) or getattr(tool_obj, "__name__", None) or str(tool_obj),
+            },
+        )
+        return result
+
+    def _ensure_point_models(self, top_k: int = 1) -> Dict[int, List[str]]:
+        """Deterministically compute point_models from validation context."""
+        tool_obj = generate_ade_point_models_tool
+        entrypoint = getattr(tool_obj, "entrypoint", None)
+        if callable(entrypoint):
+            return entrypoint(top_k=top_k)
+        # Fallback if tool isn't wrapped
+        return tool_obj(top_k=top_k)  # type: ignore[misc]
+
+    def _ensure_point_model_weights(self, top_k: int = 3) -> Dict[int, Dict[str, float]]:
+        """Deterministically compute point_model_weights from validation context."""
+        tool_obj = generate_ade_weighted_point_models_tool
+        entrypoint = getattr(tool_obj, "entrypoint", None)
+        if callable(entrypoint):
+            return entrypoint(top_k=top_k)
+        return tool_obj(top_k=top_k)  # type: ignore[misc]
+
+    def _parse_analysis_result(self, analysis_result: str) -> Dict[str, Any]:
+        """Parse analysis agent output.
+
+        The LLM sometimes returns almost-JSON (e.g., numeric keys without quotes), which breaks `json.loads`.
+        We first try strict JSON, then fall back to Python-literal parsing.
+        """
+        if not isinstance(analysis_result, str):
+            raise TypeError("analysis_result must be a string")
+
+        text = analysis_result.strip()
+
+        # Strip Markdown code fences if present
+        if "```" in text:
+            fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+            if fenced:
+                text = fenced[0].strip()
+
+        # Extract the outer-most object
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("No JSON-like object found in analysis_result")
+
+        blob = text[start : end + 1]
+
+        try:
+            parsed = json.loads(blob)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        parsed = ast.literal_eval(blob)
+        if not isinstance(parsed, dict):
+            raise ValueError("Parsed analysis_result is not a dict")
+        return parsed
     
     def run_analysis(self, user_query: str = "") -> str:
         """
@@ -244,11 +383,53 @@ Analyze the forecasting models and recommend the best combination strategy.
 {f"User context: {user_query}" if user_query else ""}
 
 Steps to follow:
-1.Call calculate_metrics_tool() to get performance metrics
-2.Based on metrics, decide which strategy to use
-3.If you choose "ade_point_selection": Call generate_ade_point_models_tool(top_k=3) and use its output as strategy_parameters
-4.If you choose "ade_weighted_point": Call generate_ade_weighted_point_models_tool(top_k=3) and use its output as strategy_parameters
-5.For other strategies, construct the appropriate parameters dict
+1. Call calculate_metrics_tool() to get performance metrics.
+
+2. Decide the strategy using this logic:
+
+    A) Prefer "mean_combination" when models are similar overall:
+        - There is no clear winner across windows (global RMSE/MAPE are close)
+        - The best model is not consistently better than the rest
+
+    B) Prefer "weight_combination" when there are clear overall winners:
+        - A small set of models are consistently better across windows
+        - Build global weights from overall performance (better models get higher weights)
+
+    C) Prefer "point_combination" when ONE model is best for EACH horizon point (top-1 per point),
+        and the best model changes across points:
+        - Each horizon point has a clear single best model
+        - Different points choose different best models
+        - Parameters must map model_name -> horizon_index
+
+    D) Prefer "ade_point_selection" when different models excel at different horizons and you want robustness:
+        - Multiple good models per point
+        - Use top_k models per point
+
+    E) Prefer "ade_weighted_point" when per-horizon weighting is beneficial:
+        - Different models excel at different horizons AND
+        - There are meaningful gaps in per-point RMSE among top models
+        - Use weights per point (normalized)
+
+3. If you choose "ade_point_selection":
+    - Call generate_ade_point_models_tool(top_k=3)
+    - Use the returned dict as the core selection
+    - strategy_parameters MUST include the key "point_models" containing the returned dict
+
+4. If you choose "ade_weighted_point":
+    - Call generate_ade_weighted_point_models_tool(top_k=3)
+    - strategy_parameters MUST include the key "point_model_weights" containing the returned dict
+
+5. If you choose "mean_combination":
+    - Choose a reasonable subset of models (e.g., top N overall) OR all models if truly similar
+    - strategy_parameters MUST include the key "model_names" as a list of model names
+
+6. If you choose "weight_combination":
+    - Build global weights from overall metrics (weights sum to 1)
+    - strategy_parameters MUST include the key "model_weights" as a dict model->weight (sum to 1)
+
+7. If you choose "point_combination":
+    - You must infer a single best model per point (top-1 per horizon)
+    - strategy_parameters MUST include the key "model_points" as a dict model->horizon_index
 
 Provide your recommendation in JSON format with:
 - metrics_summary
@@ -262,6 +443,26 @@ EXAMPLE for ade_point_selection:
     "recommended_strategy": "ade_point_selection",
     "strategy_parameters": {{"point_models": {{0: ["model1", "model2"], 1: ["model3"], ...}}}}
 }}
+EXAMPLE for ade_weighted_point:
+{{
+    "recommended_strategy": "ade_weighted_point",
+    "strategy_parameters": {{"point_model_weights": {{0: {{"model1": 0.6, "model2": 0.4}}, 1: {{"model3": 1.0}}, ...}}}}
+}}
+EXAMPLE for mean_combination:
+{{
+    "recommended_strategy": "mean_combination",
+    "strategy_parameters": {{"model_names": ["model1", "model2", "model3"]}}
+}}
+EXAMPLE for weight_combination:
+{{
+    "recommended_strategy": "weight_combination",
+    "strategy_parameters": {{"model_weights": {{"model1": 0.6, "model2": 0.3, "model3": 0.1}}}}
+}}
+EXAMPLE for point_combination:
+{{
+    "recommended_strategy": "point_combination",
+    "strategy_parameters": {{"model_points": {{"modelA": 0, "modelB": 1, "modelC": 2}}}}
+}}
 """
         
         result = self.analysis_agent.run(analysis_prompt)
@@ -270,6 +471,14 @@ EXAMPLE for ade_point_selection:
         print(result.content)
         print("(-----------------------------ANALISES--------------------------------)\n\n\n")
         self._log("Analysis complete")
+
+        self._log_event(
+            "analysis_end",
+            {
+                "tools_called": list(get_context("tools_called", [])),
+                "analysis_output_is_str": isinstance(result.content, str),
+            },
+        )
         return result.content
     
     def run_combination(self, analysis_result: str) -> str:
@@ -283,40 +492,50 @@ EXAMPLE for ade_point_selection:
             Combination result with final forecast
         """
         self._print_phase_header("PHASE 2: COMBINATION")
-        self._log("Starting combination agent...")
-        
-        # Parse analysis to extract key information
-        import json
+        self._log("Executing combination deterministically via tools...")
+
         try:
-            analysis_json = json.loads(analysis_result)
+            analysis_json = self._parse_analysis_result(analysis_result)
             strategy = analysis_json.get("recommended_strategy", "")
             params = analysis_json.get("strategy_parameters", {})
-        except:
+        except Exception as e:
+            print(f"\n[ERROR] Failed to parse analysis result. Defaulting to ade_point_selection strategy. Error: {e}")
+            self._log_event(
+                "analysis_parse_error",
+                {"error": str(e), "analysis_preview": analysis_result[:500]},
+            )
             strategy = "ade_point_selection"
             params = {}
-        
-        combination_prompt = f"""Execute combination strategy: {strategy}
 
-Parameters: {json.dumps(params, indent=2)}
+        # Coerce/auto-fill parameters deterministically to avoid LLM mistakes.
+        # NOTE: `point_combination_tool` does not produce a full-horizon forecast; treat it as top-1-per-point selection.
+        if strategy == "point_combination":
+            self._log_event(
+                "strategy_coerced",
+                {"from": "point_combination", "to": "ade_point_selection", "reason": "ensure horizon-length forecast"},
+            )
+            strategy = "ade_point_selection"
+            params = {"point_models": self._ensure_point_models(top_k=1)}
 
-Call the appropriate tool NOW:
-- ade_point_selection_tool(point_models=params["point_models"])
-- ade_weighted_point_tool(point_model_weights=params["point_model_weights"])
-- mean_combination_tool(model_names=params["model_names"])
-- weight_combination_tool(model_weights=params["model_weights"])
-- point_combination_tool(model_points=params["model_points"])
+        if strategy == "ade_point_selection":
+            point_models = params.get("point_models")
+            if not point_models:
+                params = {"point_models": self._ensure_point_models(top_k=3)}
 
-CALL THE TOOL IMMEDIATELY. Do not explain, just execute."""
-        
-        result = self.combination_agent.run(combination_prompt)
-        self.last_combination = result
-        
+        if strategy == "ade_weighted_point":
+            point_model_weights = params.get("point_model_weights")
+            if not point_model_weights:
+                params = {"point_model_weights": self._ensure_point_model_weights(top_k=3)}
+
+        combined = self._execute_combination_strategy(strategy, params)
+        self.last_combination = combined
+
         print("(-----------------------------COMBINATION--------------------------------)\n\n\n")
-        print(result.content)
+        print(combined)
         print("(-----------------------------COMBINATION--------------------------------)\n\n\n")
-        
+
         self._log("Combination complete")
-        return result.content
+        return json.dumps(combined)
     
     def run(self, user_query: str = "") -> Dict[str, Any]: 
         """
@@ -336,14 +555,11 @@ CALL THE TOOL IMMEDIATELY. Do not explain, just execute."""
         
         for attempt in range(max_analysis_retries):
             analysis_result = self.run_analysis(user_query)
-            
-            # Validate that analysis tools were called
+
             tools_called = get_context("tools_called", [])
-            analysis_tools_ok = "calculate_metrics_tool" in tools_called and (
-                "generate_ade_point_models_tool" in tools_called or 
-                "generate_ade_weighted_point_models_tool" in tools_called
-            )
-            
+
+            # Only require metrics; combination parameters are auto-filled deterministically if needed.
+            analysis_tools_ok = "calculate_metrics_tool" in tools_called
             if analysis_tools_ok:
                 break
             
@@ -359,57 +575,27 @@ CALL THE TOOL IMMEDIATELY. Do not explain, just execute."""
                 "error": "Analysis tool execution validation failed"
             }
         
-        # Phase 2: Combination (with retry if tools not called)
-        max_combination_retries = 3
-        combination_result = None
-        
-        for attempt in range(max_combination_retries):
-            combination_result = self.run_combination(analysis_result)
-            
-            # Validate that combination tool was called
-            tools_called = get_context("tools_called", [])
-            combination_tools = ["mean_combination_tool", "weight_combination_tool", "point_combination_tool", 
-                                "ade_point_selection_tool", "ade_weighted_point_tool"]
-            combination_tools_ok = any(tool in tools_called for tool in combination_tools)
-            
-            if combination_tools_ok:
-                break
-            
-            print(f"\n[WARNING] Combination agent did not call any combination tool. Retrying... Attempt {attempt + 1}/{max_combination_retries}")
-            print(f"[WARNING] Tools called so far: {tools_called}")
-        else:
-            # Combination failed after all retries
-            print("\n[ERROR] Combination phase failed after all retries. Tools were not called correctly.")
-            return {
-                "description": "Pipeline failed - combination agent did not execute tools correctly",
-                "result": None,
-                "success": False,
-                "error": "Combination tool execution validation failed"
-            }
-        
-        import json
+        # Phase 2: Combination (deterministic tool call)
+        combination_result = self.run_combination(analysis_result)
+
+        description = analysis_result
         try:
-            analysis_json = json.loads(analysis_result)
+            analysis_json = self._parse_analysis_result(analysis_result)
             strategy = analysis_json.get("recommended_strategy", "unknown")
+            description = strategy
             strategy_params = analysis_json.get("strategy_parameters", {})
             reasoning = analysis_json.get("reasoning", "")
             
-            description = analysis_result
             
-        except json.JSONDecodeError:
-            description = f"Strategy execution completed. Analysis result was not valid JSON."
+        except Exception:
+            pass
+            # description = f"Strategy execution completed. Analysis result was not valid JSON."
         
         # Parse combination result to extract the forecast
         try:
-            # Try to find a list in the combination result
             if isinstance(combination_result, str):
-                # Look for JSON list or Python list representation
-                import re
-                list_match = re.search(r'\[[\d\.,\s]+\]', combination_result)
-                if list_match:
-                    result_list = json.loads(list_match.group())
-                else:
-                    result_list = None
+                # We return json.dumps(list) from run_combination
+                result_list = json.loads(combination_result)
             else:
                 result_list = combination_result
         except:
@@ -459,24 +645,23 @@ CALL THE TOOL IMMEDIATELY. Do not explain, just execute."""
         
         params_str = str(strategy_params) if strategy_params else "use parameters from analysis"
         
-        override_prompt = f"""
-Execute the "{strategy}" strategy with these parameters:
-{params_str}
+        # Deterministic forced combination
+        if strategy_params is None:
+            try:
+                import json
+                analysis_json = json.loads(analysis_result)
+                strategy_params = analysis_json.get("strategy_parameters", {})
+            except Exception:
+                strategy_params = {}
 
-Analysis context: 
-{analysis_result}
-
-Call the appropriate tool and return the combined forecast.
-"""
-        
-        combination_result = self.combination_agent.run(override_prompt)
-        self.last_combination = combination_result
+        combined = self._execute_combination_strategy(strategy, strategy_params)
+        self.last_combination = combined
         
         self._print_phase_header("PIPELINE COMPLETE")
         
         self.last_result = {
             "analysis": analysis_result,
-            "combination":  combination_result,
+            "combination":  combined,
             "forced_strategy": strategy,
             "success":  True
         }
@@ -510,17 +695,10 @@ Call the appropriate tool and return the combined forecast.
         """
         self._print_phase_header("DIRECT COMBINATION")
         
-        prompt = f"""
-Execute the "{strategy}" strategy with these exact parameters:
-{params}
-
-Call the appropriate combination tool and return the forecast.
-"""
-        
-        result = self.combination_agent.run(prompt)
-        self.last_combination = result
-        
-        return result
+        import json
+        combined = self._execute_combination_strategy(strategy, params)
+        self.last_combination = combined
+        return json.dumps(combined)
 
 
 # =============================================================================

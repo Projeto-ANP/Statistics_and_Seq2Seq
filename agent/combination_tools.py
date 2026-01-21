@@ -18,10 +18,9 @@ from agent.context import get_context, set_context
 
 @tool
 def mean_combination_tool(
-    model_names: List[str] = Field(
-        ..., description="List of model names to combine predictions from."
-    )
-) -> List[float]:
+    # model_names: List[str] = Field(
+    #     ..., description="List of model names to combine predictions from."
+    )-> List[float]:
     """
     Combines predictions from specified models by calculating the mean.
 
@@ -31,6 +30,7 @@ def mean_combination_tool(
     Returns:
         List[float]: Combined predictions as a list of floats.
     """
+    model_names = get_context("point_parameter")
     print(f"\nTOOL [mean_combination_tool] | called with models: {model_names}")
 
     predictions = get_context("predictions")
@@ -67,19 +67,16 @@ def mean_combination_tool(
 
 @tool
 def weight_combination_tool(
-    model_weights: dict = Field(
-        ..., description="Dictionary of model names and their corresponding weights."
-    )
+    # model_weights: dict = Field(
+    #     ..., description="Dictionary of model names and their corresponding weights."
+    # )
 ) -> List[float]:
     """
     Combines predictions from specified models using weighted average.
-
-    Args:
-        model_weights (dict): Dictionary with model names as keys and their weights as values.
-
-    Returns:
+   Returns:
         List[float]: Combined predictions as a list of floats.
     """
+    model_weights = get_context("point_parameter")
     print(
         f"\nTOOL [weight_combination_tool] | called with model weights: {model_weights}"
     )
@@ -117,16 +114,16 @@ def weight_combination_tool(
 
 
 @tool
-def point_combination_tool(model_points: dict) -> List[float]:
+def point_combination_tool(
+    # model_points: dict
+    ) -> List[float]:
     """
     Combines predictions from specified models using specified points.
     This idea is that each model is good predicting a specific point in the future.
-    Args:
-        model_points (dict): Dictionary with model names as keys and their corresponding prediction point as values.
-        e.g., {"modelA": 0, "modelB": 1, "modelD": 2}
     Returns:
         List[float]: Combined predictions as a list of floats.
     """
+    model_points = get_context("point_parameter")
     print(f"\nTOOL [point_combination_tool] | called with model points: {model_points}")
 
     combined = []
@@ -140,18 +137,15 @@ def point_combination_tool(model_points: dict) -> List[float]:
     tools_called = get_context("tools_called", [])
     tools_called.append("point_combination_tool")
     set_context("tools_called", tools_called)
-
+    set_context("point_parameter", combined)
     return combined
 
 @tool
-def ade_point_selection_tool(point_models: Dict[int, List[str]]) -> List[float]:
+# def ade_point_selection_tool(point_models: Dict[int, List[str]]) -> List[float]:
+def ade_point_selection_tool() -> List[float]:    
     """
     Combines predictions using ADE-style point-by-point model selection.
     For each prediction point, only the specified models are used (simple average).
-    
-    Args:
-        point_models (dict): Dictionary with prediction points as keys and list of model names as values.
-            e.g., {0: ["modelA", "modelB"], 1: ["modelB", "modelD"], 2: ["modelA", "modelC", "modelD"]}
     
     Returns:
         List[float]: Combined predictions as a list of floats, one per point.
@@ -164,8 +158,8 @@ def ade_point_selection_tool(point_models: Dict[int, List[str]]) -> List[float]:
         ... }
         >>> result = ade_point_selection_tool(point_models)
     """
+    point_models = get_context("point_parameter")
     print(f"\nTOOL [ade_point_selection_tool] | called with point_models: {point_models}")
-    
     combined = []
     predictions = get_context("predictions")
     
@@ -199,21 +193,11 @@ def ade_point_selection_tool(point_models: Dict[int, List[str]]) -> List[float]:
 
 
 @tool
-def ade_weighted_point_tool(point_model_weights: Dict[int, Dict[str, float]]) -> List[float]:
+# def ade_weighted_point_tool(point_model_weights: Dict[int, Dict[str, float]]) -> List[float]:
+def ade_weighted_point_tool() -> List[float]:
     """
     Combines predictions using ADE-style point-by-point weighted model combination.
     For each prediction point, models are combined using specified weights.
-    
-    Args:
-        point_model_weights (dict): Dictionary with prediction points as keys and 
-            dictionaries of {model_name: weight} as values. 
-            e.g., {
-                0: {"modelA": 0.6, "modelB":  0.4},
-                1: {"modelB": 0.3, "modelD":  0.7},
-                2: {"modelA": 0.5, "modelC":  0.3, "modelD": 0.2}
-            }
-            Note:  Weights for each point should sum to 1.0 for proper normalization,
-                  but will be auto-normalized if they don't.
     
     Returns: 
         List[float]:  Combined predictions as a list of floats, one per point.
@@ -226,6 +210,7 @@ def ade_weighted_point_tool(point_model_weights: Dict[int, Dict[str, float]]) ->
         ... }
         >>> result = ade_weighted_point_tool(point_model_weights)
     """
+    point_model_weights = get_context("point_parameter")
     print(f"\nTOOL [ade_weighted_point_tool] | called with point_model_weights: {point_model_weights}")
     
     combined = []
@@ -258,6 +243,5 @@ def ade_weighted_point_tool(point_model_weights: Dict[int, Dict[str, float]]) ->
     tools_called = get_context("tools_called", [])
     tools_called.append("ade_weighted_point_tool")
     set_context("tools_called", tools_called)
-    
     return combined
 

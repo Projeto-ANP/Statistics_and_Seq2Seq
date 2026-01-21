@@ -230,7 +230,7 @@ def generate_ade_point_models_tool(top_k: int = 3) -> Dict[int, List[str]]:
     tools_called = get_context("tools_called", [])
     tools_called.append("generate_ade_point_models_tool")
     set_context("tools_called", tools_called)
-    
+    set_context("point_parameter", point_models)
     return point_models
 
 
@@ -379,5 +379,6 @@ def generate_ade_weighted_point_models_tool(top_k: int = 3) -> Dict[int, Dict[st
     tools_called = get_context("tools_called", [])
     tools_called.append("generate_ade_weighted_point_models_tool")
     set_context("tools_called", tools_called)
+    set_context("point_parameter", point_model_weights)
     
     return point_model_weights

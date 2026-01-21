@@ -1,4 +1,3 @@
-import pandas as pd
 from typing import List, Any, Optional
 import re
 
@@ -16,7 +15,8 @@ def init_context():
             "predictions": [],
             "test": []
         },
-        "models_available": []
+        "models_available": [],
+        "point_parameter": None
     }
 
 def get_context(key: str, default: Any = None) -> Any:
@@ -66,6 +66,13 @@ def clear_context() -> None:
     CONTEXT_MEMORY = {}
 
 def read_model_preds(model_name, dataset_index):
+    try:
+        import pandas as pd
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "pandas is required to read model prediction CSVs. Install it in your environment (e.g., `pip install pandas`)."
+        ) from e
+
     df = pd.read_csv(
         f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
         sep=";",
@@ -86,6 +93,8 @@ def extract_values(list_str):
 
 def generate_all_validations_context(models: List[str], dataset_index) -> None:
     """Generate validation context from model predictions."""
+    # Track dataset identifier for downstream logging
+    set_context("dataset_index", dataset_index)
     # Garantir que o contexto está inicializado
     if not get_context("all_validations"):
         init_context()

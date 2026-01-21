@@ -15,7 +15,8 @@ def extract_values(list_str):
 
 def read_model_preds(model_name, dataset_index):
     df = pd.read_csv(
-        f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        # f"./Statistics_and_Seq2Seq/timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
         sep=";",
     )
     df = df[df["dataset_index"] == dataset_index]
@@ -177,18 +178,47 @@ def exec_dataset_hybrid(models):
         print(f"----- DATASET INDEX: {i} -----")
         print("Description: ", description)
         print("Predictions: ", preds_real)
-        test = np.array(test)
-        preds_real_array = np.array(preds_real)
-        preds_real_reshaped = preds_real_array.reshape(1, -1)
-        test_reshaped = test.reshape(1, -1)
-        smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
-        # print(smape_result)
-        rmse_result = calculate_rmse(preds_real_reshaped, test_reshaped)
-        msmape_result = calculate_msmape(preds_real_reshaped, test_reshaped)
-        # mase_result = calculate_mase(preds_real_reshaped, test_reshaped, training_set, seasonality)
-        mae_result = calculate_mae(preds_real_reshaped, test_reshaped)
-        mape_result = mape(test, preds_real_array)
-        pocid_result = pocid(test, preds_real_array)
+
+        # Guard: do not crash if pipeline failed or returned invalid predictions
+        if not result.get("success", False) or preds_real is None:
+            print(f"[WARNING] Pipeline failed or returned no predictions for dataset_index={i}. Skipping metrics.")
+            smape_result = np.nan
+            rmse_result = np.nan
+            msmape_result = np.nan
+            mae_result = np.nan
+            mape_result = np.nan
+            pocid_result = np.nan
+            preds_real = []
+        else:
+            test = np.array(test)
+            preds_real_array = np.array(preds_real)
+
+            min_len = min(len(test), len(preds_real_array))
+            if min_len == 0:
+                print(f"[WARNING] Empty test/predictions for dataset_index={i}. Skipping metrics.")
+                smape_result = np.nan
+                rmse_result = np.nan
+                msmape_result = np.nan
+                mae_result = np.nan
+                mape_result = np.nan
+                pocid_result = np.nan
+                preds_real = []
+            else:
+                if len(test) != len(preds_real_array):
+                    print(
+                        f"[WARNING] Length mismatch for dataset_index={i}: test={len(test)} preds={len(preds_real_array)}. "
+                        f"Computing metrics on min_len={min_len}."
+                    )
+                test_cut = test[:min_len]
+                preds_cut = preds_real_array[:min_len]
+                preds_real_reshaped = preds_cut.reshape(1, -1)
+                test_reshaped = test_cut.reshape(1, -1)
+                smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
+                rmse_result = calculate_rmse(preds_real_reshaped, test_reshaped)
+                msmape_result = calculate_msmape(preds_real_reshaped, test_reshaped)
+                mae_result = calculate_mae(preds_real_reshaped, test_reshaped)
+                mape_result = mape(test_cut, preds_cut)
+                pocid_result = pocid(test_cut, preds_cut)
 
         data_serie = {
             "dataset_index": f"{i}",
