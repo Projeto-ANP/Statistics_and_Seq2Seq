@@ -980,7 +980,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "rf"
+        regr = "svr"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
