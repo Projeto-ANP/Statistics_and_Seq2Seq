@@ -118,7 +118,7 @@ def generate_all_validations_context(models: List[str], dataset_index) -> None:
     final_test_predictions = {}
     
     for model in models:  
-        df_model = read_model_preds(model, 0)
+        df_model = read_model_preds(model, dataset_index)
         df_filtred = df_model.iloc[-4:-1]
         df_final_test = df_model.iloc[-1]
         predictions_final = extract_values(df_final_test["predictions"])
