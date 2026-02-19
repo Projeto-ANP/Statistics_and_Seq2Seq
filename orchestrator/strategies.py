@@ -66,6 +66,41 @@ def _uniform_weights(n_models: int) -> np.ndarray:
     return np.ones(n_models, dtype=float) / float(n_models)
 
 
+def _keep_best_by_ratio(errors: np.ndarray, trim_ratio: float) -> np.ndarray:
+    """Return indices of best models by error, keeping trim_ratio fraction."""
+
+    errs = np.asarray(errors, dtype=float)
+    n = len(errs)
+    if n == 0:
+        return np.array([], dtype=int)
+    ratio = float(trim_ratio)
+    if not np.isfinite(ratio) or ratio <= 0:
+        return np.array([], dtype=int)
+    if ratio >= 1.0:
+        return np.arange(n, dtype=int)
+    k = max(1, int(np.ceil(ratio * n)))
+    order = np.argsort(errs)
+    return order[:k]
+
+
+def _weights_exp(errors: np.ndarray, eta: float = 1.0, eps: float = 1e-8) -> np.ndarray:
+    errs = np.asarray(errors, dtype=float)
+    z = np.exp(-float(eta) * (errs + eps))
+    s = np.nansum(z)
+    if not np.isfinite(s) or s <= 0:
+        return _uniform_weights(len(errs))
+    return z / s
+
+
+def _weights_poly(errors: np.ndarray, power: float = 1.0, eps: float = 1e-8) -> np.ndarray:
+    errs = np.asarray(errors, dtype=float)
+    z = (errs + eps) ** (-float(power))
+    s = np.nansum(z)
+    if not np.isfinite(s) or s <= 0:
+        return _uniform_weights(len(errs))
+    return z / s
+
+
 def _weights_inverse_rmse(
     y_true_train: np.ndarray,
     y_preds_train: np.ndarray,
@@ -270,6 +305,128 @@ def generate_combined_predictions(
 
                 if i == n_windows - 1:
                     # store last learned weights for inspection
+                    for j in range(n_models):
+                        weights_by_h[h][j] = float(w[j])
+
+        debug["weights_last_window_by_horizon"] = {
+            str(h): {model_names[j]: float(weights_by_h[h][j]) for j in range(n_models)}
+            for h in range(horizon)
+        }
+        return combined, debug
+
+    if method == "exp_weighted_average_per_horizon":
+        eta = float(candidate.params.get("eta", 1.0))
+        trim_ratio = float(candidate.params.get("trim_ratio", 1.0))
+        debug.update({"eta": eta, "trim_ratio": trim_ratio})
+
+        weights_by_h: List[List[float]] = []
+        for h in range(horizon):
+            weights_by_h.append([float("nan")] * n_models)
+
+        for i in range(n_windows):
+            tr = _train_slice(i, rolling_cfg)
+            if tr.stop - tr.start <= 0:
+                combined[i, :] = np.nanmean(y_preds[i, :, :], axis=0)
+                continue
+
+            train_true = y_true[tr, :]
+            train_preds = y_preds[tr, :, :]
+
+            for h in range(horizon):
+                rmse_per_model = np.sqrt(np.nanmean((train_preds[:, :, h] - train_true[:, h][:, None]) ** 2, axis=0))
+                keep = _keep_best_by_ratio(rmse_per_model, trim_ratio)
+                if keep.size == 0:
+                    combined[i, h] = np.nanmean(y_preds[i, :, h])
+                    continue
+                w_small = _weights_exp(rmse_per_model[keep], eta=eta)
+                w = np.zeros(n_models, dtype=float)
+                w[keep] = w_small
+                combined[i, h] = float(np.nansum(w * y_preds[i, :, h]))
+
+                if i == n_windows - 1:
+                    for j in range(n_models):
+                        weights_by_h[h][j] = float(w[j])
+
+        debug["weights_last_window_by_horizon"] = {
+            str(h): {model_names[j]: float(weights_by_h[h][j]) for j in range(n_models)}
+            for h in range(horizon)
+        }
+        return combined, debug
+
+    if method == "poly_weighted_average_per_horizon":
+        power = float(candidate.params.get("power", 1.0))
+        trim_ratio = float(candidate.params.get("trim_ratio", 1.0))
+        debug.update({"power": power, "trim_ratio": trim_ratio})
+
+        weights_by_h: List[List[float]] = []
+        for h in range(horizon):
+            weights_by_h.append([float("nan")] * n_models)
+
+        for i in range(n_windows):
+            tr = _train_slice(i, rolling_cfg)
+            if tr.stop - tr.start <= 0:
+                combined[i, :] = np.nanmean(y_preds[i, :, :], axis=0)
+                continue
+
+            train_true = y_true[tr, :]
+            train_preds = y_preds[tr, :, :]
+
+            for h in range(horizon):
+                rmse_per_model = np.sqrt(np.nanmean((train_preds[:, :, h] - train_true[:, h][:, None]) ** 2, axis=0))
+                keep = _keep_best_by_ratio(rmse_per_model, trim_ratio)
+                if keep.size == 0:
+                    combined[i, h] = np.nanmean(y_preds[i, :, h])
+                    continue
+                w_small = _weights_poly(rmse_per_model[keep], power=power)
+                w = np.zeros(n_models, dtype=float)
+                w[keep] = w_small
+                combined[i, h] = float(np.nansum(w * y_preds[i, :, h]))
+
+                if i == n_windows - 1:
+                    for j in range(n_models):
+                        weights_by_h[h][j] = float(w[j])
+
+        debug["weights_last_window_by_horizon"] = {
+            str(h): {model_names[j]: float(weights_by_h[h][j]) for j in range(n_models)}
+            for h in range(horizon)
+        }
+        return combined, debug
+
+    if method == "ade_dynamic_error_per_horizon":
+        beta = float(candidate.params.get("beta", 0.5))
+        eta = float(candidate.params.get("eta", 1.0))
+        trim_ratio = float(candidate.params.get("trim_ratio", 1.0))
+        debug.update({"beta": beta, "eta": eta, "trim_ratio": trim_ratio})
+
+        # Exponential moving average of absolute errors per model/horizon
+        ema_errors = np.full((n_models, horizon), np.nan, dtype=float)
+        weights_by_h: List[List[float]] = []
+        for h in range(horizon):
+            weights_by_h.append([float("nan")] * n_models)
+
+        for i in range(n_windows):
+            if i == 0:
+                combined[i, :] = np.nanmean(y_preds[i, :, :], axis=0)
+                continue
+
+            prev_err = np.abs(y_preds[i - 1, :, :] - y_true[i - 1, :][None, :])
+            if np.any(np.isnan(ema_errors)):
+                ema_errors = prev_err.copy()
+            else:
+                ema_errors = beta * prev_err + (1.0 - beta) * ema_errors
+
+            for h in range(horizon):
+                err_h = ema_errors[:, h]
+                keep = _keep_best_by_ratio(err_h, trim_ratio)
+                if keep.size == 0:
+                    combined[i, h] = np.nanmean(y_preds[i, :, h])
+                    continue
+                w_small = _weights_exp(err_h[keep], eta=eta)
+                w = np.zeros(n_models, dtype=float)
+                w[keep] = w_small
+                combined[i, h] = float(np.nansum(w * y_preds[i, :, h]))
+
+                if i == n_windows - 1:
                     for j in range(n_models):
                         weights_by_h[h][j] = float(w[j])
 

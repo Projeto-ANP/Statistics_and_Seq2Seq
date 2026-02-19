@@ -51,6 +51,39 @@ def _weights_inverse_rmse(y_true_train: np.ndarray, y_preds_train: np.ndarray, e
     return _project_simplex(w)
 
 
+def _keep_best_by_ratio(errors: np.ndarray, trim_ratio: float) -> np.ndarray:
+    errs = np.asarray(errors, dtype=float)
+    n = len(errs)
+    if n == 0:
+        return np.array([], dtype=int)
+    ratio = float(trim_ratio)
+    if not np.isfinite(ratio) or ratio <= 0:
+        return np.array([], dtype=int)
+    if ratio >= 1.0:
+        return np.arange(n, dtype=int)
+    k = max(1, int(np.ceil(ratio * n)))
+    order = np.argsort(errs)
+    return order[:k]
+
+
+def _weights_exp(errors: np.ndarray, eta: float = 1.0, eps: float = 1e-8) -> np.ndarray:
+    errs = np.asarray(errors, dtype=float)
+    z = np.exp(-float(eta) * (errs + eps))
+    s = np.nansum(z)
+    if not np.isfinite(s) or s <= 0:
+        return np.ones(len(errs), dtype=float) / max(1, len(errs))
+    return z / s
+
+
+def _weights_poly(errors: np.ndarray, power: float = 1.0, eps: float = 1e-8) -> np.ndarray:
+    errs = np.asarray(errors, dtype=float)
+    z = (errs + eps) ** (-float(power))
+    s = np.nansum(z)
+    if not np.isfinite(s) or s <= 0:
+        return np.ones(len(errs), dtype=float) / max(1, len(errs))
+    return z / s
+
+
 def _ridge_weights(y_true_train: np.ndarray, y_preds_train: np.ndarray, l2: float) -> np.ndarray:
     X = np.asarray(y_preds_train, dtype=float)
     y = np.asarray(y_true_train, dtype=float)
@@ -199,6 +232,82 @@ def predict_final_from_context(
             weights_by_h[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
 
         debug.update({"top_k": top_k, "shrinkage": shrinkage, "weights_by_horizon": weights_by_h})
+        return {"result": out.tolist(), "debug": debug}
+
+    if method == "exp_weighted_average_per_horizon":
+        eta = float(candidate.params.get("eta", 1.0))
+        trim_ratio = float(candidate.params.get("trim_ratio", 1.0))
+
+        out = np.full(horizon, np.nan, dtype=float)
+        weights_by_h: Dict[str, Dict[str, float]] = {}
+
+        for h in range(horizon):
+            rmse = np.sqrt(np.nanmean((y_preds[:, :, h] - y_true[:, h][:, None]) ** 2, axis=0))
+            keep = _keep_best_by_ratio(rmse, trim_ratio)
+            if keep.size == 0:
+                out[h] = float(np.nanmean(final_matrix[:, h]))
+                continue
+            w_small = _weights_exp(rmse[keep], eta=eta)
+            w = np.zeros(n_models, dtype=float)
+            w[keep] = w_small
+            out[h] = float(np.nansum(w * final_matrix[:, h]))
+            weights_by_h[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
+
+        debug.update({"eta": eta, "trim_ratio": trim_ratio, "weights_by_horizon": weights_by_h})
+        return {"result": out.tolist(), "debug": debug}
+
+    if method == "poly_weighted_average_per_horizon":
+        power = float(candidate.params.get("power", 1.0))
+        trim_ratio = float(candidate.params.get("trim_ratio", 1.0))
+
+        out = np.full(horizon, np.nan, dtype=float)
+        weights_by_h: Dict[str, Dict[str, float]] = {}
+
+        for h in range(horizon):
+            rmse = np.sqrt(np.nanmean((y_preds[:, :, h] - y_true[:, h][:, None]) ** 2, axis=0))
+            keep = _keep_best_by_ratio(rmse, trim_ratio)
+            if keep.size == 0:
+                out[h] = float(np.nanmean(final_matrix[:, h]))
+                continue
+            w_small = _weights_poly(rmse[keep], power=power)
+            w = np.zeros(n_models, dtype=float)
+            w[keep] = w_small
+            out[h] = float(np.nansum(w * final_matrix[:, h]))
+            weights_by_h[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
+
+        debug.update({"power": power, "trim_ratio": trim_ratio, "weights_by_horizon": weights_by_h})
+        return {"result": out.tolist(), "debug": debug}
+
+    if method == "ade_dynamic_error_per_horizon":
+        beta = float(candidate.params.get("beta", 0.5))
+        eta = float(candidate.params.get("eta", 1.0))
+        trim_ratio = float(candidate.params.get("trim_ratio", 1.0))
+
+        # EMA of absolute errors across validation windows
+        ema_errors = np.full((n_models, horizon), np.nan, dtype=float)
+        for i in range(n_windows):
+            err = np.abs(y_preds[i, :, :] - y_true[i, :][None, :])
+            if np.any(np.isnan(ema_errors)):
+                ema_errors = err.copy()
+            else:
+                ema_errors = beta * err + (1.0 - beta) * ema_errors
+
+        out = np.full(horizon, np.nan, dtype=float)
+        weights_by_h: Dict[str, Dict[str, float]] = {}
+
+        for h in range(horizon):
+            err_h = ema_errors[:, h]
+            keep = _keep_best_by_ratio(err_h, trim_ratio)
+            if keep.size == 0:
+                out[h] = float(np.nanmean(final_matrix[:, h]))
+                continue
+            w_small = _weights_exp(err_h[keep], eta=eta)
+            w = np.zeros(n_models, dtype=float)
+            w[keep] = w_small
+            out[h] = float(np.nansum(w * final_matrix[:, h]))
+            weights_by_h[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
+
+        debug.update({"beta": beta, "eta": eta, "trim_ratio": trim_ratio, "weights_by_horizon": weights_by_h})
         return {"result": out.tolist(), "debug": debug}
 
     if method == "ridge_stacking_per_horizon":

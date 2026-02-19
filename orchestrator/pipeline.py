@@ -23,6 +23,20 @@ from orchestrator.agents import (
 ALLOWED_PARAM_EDITS = {"top_k", "trim_ratio", "shrinkage", "l2"}
 
 
+def _strip_think_blocks(text: str) -> str:
+    """Remove <think>...</think> blocks from model output for robust JSON parsing."""
+
+    if not isinstance(text, str) or not text:
+        return ""
+    while True:
+        start = text.find("<think>")
+        end = text.find("</think>")
+        if start == -1 or end == -1 or end < start:
+            break
+        text = text[:start] + text[end + len("</think>") :]
+    return text
+
+
 def _run_agent_with_retry(
     agent_func: Callable[[], str],
     agent_name: str,
@@ -55,7 +69,8 @@ def _run_agent_with_retry(
             log_func(f"{agent_name}: response received in {elapsed:.1f}s")
             log_func(f"{agent_name} raw (first 2000 chars): {str(output)[:2000]}")
             
-            parsed_obj = extract_json_object(str(output))
+            cleaned = _strip_think_blocks(str(output))
+            parsed_obj = extract_json_object(cleaned)
             if parsed_obj is None or not isinstance(parsed_obj, dict):
                 if attempt < max_retries:
                     log_func(f"{agent_name}: invalid JSON (attempt {attempt}, retrying...)")

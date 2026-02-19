@@ -28,7 +28,7 @@ CANDIDATE_RULES = [
     "Output MUST be valid JSON (no markdown).",
     "Output MUST be either a JSON list of candidates or an object {\"candidates\": [...]}.",
     "Each candidate MUST include: name, type, description, formula, learns_weights, constraints, risks, validation_plan, params.",
-    "params.method MUST be one of: mean, median, trimmed_mean, best_single, best_per_horizon, topk_mean_per_horizon, inverse_rmse_weights_per_horizon, ridge_stacking_per_horizon.",
+    "params.method MUST be one of: mean, median, trimmed_mean, best_single, best_per_horizon, topk_mean_per_horizon, inverse_rmse_weights_per_horizon, ridge_stacking_per_horizon, exp_weighted_average_per_horizon, poly_weighted_average_per_horizon, ade_dynamic_error_per_horizon.",
     "If method=trimmed_mean include params.trim_ratio (0..0.4).",
     "If method=topk_mean_per_horizon include params.top_k.",
     "If method=inverse_rmse_weights_per_horizon include params.top_k and optionally shrinkage.",
@@ -37,7 +37,7 @@ CANDIDATE_RULES = [
 ]
 
 
-def _ollama(model_id: str, temperature: float = 0.25) -> Ollama:
+def _ollama(model_id: str, temperature: float = 0.15) -> Ollama:
     # These options follow the recommended "Optimizing for Tool Calling" settings.
     # Note: specific Ollama builds/models may ignore unsupported keys.
     return Ollama(
@@ -62,6 +62,7 @@ def create_proposer_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False)
         tools=[proposer_brief_tool],
         description=PROPOSER_DESCRIPTION,
         instructions=[
+            "FIRST call your own tool function proposer_brief_tool() to continue",
             "CRITICAL: Output MUST be VALID JSON (no markdown, no extra text before/after JSON).",
             "FIRST call proposer_brief_tool() to get validation_summary + candidate_library + score_presets.",
             "Then output ONLY a JSON object with EXACTLY these keys:",

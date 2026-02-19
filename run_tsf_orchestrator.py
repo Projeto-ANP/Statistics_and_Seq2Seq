@@ -76,7 +76,31 @@ COLS_SERIE = [
     "predict_debug",
     "selected_base_models",
     "weights_by_horizon",
+
+    # LLM raw think blocks (if present)
+    "proposer_think",
+    "skeptic_think",
+    "statistician_think",
 ]
+
+
+def _extract_think_blocks(text: str) -> str:
+    """Extract concatenated <think>...</think> blocks from raw model output."""
+
+    if not isinstance(text, str) or not text:
+        return ""
+    out = []
+    start = 0
+    while True:
+        s = text.find("<think>", start)
+        if s == -1:
+            break
+        e = text.find("</think>", s)
+        if e == -1:
+            break
+        out.append(text[s + len("<think>") : e].strip())
+        start = e + len("</think>")
+    return "\n\n".join([x for x in out if x])
 
 
 def get_predictions_models(models, dataset_index, final_test):
@@ -107,7 +131,7 @@ def exec_dataset_orchestrator(
     llm_logs: bool = True,
     start_index: int = 0,
     end_index: int = 182,
-    version: str = "v2",
+    version: str = "v3_ade",
 ):
     dataset = "ANP_MONTHLY"
     exp_name = f"orchestrator_llm_{version}" if use_llm else f"orchestrator_deterministic_{version}"
@@ -122,6 +146,7 @@ def exec_dataset_orchestrator(
 
     from agent.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
     from orchestrator.pipeline import run_deterministic_pipeline, run_llm_pipeline
+    from orchestrator_langchain.pipeline import run_langchain_pipeline
 
     # Ensure CSV schema is up-to-date (add missing columns if file already exists).
     if not os.path.exists(path_csv):
@@ -146,7 +171,15 @@ def exec_dataset_orchestrator(
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:
-                result = run_llm_pipeline(
+                # result = run_llm_pipeline(
+                #     model_id=ollama_model,
+                #     debug=debug,
+                #     rolling_mode=rolling,
+                #     train_window=train_window,
+                #     require_tool_call=True,
+                #     llm_logs=llm_logs,
+                # )
+                result = run_langchain_pipeline(
                     model_id=ollama_model,
                     debug=debug,
                     rolling_mode=rolling,
@@ -237,6 +270,10 @@ def exec_dataset_orchestrator(
         statistician_add_names = ""
         statistician_params_overrides = ""
 
+        proposer_think = ""
+        skeptic_think = ""
+        statistician_think = ""
+
         best_strategy_name = ""
         best_strategy_method = ""
         best_strategy_params = ""
@@ -290,6 +327,15 @@ def exec_dataset_orchestrator(
                         json.dump({"dataset_index": i, "artifacts": artifacts}, f, ensure_ascii=False, indent=2)
                 except Exception:
                     llm_artifacts_path = ""
+                try:
+                    raw = artifacts.get("raw", {}) if isinstance(artifacts.get("raw"), dict) else {}
+                    proposer_think = _extract_think_blocks(str(raw.get("proposer", "")))
+                    skeptic_think = _extract_think_blocks(str(raw.get("skeptic", "")))
+                    statistician_think = _extract_think_blocks(str(raw.get("statistician", "")))
+                except Exception:
+                    proposer_think = ""
+                    skeptic_think = ""
+                    statistician_think = ""
             # If pipeline failed and stored artifacts_path inside description, keep it.
             if not llm_artifacts_path:
                 try:
@@ -526,6 +572,9 @@ def exec_dataset_orchestrator(
             "predict_debug": predict_debug_csv,
             "selected_base_models": selected_base_models,
             "weights_by_horizon": weights_by_horizon,
+            "proposer_think": proposer_think,
+            "skeptic_think": skeptic_think,
+            "statistician_think": statistician_think,
         }
 
         df_new = pd.DataFrame(data_serie)

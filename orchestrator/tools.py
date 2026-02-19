@@ -347,6 +347,8 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
     # Hyperparams chosen deterministically from dataset characteristics
     top_k = int(round(np.sqrt(max(n_models, 1))))
     top_k = max(2, min(top_k, max(n_models, 2)))
+    top_k_small = max(2, min(top_k, 5))
+    top_k_large = max(top_k_small, min(int(round(top_k * 1.5)), max(n_models, 2)))
     if n_windows <= 4:
         shrinkage = 0.35
         l2 = 50.0
@@ -361,6 +363,7 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
 
     # Disagreement threshold (relative)
     high_disagreement = bool(np.isfinite(rel_spread_mean) and rel_spread_mean >= 0.25)
+    trim_ratio_w = 0.8 if high_disagreement else 1.0
     strong_single = bool(dominance >= 0.05)
     horizon_heterogeneous = bool(n_unique_winners >= 2)
 
@@ -459,6 +462,36 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
         }
     )
 
+    if top_k_small != top_k:
+        _add(
+            {
+                "name": f"topk_mean_per_horizon_k{top_k_small}",
+                "type": "selection",
+                "description": "Top-k mean per horizon (conservative k)",
+                "formula": "For each horizon h: choose top-k models by past RMSE and average their preds",
+                "learns_weights": False,
+                "constraints": "anti-leakage: selection uses only past windows",
+                "risks": ["Instability if few windows"],
+                "validation_plan": "rolling",
+                "params": {"method": "topk_mean_per_horizon", "top_k": int(top_k_small)},
+            }
+        )
+
+    if top_k_large != top_k:
+        _add(
+            {
+                "name": f"topk_mean_per_horizon_k{top_k_large}",
+                "type": "selection",
+                "description": "Top-k mean per horizon (aggressive k)",
+                "formula": "For each horizon h: choose top-k models by past RMSE and average their preds",
+                "learns_weights": False,
+                "constraints": "anti-leakage: selection uses only past windows",
+                "risks": ["Instability if few windows"],
+                "validation_plan": "rolling",
+                "params": {"method": "topk_mean_per_horizon", "top_k": int(top_k_large)},
+            }
+        )
+
     _add(
         {
             "name": f"inverse_rmse_weights_k{top_k}_sh{shrinkage:.2f}",
@@ -476,6 +509,44 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
             },
         }
     )
+
+    if top_k_small != top_k:
+        _add(
+            {
+                "name": f"inverse_rmse_weights_k{top_k_small}_sh{shrinkage:.2f}",
+                "type": "weighted",
+                "description": "Inverse-RMSE weights per horizon with shrinkage (conservative k)",
+                "formula": "w(h) ∝ 1/(RMSE+eps), shrunk toward uniform; apply per horizon",
+                "learns_weights": True,
+                "constraints": "anti-leakage: weights learned only from past windows",
+                "risks": ["May overfit if too many models or few windows"],
+                "validation_plan": "rolling",
+                "params": {
+                    "method": "inverse_rmse_weights_per_horizon",
+                    "top_k": int(top_k_small),
+                    "shrinkage": float(shrinkage),
+                },
+            }
+        )
+
+    if top_k_large != top_k:
+        _add(
+            {
+                "name": f"inverse_rmse_weights_k{top_k_large}_sh{shrinkage:.2f}",
+                "type": "weighted",
+                "description": "Inverse-RMSE weights per horizon with shrinkage (aggressive k)",
+                "formula": "w(h) ∝ 1/(RMSE+eps), shrunk toward uniform; apply per horizon",
+                "learns_weights": True,
+                "constraints": "anti-leakage: weights learned only from past windows",
+                "risks": ["May overfit if too many models or few windows"],
+                "validation_plan": "rolling",
+                "params": {
+                    "method": "inverse_rmse_weights_per_horizon",
+                    "top_k": int(top_k_large),
+                    "shrinkage": float(shrinkage),
+                },
+            }
+        )
 
     _add(
         {
@@ -495,6 +566,99 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
         }
     )
 
+    _add(
+        {
+            "name": f"exp_weighted_average_eta1.0_trim{trim_ratio_w:.1f}",
+            "type": "weighted",
+            "description": "Exponentially weighted averaging (EWA) per horizon; refs: Cesa-Bianchi & Lugosi (2006), Gaillard & Goude (2015)",
+            "formula": "w(h) ∝ exp(-η·RMSE); weights normalized per horizon",
+            "learns_weights": True,
+            "constraints": "anti-leakage: weights computed on past windows",
+            "risks": ["Sensitive to η and trimming when windows are few"],
+            "validation_plan": "rolling",
+            "params": {
+                "method": "exp_weighted_average_per_horizon",
+                "eta": 1.0,
+                "trim_ratio": float(trim_ratio_w),
+            },
+        }
+    )
+
+    _add(
+        {
+            "name": f"poly_weighted_average_p1.0_trim{trim_ratio_w:.1f}",
+            "type": "weighted",
+            "description": "Polynomially weighted averaging (PWA) per horizon; refs: Cesa-Bianchi & Lugosi (2006), Gaillard & Goude (2015)",
+            "formula": "w(h) ∝ (RMSE+ε)^(-p); weights normalized per horizon",
+            "learns_weights": True,
+            "constraints": "anti-leakage: weights computed on past windows",
+            "risks": ["Sensitive to p and trimming when windows are few"],
+            "validation_plan": "rolling",
+            "params": {
+                "method": "poly_weighted_average_per_horizon",
+                "power": 1.0,
+                "trim_ratio": float(trim_ratio_w),
+            },
+        }
+    )
+
+    _add(
+        {
+            "name": f"ade_dynamic_error_beta0.5_trim{trim_ratio_w:.1f}",
+            "type": "weighted",
+            "description": "ADE-inspired dynamic error weighting; ref: Cerqueira et al. (2019) Arbitrage of forecasting experts",
+            "formula": "EMA of recent errors → weights via exp(-η·error) per horizon",
+            "learns_weights": True,
+            "constraints": "anti-leakage: uses past-window errors only",
+            "risks": ["Approximation of ADE without meta-model"],
+            "validation_plan": "rolling",
+            "params": {
+                "method": "ade_dynamic_error_per_horizon",
+                "beta": 0.5,
+                "eta": 1.0,
+                "trim_ratio": float(trim_ratio_w),
+            },
+        }
+    )
+
+    if top_k_small != top_k:
+        _add(
+            {
+                "name": f"ridge_stacking_l2{l2:.0f}_topk{min(top_k_small, 5)}",
+                "type": "stacking",
+                "description": "Ridge stacking per horizon (conservative k)",
+                "formula": "Fit ridge per horizon on past windows; project weights to simplex",
+                "learns_weights": True,
+                "constraints": "anti-leakage: ridge fit uses only past windows",
+                "risks": ["May be unstable with very few windows"],
+                "validation_plan": "rolling",
+                "params": {
+                    "method": "ridge_stacking_per_horizon",
+                    "l2": float(l2),
+                    "top_k": int(min(top_k_small, 5)),
+                },
+            }
+        )
+
+    if top_k_large != top_k:
+        _add(
+            {
+                "name": f"ridge_stacking_l2{l2:.0f}_topk{min(top_k_large, 5)}",
+                "type": "stacking",
+                "description": "Ridge stacking per horizon (aggressive k)",
+                "formula": "Fit ridge per horizon on past windows; project weights to simplex",
+                "learns_weights": True,
+                "constraints": "anti-leakage: ridge fit uses only past windows",
+                "risks": ["May be unstable with very few windows"],
+                "validation_plan": "rolling",
+                "params": {
+                    "method": "ridge_stacking_per_horizon",
+                    "l2": float(l2),
+                    "top_k": int(min(top_k_large, 5)),
+                },
+            }
+        )
+
     return {
         "candidates": candidates,
         "meta": {
@@ -502,6 +666,7 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
             "n_windows": n_windows,
             "top_k": top_k,
             "trim_ratio": float(trim_ratio),
+            "trim_ratio_weighted": float(trim_ratio_w),
             "shrinkage": float(shrinkage),
             "l2": float(l2),
             "flags": {
@@ -528,7 +693,8 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     # Top-k grid (bounded by n_models)
     base = int(round(np.sqrt(max(n_models, 1))))
     base = max(2, min(base, max(n_models, 2)))
-    k_grid = sorted({2, min(3, max(n_models, 2)), min(5, max(n_models, 2)), base, min(10, max(n_models, 2))})
+    k_candidates = [2, 3, 4, 5, 6, 8, 10, 12, 15, base, int(round(base * 1.5))]
+    k_grid = sorted({min(k, max(n_models, 2)) for k in k_candidates})
     k_grid = [int(k) for k in k_grid if 2 <= int(k) <= max(2, int(n_models or 2))]
 
     # Robustness grid (include recommended knobs so the universe matches the brief).
@@ -537,22 +703,22 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     rec_shrink = _safe_float(rec.get("shrinkage"))
     rec_l2 = _safe_float(rec.get("l2"))
 
-    trim_grid = [0.05, 0.1, 0.2, 0.3]
+    trim_grid = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3]
     if np.isfinite(rec_trim):
         trim_grid.append(float(rec_trim))
     trim_grid = sorted({float(x) for x in trim_grid if 0.0 <= float(x) <= 0.4})
 
-    shrink_grid = [0.0, 0.15, 0.25, 0.3, 0.35, 0.5]
+    shrink_grid = [0.0, 0.05, 0.1, 0.15, 0.25, 0.3, 0.35, 0.5, 0.7]
     if np.isfinite(rec_shrink):
         shrink_grid.append(float(rec_shrink))
     shrink_grid = sorted({float(x) for x in shrink_grid if 0.0 <= float(x) <= 0.9})
 
     if n_windows <= 4:
-        l2_grid = [20.0, 50.0, 100.0]
+        l2_grid = [10.0, 20.0, 50.0, 100.0]
     elif n_windows <= 8:
-        l2_grid = [10.0, 20.0, 50.0]
+        l2_grid = [5.0, 10.0, 20.0, 50.0]
     else:
-        l2_grid = [5.0, 10.0, 20.0]
+        l2_grid = [2.0, 5.0, 10.0, 20.0]
     if np.isfinite(rec_l2):
         l2_grid.append(float(rec_l2))
     l2_grid = sorted({float(x) for x in l2_grid if 0.1 <= float(x) <= 1000.0})
@@ -689,6 +855,60 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
                         "l2": float(l2),
                         "top_k": int(k),
                     },
+                }
+            )
+
+    # EWA / PWA / ADE-inspired dynamic weighting grids
+    eta_grid = [0.5, 1.0, 2.0]
+    power_grid = [0.5, 1.0, 2.0]
+    beta_grid = [0.3, 0.5, 0.8]
+    trim_ratio_grid = [0.6, 0.8, 1.0]
+
+    for eta in eta_grid:
+        for tr in trim_ratio_grid:
+            _add(
+                {
+                    "name": f"exp_weighted_average_eta{eta:.1f}_trim{tr:.1f}",
+                    "type": "weighted",
+                    "description": "Exponentially weighted averaging (EWA); refs: Cesa-Bianchi & Lugosi (2006), Gaillard & Goude (2015)",
+                    "formula": "w(h) ∝ exp(-η·RMSE); weights normalized per horizon",
+                    "learns_weights": True,
+                    "constraints": "anti-leakage: weights computed on past windows",
+                    "risks": ["Sensitive to η and trimming"],
+                    "validation_plan": "rolling",
+                    "params": {"method": "exp_weighted_average_per_horizon", "eta": float(eta), "trim_ratio": float(tr)},
+                }
+            )
+
+    for power in power_grid:
+        for tr in trim_ratio_grid:
+            _add(
+                {
+                    "name": f"poly_weighted_average_p{power:.1f}_trim{tr:.1f}",
+                    "type": "weighted",
+                    "description": "Polynomially weighted averaging (PWA); refs: Cesa-Bianchi & Lugosi (2006), Gaillard & Goude (2015)",
+                    "formula": "w(h) ∝ (RMSE+ε)^(-p); weights normalized per horizon",
+                    "learns_weights": True,
+                    "constraints": "anti-leakage: weights computed on past windows",
+                    "risks": ["Sensitive to p and trimming"],
+                    "validation_plan": "rolling",
+                    "params": {"method": "poly_weighted_average_per_horizon", "power": float(power), "trim_ratio": float(tr)},
+                }
+            )
+
+    for beta in beta_grid:
+        for tr in trim_ratio_grid:
+            _add(
+                {
+                    "name": f"ade_dynamic_error_beta{beta:.1f}_trim{tr:.1f}",
+                    "type": "weighted",
+                    "description": "ADE-inspired dynamic error weighting; ref: Cerqueira et al. (2019)",
+                    "formula": "EMA of recent errors → weights via exp(-η·error) per horizon",
+                    "learns_weights": True,
+                    "constraints": "anti-leakage: uses past-window errors only",
+                    "risks": ["Approximation of ADE without meta-model"],
+                    "validation_plan": "rolling",
+                    "params": {"method": "ade_dynamic_error_per_horizon", "beta": float(beta), "eta": 1.0, "trim_ratio": float(tr)},
                 }
             )
 

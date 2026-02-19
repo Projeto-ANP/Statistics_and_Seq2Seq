@@ -1103,7 +1103,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "THETA"
+        regr = "ETS"
 
         # df.iloc[i]
         def run_wrapper(args):
