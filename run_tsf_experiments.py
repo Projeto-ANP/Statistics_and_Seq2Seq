@@ -790,6 +790,27 @@ def run_error_tsf_file(tsf_file, dataset_name):
     df_final = pd.DataFrame([data_dataset])
     df_final.to_csv(path_dataset, sep=";", mode="a", header=False, index=False)
 
+def generate_experiment(caminho_arquivo, dataset_index, final_test):
+    try:
+        if not os.path.exists(caminho_arquivo):
+            print_log(f"Arquivo nao encontrado: {caminho_arquivo}")
+            return True
+
+        df = pd.read_csv(caminho_arquivo, sep=";")
+        df = df[df["dataset_index"] == dataset_index]
+
+        if "final_test" not in df.columns:
+            print_log("Coluna 'final_test' nao encontrada no arquivo.")
+            return True
+
+        if str(final_test) not in df["final_test"].values:
+            print_log(f'Continuando... {final_test} em "{caminho_arquivo}".')
+            return True
+    except Exception as e:
+        print_log(f"Erro em: {caminho_arquivo} | {e}")
+    return False
+
+
 
 def run_darts_series(args):
     frequency, horizon, line, i, regressor, dataset = args
@@ -887,7 +908,7 @@ def run_darts_series(args):
             path_experiments = f"./timeseries/mestrado/resultados/{regr}/{transform}/"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
-            flag = True
+            flag = generate_experiment(path_csv, i, final_test)
             start_exp = time.perf_counter()
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
@@ -1004,7 +1025,7 @@ def run_darts_series(args):
                         preds_norm, train, transform
                     )
 
-                    preds_real_array = np.array(preds_real.values)
+                    preds_real_array = np.asarray(preds_real.values)
                     preds_real_reshaped = preds_real_array.reshape(1, -1)
                     test_reshaped = test.values.reshape(1, -1)
                     smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
@@ -1077,7 +1098,7 @@ if __name__ == "__main__":
         #"m4_weekly_dataset.tsf",
         #"nn5_daily_dataset_without_missing_values.tsf",
         #"nn5_weekly_dataset.tsf",
-        "ETTh1.tsf",
+        # "ETTh1.tsf",
         "ETTh2.tsf",
         "ETTm1.tsf",
         "ETTm2.tsf",
@@ -1103,7 +1124,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "ETS"
+        regr = "ARIMA"
 
         # df.iloc[i]
         def run_wrapper(args):

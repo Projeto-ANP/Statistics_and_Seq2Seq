@@ -739,6 +739,7 @@ def run_tsf_normal_series(args):
         "daily": "D",
         "hourly": "H",
         "half_hourly": "30min",  # 30T
+        "15min": "15min",
     }
 
     freq = freq_map.get(frequency)
@@ -949,11 +950,11 @@ if __name__ == "__main__":
         # "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
         # "us_births_dataset.tsf",
-        "australian_electricity_demand_dataset.tsf",
-        "m4_hourly_dataset.tsf",
-        "m4_weekly_dataset.tsf",
-        "nn5_daily_dataset_without_missing_values.tsf",
-        "nn5_weekly_dataset.tsf",
+        # "australian_electricity_demand_dataset.tsf",
+        # "m4_hourly_dataset.tsf",
+        # "m4_weekly_dataset.tsf",
+        # "nn5_daily_dataset_without_missing_values.tsf",
+        # "nn5_weekly_dataset.tsf",
         "ETTh1.tsf",
         "ETTh2.tsf",
         "ETTm1.tsf",
@@ -980,12 +981,12 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "svr"
+        regr = "rf"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
-            run_tsf_image_series(args)
-            # run_tsf_normal_series(args)
+            # run_tsf_image_series(args)
+            run_tsf_normal_series(args)
 
         tasks = [
             (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
