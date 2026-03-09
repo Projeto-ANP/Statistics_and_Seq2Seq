@@ -7,7 +7,7 @@ from orchestrator import tools as orch_tools
 
 @tool("proposer_brief")
 def proposer_brief() -> str:
-    """Deterministic brief for proposer (validation summary + candidate library)."""
+    """Deterministic brief for proposer (validation summary + candidate library + pattern insights)."""
 
     return orch_tools.proposer_brief_tool.entrypoint()
 
@@ -27,3 +27,10 @@ def evaluate_strategies(candidates_json: str, config_json: str = "") -> str:
         candidates_json=candidates_json,
         config_json=config_json,
     )
+
+
+@tool("build_fold_cot_context")
+def build_fold_cot_context() -> str:
+    """Build chain-of-thought context from validation folds (trend/seasonality decomposition per model)."""
+
+    return orch_tools.build_fold_cot_context_tool.entrypoint()

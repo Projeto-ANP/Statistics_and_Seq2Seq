@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
-from orchestrator_langchain.langchain_tools import debate_packet, evaluate_strategies, proposer_brief
+from orchestrator_langchain.langchain_tools import debate_packet, evaluate_strategies, proposer_brief, build_fold_cot_context
 
 
 DEFAULT_MODEL_ID = "mychen76/qwen3_cline_roocode:4b"
@@ -87,6 +87,17 @@ class LangchainAgent:
             return AgentResponse(content=str(content))
 
         return AgentResponse(content="{}");
+
+
+def create_pattern_analyst_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[build_fold_cot_context],
+        system_prompt=_load_prompt("pattern_analyst.md"),
+        temperature=0.3,
+        force_tool_call=True,
+    )
 
 
 def create_proposer_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:

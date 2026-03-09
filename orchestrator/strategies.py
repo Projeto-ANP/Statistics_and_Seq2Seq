@@ -436,6 +436,48 @@ def generate_combined_predictions(
         }
         return combined, debug
 
+    if method == "dba":
+        try:
+            from tslearn.barycenters import dtw_barycenter_averaging
+        except ImportError:
+            combined[:, :] = np.nanmean(y_preds, axis=1)
+            debug["fallback"] = "tslearn_not_available"
+            return combined, debug
+
+        top_k = int(candidate.params.get("top_k", n_models))
+        top_k = max(1, min(top_k, n_models))
+        max_iter = int(candidate.params.get("max_iter", 30))
+        debug.update({"top_k": top_k, "max_iter": max_iter})
+
+        for i in range(n_windows):
+            tr = _train_slice(i, rolling_cfg)
+            # Optionally pre-select top-k models by past RMSE before computing DBA
+            if tr.stop - tr.start > 0 and top_k < n_models:
+                train_true = y_true[tr, :]
+                train_preds = y_preds[tr, :, :]
+                rmse_per_model = np.sqrt(
+                    np.nanmean((train_preds - train_true[:, None, :]) ** 2, axis=(0, 2))
+                )
+                order = np.argsort(rmse_per_model)
+                idxs = order[:top_k]
+            else:
+                idxs = np.arange(n_models)
+
+            X = y_preds[i, idxs, :]  # (top_k, horizon)
+            # Replace NaNs with column means to avoid tslearn failures
+            col_means = np.nanmean(X, axis=0)
+            nan_mask = np.isnan(X)
+            X_clean = np.where(nan_mask, col_means[None, :], X)
+
+            X3 = X_clean.reshape(X_clean.shape[0], X_clean.shape[1], 1)
+            try:
+                centroid = dtw_barycenter_averaging(X3, max_iter=max_iter)
+                combined[i, :] = centroid.ravel()[:horizon]
+            except Exception:
+                combined[i, :] = np.nanmean(X, axis=0)
+
+        return combined, debug
+
     if method == "ridge_stacking_per_horizon":
         l2 = float(candidate.params.get("l2", 10.0))
         top_k = int(candidate.params.get("top_k", n_models))

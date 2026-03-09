@@ -14,6 +14,7 @@ from orchestrator.utils import extract_json_object
 from orchestrator.schemas import parse_candidates
 from orchestrator.tools import SCORE_PRESETS
 from orchestrator.agents import (
+    create_pattern_analyst_agent,
     create_proposer_agent,
     create_skeptic_agent,
     create_statistician_agent,
@@ -571,6 +572,7 @@ def run_llm_pipeline(
     proposer = create_proposer_agent(model_id, debug=debug)
     skeptic = create_skeptic_agent(model_id, debug=debug)
     statistician = create_statistician_agent(model_id, debug=debug)
+    pattern_analyst = create_pattern_analyst_agent(model_id, debug=debug)
 
     llm_artifacts: Dict[str, Any] = {
         "model_id": model_id,
@@ -587,13 +589,51 @@ def run_llm_pipeline(
         "score": {"a_rmse": 0.4, "b_smape": 0.3, "c_mape": 0.3, "d_pocid": 0.1},
     }
 
+    # ── Step 0: PatternAnalyst — fold decomposition CoT (non-fatal) ───────────
+    _log("PatternAnalyst: analyzing validation folds (trend/seasonality)...")
+    pattern_analyst_prompt = (
+        "Call build_fold_cot_context_tool() to analyze the validation folds. "
+        "Then return ONLY JSON with your insights."
+    )
+    try:
+        pa_out, pa_obj = _run_agent_with_retry(
+            lambda: pattern_analyst.run(pattern_analyst_prompt).content,
+            "PatternAnalyst",
+            max_retries=2,
+            log_func=_log,
+        )
+        set_context("pattern_analyst_insights", pa_obj)
+        llm_artifacts["raw"]["pattern_analyst"] = str(pa_out)
+        llm_artifacts["parsed"]["pattern_analyst"] = pa_obj
+        _log(f"PatternAnalyst: trend_champion={pa_obj.get('trend_champion')} | seas_champion={pa_obj.get('seasonality_champion')} | hint={pa_obj.get('recommended_method_hint')}")
+    except Exception as e:
+        _log(f"PatternAnalyst: failed (non-fatal, continuing) — {e}")
+        set_context("pattern_analyst_insights", {})
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    pa_insights = get_context("pattern_analyst_insights", {})
+    pattern_hint_text = ""
+    if isinstance(pa_insights, dict) and pa_insights:
+        trend_champ = pa_insights.get("trend_champion", "")
+        seas_champ = pa_insights.get("seasonality_champion", "")
+        method_hint = pa_insights.get("recommended_method_hint", "")
+        narrative = pa_insights.get("cot_narrative", "")
+        pattern_hint_text = (
+            f"\nPATTERN ANALYST INSIGHTS: trend_champion={trend_champ!r}, "
+            f"seasonality_champion={seas_champ!r}, recommended_method={method_hint!r}. "
+            f"Narrative: {narrative}"
+        )
+
     proposer_prompt = (
-        "Call proposer_brief_tool() FIRST. "
-        "Then select candidates by name and choose a score_preset. "
+        "Call proposer_brief() FIRST. "
+        "The tool output includes pattern_analyst_insights — use trend_champion, seasonality_champion, "
+        "and insights.recommended_method_hint to bias your candidate selection toward non-mean methods. "
+        "MUST propose at least 3 candidates including at least 1 non-baseline type. "
         "Return ONLY JSON per instructions. "
         "IMPORTANT: you MUST ONLY reference candidate names that appear in the tool output candidate_library; "
-        "unknown names will hard-stop.\n\n"
-        # f"config_json: {json.dumps(eval_config, ensure_ascii=False)}"
+        "unknown names will hard-stop."
+        + pattern_hint_text
     )
 
     # Tool inputs are provided via context so the LLM doesn't need to pass parameters.

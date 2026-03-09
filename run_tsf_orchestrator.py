@@ -3,6 +3,7 @@ import re
 import json
 import pandas as pd
 import numpy as np
+from streamfuels.datasets import DatasetLoader
 from sklearn.metrics import mean_absolute_percentage_error as mape
 
 from all_functions import calculate_smape, calculate_rmse, calculate_msmape, calculate_mae, pocid
@@ -15,15 +16,15 @@ def extract_values(list_str):
     return []
 
 
-def read_model_preds(model_name, dataset_index):
+def read_model_preds(model_name, dataset_index, dataset="ANP_MONTHLY"):
     df = pd.read_csv(
-        f"./timeseries/mestrado/resultados/{model_name}/normal/ANP_MONTHLY.csv",
+        f"./timeseries/mestrado/resultados/{model_name}/normal/{dataset}.csv",
         sep=";",
     )
     df = df[df["dataset_index"] == dataset_index]
 
-    df["start_test"] = pd.to_datetime(df["start_test"], format="%Y-%m-%d")
-    df["final_test"] = pd.to_datetime(df["final_test"], format="%Y-%m-%d")
+    df["start_test"] = pd.to_datetime(df["start_test"], errors="coerce", infer_datetime_format=True)
+    df["final_test"] = pd.to_datetime(df["final_test"], errors="coerce", infer_datetime_format=True)
     df = df.sort_values(by="start_test")
 
     return df
@@ -81,6 +82,13 @@ COLS_SERIE = [
     "proposer_think",
     "skeptic_think",
     "statistician_think",
+
+    # PatternAnalyst outputs
+    "pattern_analyst_think",
+    "pattern_analyst_trend_champion",
+    "pattern_analyst_seas_champion",
+    "pattern_analyst_method_hint",
+    "pattern_analyst_narrative",
 ]
 
 
@@ -103,14 +111,14 @@ def _extract_think_blocks(text: str) -> str:
     return "\n\n".join([x for x in out if x])
 
 
-def get_predictions_models(models, dataset_index, final_test):
+def get_predictions_models(models, dataset_index, final_test, dataset="ANP_MONTHLY"):
     final_test_predictions = {}
     final_test_data = None
 
-    final_test_date = pd.to_datetime(final_test, format="%Y-%m-%d")
+    final_test_date = pd.to_datetime(final_test, errors="coerce", infer_datetime_format=True)
 
     for model in models:
-        df = read_model_preds(model, dataset_index)
+        df = read_model_preds(model, dataset_index, dataset=dataset)
         test_df = df[df["final_test"] == final_test_date]
 
         if not test_df.empty:
@@ -123,20 +131,38 @@ def get_predictions_models(models, dataset_index, final_test):
 
 def exec_dataset_orchestrator(
     models,
+    dataset,
     use_llm: bool = False,
     ollama_model: str = "mychen76/qwen3_cline_roocode:14b",
     debug: bool = False,
     rolling: str = "expanding",
     train_window: int = 5,
     llm_logs: bool = True,
-    start_index: int = 0,
-    end_index: int = 182,
-    version: str = "v3_ade",
+    # start_index: int = 0,
+    # end_index: int = 182,
+    version: str = "v1_pattern",
 ):
-    dataset = "ANP_MONTHLY"
+    # dataset = "ANP_MONTHLY"
+    # dataset = "ETTH1"
+    dataset_file = f"./timeseries/mestrado/resultados/catboost/normal/{dataset}.csv"
+    df_dt = pd.read_csv(dataset_file, sep=";")
+
+
+    df_dt["final_test"] = pd.to_datetime(
+        df_dt["final_test"],
+        errors="coerce",          # transforma inválidos em NaT
+        infer_datetime_format=True
+    )
+    
+    if df_dt["final_test"].isna().sum() > 0:
+        print("Existem datas inválidas que viraram NaT.")
+
+    df_new_dt = df_dt.sort_values("final_test").reset_index(drop=True)
+    # df_new_dt.iloc[-1]['horizon']
     exp_name = f"orchestrator_llm_{version}" if use_llm else f"orchestrator_deterministic_{version}"
-    horizon = 12
-    final_test = "2024-11-30"
+    horizon =df_new_dt.iloc[-1]['horizon']
+    final_test = df_new_dt.iloc[-1]['final_test']
+    num_series = df_dt["dataset_index"].nunique()
 
     path_experiments = f"./timeseries/mestrado/resultados/{exp_name}/"
     path_csv = f"{path_experiments}/{dataset}.csv"
@@ -164,7 +190,7 @@ def exec_dataset_orchestrator(
             # If the existing file is malformed, keep running; new rows will still append.
             pass
 
-    for i in range(int(start_index), int(end_index)):
+    for i in range(num_series):
         init_context()
         CONTEXT_MEMORY["models_available"] = models
         generate_all_validations_context(models, i)
@@ -238,7 +264,7 @@ def exec_dataset_orchestrator(
         else:
             result = run_deterministic_pipeline()
 
-        _, test = get_predictions_models(models, dataset_index=i, final_test=final_test)
+        _, test = get_predictions_models(models, dataset_index=i, final_test=final_test, dataset=dataset.upper())
 
         description = result.get("description", "")
         if not isinstance(description, str):
@@ -273,6 +299,11 @@ def exec_dataset_orchestrator(
         proposer_think = ""
         skeptic_think = ""
         statistician_think = ""
+        pattern_analyst_think = ""
+        pattern_analyst_trend_champion = ""
+        pattern_analyst_seas_champion = ""
+        pattern_analyst_method_hint = ""
+        pattern_analyst_narrative = ""
 
         best_strategy_name = ""
         best_strategy_method = ""
@@ -332,10 +363,19 @@ def exec_dataset_orchestrator(
                     proposer_think = _extract_think_blocks(str(raw.get("proposer", "")))
                     skeptic_think = _extract_think_blocks(str(raw.get("skeptic", "")))
                     statistician_think = _extract_think_blocks(str(raw.get("statistician", "")))
+                    pattern_analyst_think = _extract_think_blocks(str(raw.get("pattern_analyst", "")))
+                    parsed_pa = artifacts.get("parsed", {}) if isinstance(artifacts.get("parsed"), dict) else {}
+                    pa_obj = parsed_pa.get("pattern_analyst")
+                    if isinstance(pa_obj, dict):
+                        pattern_analyst_trend_champion = str(pa_obj.get("trend_champion") or "")
+                        pattern_analyst_seas_champion = str(pa_obj.get("seasonality_champion") or "")
+                        pattern_analyst_method_hint = str(pa_obj.get("recommended_method_hint") or "")
+                        pattern_analyst_narrative = str(pa_obj.get("cot_narrative") or "")
                 except Exception:
                     proposer_think = ""
                     skeptic_think = ""
                     statistician_think = ""
+                    pattern_analyst_think = ""
             # If pipeline failed and stored artifacts_path inside description, keep it.
             if not llm_artifacts_path:
                 try:
@@ -493,7 +533,11 @@ def exec_dataset_orchestrator(
         # In LLM mode, any failure is a hard-stop (no static fallback).
         hard_stop = bool(use_llm and (not result.get("success", False)))
 
-        if hard_stop or preds_real is None or test is None:
+        if preds_real is None:
+            preds_real = []
+
+        if hard_stop:
+            # Pipeline failed — reset everything
             smape_result = np.nan
             rmse_result = np.nan
             msmape_result = np.nan
@@ -501,10 +545,11 @@ def exec_dataset_orchestrator(
             mape_result = np.nan
             pocid_result = np.nan
             preds_real = []
-            test_arr = np.array(test) if test is not None else np.array([])
+            test_arr = np.array([])
         else:
-            test_arr = np.array(test, dtype=float)
-            preds_arr = np.array(preds_real, dtype=float)
+            # Pipeline succeeded — always save preds_real; metrics need test data
+            test_arr = np.array(test, dtype=float) if test is not None and len(test) > 0 else np.array([])
+            preds_arr = np.array(preds_real, dtype=float) if preds_real else np.array([])
 
             min_len = min(len(test_arr), len(preds_arr))
             if min_len == 0:
@@ -514,7 +559,6 @@ def exec_dataset_orchestrator(
                 mae_result = np.nan
                 mape_result = np.nan
                 pocid_result = np.nan
-                preds_real = []
             else:
                 test_cut = test_arr[:min_len]
                 preds_cut = preds_arr[:min_len]
@@ -537,7 +581,7 @@ def exec_dataset_orchestrator(
             "msmape": msmape_result,
             "mae": mae_result,
             "test": [test_arr.tolist()],
-            "predictions": [preds_real],
+            "predictions": [list(preds_real) if isinstance(preds_real, (list, np.ndarray)) and len(preds_real) > 0 else []],
             "start_test": "INICIO",
             "final_test": final_test,
             "description": description,
@@ -575,6 +619,11 @@ def exec_dataset_orchestrator(
             "proposer_think": proposer_think,
             "skeptic_think": skeptic_think,
             "statistician_think": statistician_think,
+            "pattern_analyst_think": pattern_analyst_think,
+            "pattern_analyst_trend_champion": pattern_analyst_trend_champion,
+            "pattern_analyst_seas_champion": pattern_analyst_seas_champion,
+            "pattern_analyst_method_hint": pattern_analyst_method_hint,
+            "pattern_analyst_narrative": pattern_analyst_narrative,
         }
 
         df_new = pd.DataFrame(data_serie)
@@ -615,14 +664,16 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
+    dataset = "ANP_MONTHLY"
     exec_dataset_orchestrator(
         models,
+        dataset=dataset,
         use_llm=True,
         ollama_model="mychen76/qwen3_cline_roocode:14b",
         debug=False,
         rolling="expanding",
         train_window=5,
         llm_logs=True,
-        start_index=0,
-        end_index=182,
+        # start_index=0,
+        # end_index=182,
     )

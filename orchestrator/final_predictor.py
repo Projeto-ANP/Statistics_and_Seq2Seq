@@ -331,6 +331,39 @@ def predict_final_from_context(
         debug.update({"l2": l2, "top_k": top_k, "weights_by_horizon": weights_by_h})
         return {"result": out.tolist(), "debug": debug}
 
+    if method == "dba":
+        try:
+            from tslearn.barycenters import dtw_barycenter_averaging
+        except ImportError:
+            out = np.nanmean(final_matrix, axis=0)
+            debug["fallback"] = "tslearn_not_available"
+            return {"result": out.tolist(), "debug": debug}
+        top_k_dba = int(candidate.params.get("top_k", len(model_names)))
+        top_k_dba = max(1, min(top_k_dba, len(model_names)))
+        max_iter = int(candidate.params.get("max_iter", 30))
+        debug.update({"top_k": top_k_dba, "max_iter": max_iter})
+        if top_k_dba < len(model_names) and n_windows > 0:
+            rmse_per_model = np.sqrt(np.nanmean((y_preds - y_true[:, None, :]) ** 2, axis=(0, 2)))
+            idxs = np.argsort(rmse_per_model)[:top_k_dba]
+        else:
+            idxs = np.arange(len(model_names))
+        X = final_matrix[idxs, :]
+        X_clean = np.where(np.isnan(X), np.nanmean(X, axis=0)[None, :], X)
+        X3 = X_clean.reshape(X_clean.shape[0], X_clean.shape[1], 1)
+        try:
+            centroid = dtw_barycenter_averaging(X3, max_iter=max_iter)
+            out = centroid.ravel()[:horizon]
+        except Exception:
+            out = np.nanmean(X, axis=0)
+        chosen_names = [model_names[int(idx)] for idx in idxs.tolist()]
+        debug["chosen_models"] = chosen_names
+        weights_by_h = {
+            str(h): {m: (1.0 / len(chosen_names) if m in chosen_names else 0.0) for m in model_names}
+            for h in range(horizon)
+        }
+        debug["weights_by_horizon"] = weights_by_h
+        return {"result": out.tolist(), "debug": debug}
+
     # fallback
     out = np.nanmean(final_matrix, axis=0)
     debug["fallback"] = True
