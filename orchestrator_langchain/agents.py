@@ -61,6 +61,9 @@ class LangchainAgent:
         messages = [SystemMessage(content=self._system_prompt), HumanMessage(content=user_prompt)]
         tool_called = False
 
+        # Pre-build the list of available tool names for nudge messages.
+        available_tool_names = [t.name for t in self._tools] if self._tools else []
+
         for step in range(self._max_tool_rounds):
             response = self._bound_llm.invoke(messages)
             if isinstance(response, AIMessage) and response.tool_calls:
@@ -72,16 +75,24 @@ class LangchainAgent:
                     messages.append(ToolMessage(content=str(tool_result), tool_call_id=tc.get("id", "")))
                 continue
 
-            if self._force_tool_call and self._tools and not tool_called and step == 0:
-                messages.append(
-                    HumanMessage(
-                        content=(
-                            "You MUST call the required tool before responding. "
-                            "Return ONLY JSON after the tool output."
-                        )
-                    )
-                )
-                continue
+            # LLM replied with text instead of calling the tool — retry with stronger nudges.
+            if self._force_tool_call and self._tools and not tool_called:
+                nudge_messages = [
+                    (
+                        f"ERROR: You did NOT call any tool. You MUST call one of these tools "
+                        f"BEFORE responding: {available_tool_names}. "
+                        f"Do NOT output any text — only make a tool call."
+                    ),
+                    (
+                        f"CRITICAL: This is your LAST chance. Call the tool "
+                        f"{available_tool_names[0] if available_tool_names else 'required_tool'}() "
+                        f"NOW. No text, no JSON — ONLY a tool call."
+                    ),
+                ]
+                nudge_idx = min(step, len(nudge_messages) - 1)
+                if step < self._max_tool_rounds - 1:
+                    messages.append(HumanMessage(content=nudge_messages[nudge_idx]))
+                    continue
 
             content = response.content if isinstance(response, AIMessage) else str(response)
             return AgentResponse(content=str(content))
