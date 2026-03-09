@@ -5,7 +5,7 @@ from typing import List, Optional
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 
-from orchestrator.tools import build_debate_packet_tool, evaluate_strategies_tool, proposer_brief_tool
+from orchestrator.tools import build_debate_packet_tool, build_fold_cot_context_tool, evaluate_strategies_tool, proposer_brief_tool
 
 
 DEFAULT_MODEL_ID = "mychen76/qwen3_cline_roocode:4b"
@@ -28,7 +28,7 @@ CANDIDATE_RULES = [
     "Output MUST be valid JSON (no markdown).",
     "Output MUST be either a JSON list of candidates or an object {\"candidates\": [...]}.",
     "Each candidate MUST include: name, type, description, formula, learns_weights, constraints, risks, validation_plan, params.",
-    "params.method MUST be one of: mean, median, trimmed_mean, best_single, best_per_horizon, topk_mean_per_horizon, inverse_rmse_weights_per_horizon, ridge_stacking_per_horizon, exp_weighted_average_per_horizon, poly_weighted_average_per_horizon, ade_dynamic_error_per_horizon.",
+    "params.method MUST be one of: mean, median, trimmed_mean, dba, best_single, best_per_horizon, topk_mean_per_horizon, inverse_rmse_weights_per_horizon, ridge_stacking_per_horizon, exp_weighted_average_per_horizon, poly_weighted_average_per_horizon, ade_dynamic_error_per_horizon.",
     "If method=trimmed_mean include params.trim_ratio (0..0.4).",
     "If method=topk_mean_per_horizon include params.top_k.",
     "If method=inverse_rmse_weights_per_horizon include params.top_k and optionally shrinkage.",
@@ -55,24 +55,46 @@ def _ollama(model_id: str, temperature: float = 0.15) -> Ollama:
     )
 
 
+def create_pattern_analyst_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> Agent:
+    return Agent(
+        tool_choice="required",
+        model=_ollama(model_id, temperature=0.3),
+        tools=[build_fold_cot_context_tool],
+        description="""You are a TIME SERIES DECOMPOSITION EXPERT. You analyze validation folds to extract trend/seasonality insights for model combination.""",
+        instructions=[
+            "FIRST call build_fold_cot_context_tool() to get the fold decomposition analysis.",
+            "Use <think>...</think> to reason about trend champions, seasonality champions, and model disagreement.",
+            "CRITICAL: Output MUST be VALID JSON (no markdown, no extra text).",
+            "Output ONLY a JSON object with EXACTLY these keys:",
+            '  "trend_champion": "", "seasonality_champion": "", "overall_champion": "", "horizon_specialists": {"early": "", "late": ""}, "tier1_models": [], "tier2_models": [], "recommended_method_hint": "", "recommended_weighting_basis": "", "key_insights": {}, "cot_narrative": ""',
+            "If tool fails: {\"trend_champion\": \"\", \"seasonality_champion\": \"\", \"overall_champion\": \"\", \"horizon_specialists\": {}, \"tier1_models\": [], \"tier2_models\": [], \"recommended_method_hint\": \"topk_mean_per_horizon\", \"recommended_weighting_basis\": \"error\", \"key_insights\": {}, \"cot_narrative\": \"Analysis unavailable\"}",
+        ],
+        markdown=False,
+        debug_mode=debug,
+    )
+
+
 def create_proposer_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> Agent:
     return Agent(
         tool_choice="required",
-        model=_ollama(model_id, temperature=0.25),
+        model=_ollama(model_id, temperature=0.4),
         tools=[proposer_brief_tool],
         description=PROPOSER_DESCRIPTION,
         instructions=[
             "FIRST call your own tool function proposer_brief_tool() to continue",
             "CRITICAL: Output MUST be VALID JSON (no markdown, no extra text before/after JSON).",
-            "FIRST call proposer_brief_tool() to get validation_summary + candidate_library + score_presets.",
+            "FIRST call proposer_brief_tool() to get validation_summary + candidate_library + pattern_analyst_insights.",
+            "Use <think>...</think> to reason about model quality spread, n_unique_winners, and pattern_analyst_insights before selecting.",
             "Then output ONLY a JSON object with EXACTLY these keys:",
-            "  \"selected_names\": [], \"params_overrides\": {}, \"score_preset\": \"\", \"force_debate\": false, \"debate_margin\": 0.02, \"rationale\": \"\"",
-            "Valid JSON example: {\"selected_names\": [\"baseline_mean\", \"topk_mean_per_horizon_k5\"], \"params_overrides\": {}, \"score_preset\": \"balanced\", \"force_debate\": false, \"debate_margin\": 0.02, \"rationale\": \"text\"}",
-            "Rules:",
-            "- Do not create new candidates. Select by name only.",
-            "- Do not change params.method.",
-            "- Prefer returning at least 3 candidates.",
-            "- ALWAYS return valid JSON with all 6 required keys. If uncertain: {\"selected_names\": [\"baseline_mean\"], \"params_overrides\": {}, \"score_preset\": \"balanced\", \"force_debate\": false, \"debate_margin\": 0.02, \"rationale\": \"Conservative selection\"}",
+            '  "selected_names": [], "params_overrides": {}, "score_preset": "", "force_debate": false, "debate_margin": 0.02, "rationale": ""',
+            "ANTI-BIAS RULES:",
+            "- MUST propose at least 3 candidates.",
+            "- MUST include at least 1 candidate of type selection, weighted, or stacking.",
+            "- Do NOT default to baseline_mean alone unless it is provably the best by RMSE from tool data.",
+            "- Use pattern_analyst_insights.recommended_method_hint to bias your selection.",
+            "- Set top_k explicitly for any candidate with top_k in params.",
+            "- In rationale: cite at least 2 numbers from the tool output.",
+            'If truly uncertain: {"selected_names": ["topk_mean_per_horizon_k3", "inverse_rmse_weights_k3_sh0.25", "baseline_mean"], "params_overrides": {"topk_mean_per_horizon_k3": {"top_k": 3}}, "score_preset": "balanced", "force_debate": false, "debate_margin": 0.02, "rationale": "Default selection"}',
         ],
         markdown=False,
         debug_mode=debug,

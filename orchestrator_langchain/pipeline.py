@@ -18,6 +18,7 @@ def run_langchain_pipeline(
     debate_margin: float = 0.02,
 ) -> Dict[str, Any]:
     # Monkey-patch the agent factories used inside orchestrator.pipeline
+    _base.create_pattern_analyst_agent = lc_agents.create_pattern_analyst_agent
     _base.create_proposer_agent = lc_agents.create_proposer_agent
     _base.create_skeptic_agent = lc_agents.create_skeptic_agent
     _base.create_statistician_agent = lc_agents.create_statistician_agent

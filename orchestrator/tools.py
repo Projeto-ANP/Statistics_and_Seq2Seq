@@ -54,21 +54,56 @@ def proposer_brief_tool() -> str:
     universe = _candidate_universe_from_summary(summary)
     recommended = _suggest_candidates_from_summary(summary, max_candidates=int(max_candidates))
 
+    def _recommend_score_preset(s: Dict[str, Any]) -> Dict[str, Any]:
+        models_agg = s.get("models", [])
+        pocid_vals = [m["POCID"] for m in models_agg if isinstance(m, dict) and m.get("POCID") is not None]
+        rmse_vals  = [m["RMSE"]  for m in models_agg if isinstance(m, dict) and m.get("RMSE")  is not None]
+        smape_vals = [m["SMAPE"] for m in models_agg if isinstance(m, dict) and m.get("SMAPE") is not None]
+        avg_pocid   = float(np.nanmean(pocid_vals)) if pocid_vals else 50.0
+        rmse_spread = (max(rmse_vals) - min(rmse_vals)) / (min(rmse_vals) + 1e-8) if len(rmse_vals) >= 2 else 0.0
+        avg_smape   = float(np.nanmean(smape_vals)) if smape_vals else 0.0
+        if avg_pocid < 45:
+            preset, reason = "direction_focus", f"avg POCID={avg_pocid:.1f} < 45 (low directional accuracy)"
+        elif rmse_spread > 0.5:
+            preset, reason = "rmse_focus", f"RMSE spread={rmse_spread:.2f} > 0.5 (high model dispersion)"
+        elif avg_smape > 0.3:
+            preset, reason = "robust_smape", f"avg SMAPE={avg_smape:.3f} > 0.3 (scale-sensitive series)"
+        else:
+            preset, reason = "balanced", "metrics well-balanced across all dimensions"
+        return {"recommended_preset": preset, "reason": reason, "available_presets": list(SCORE_PRESETS.keys())}
+
+    preset_recommendation = _recommend_score_preset(summary)
+
     out = {
         "validation_summary": summary,
         "recommended_knobs": recommended,
         "candidate_library": universe,
         "recommended_candidates": recommended,
         "score_presets": SCORE_PRESETS,
+        "score_preset_recommendation": preset_recommendation,
         "output_schema": {
             "selected_names": ["baseline_mean"],
             "params_overrides": {"topk_mean_per_horizon_k3": {"top_k": 3}},
-            "score_preset": "balanced",
+            "score_preset": preset_recommendation["recommended_preset"],
             "force_debate": False,
             "debate_margin": 0.02,
             "rationale": "short text",
         },
     }
+
+    # Inject pattern analyst insights if the PatternAnalyst ran before the Proposer
+    pattern_insights = get_context("pattern_analyst_cot_context", {})
+    if isinstance(pattern_insights, dict) and pattern_insights:
+        out["pattern_analyst_insights"] = {
+            "trend_champions": pattern_insights.get("rankings", {}).get("trend_champions", []),
+            "seasonality_champions": pattern_insights.get("rankings", {}).get("seasonality_champions", []),
+            "overall_rmse_champions": pattern_insights.get("rankings", {}).get("overall_rmse_champions", []),
+            "early_horizon_specialists": pattern_insights.get("rankings", {}).get("early_horizon_specialists", []),
+            "late_horizon_specialists": pattern_insights.get("rankings", {}).get("late_horizon_specialists", []),
+            "model_tiers": pattern_insights.get("model_tiers", {}),
+            "insights": pattern_insights.get("insights", {}),
+            "ytrue_trend_directions": pattern_insights.get("ytrue_decomposition", {}).get("per_fold_trend_direction", []),
+        }
 
     set_context("orchestrator_proposer_brief", out)
     tools_called = get_context("tools_called", [])
@@ -391,6 +426,19 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
     )
 
     if high_disagreement:
+        _add(
+            {
+                "name": "dba_combination",
+                "type": "baseline",
+                "description": "DTW Barycenter Averaging - centroid sequence minimising average DTW distance; ref: Petitjean et al. (2011). Robust when model predictions have phase shifts or non-linear divergence.",
+                "formula": "y_hat = argmin_y \u03a3_m DTW(y_m, y)^2 via DBA algorithm",
+                "learns_weights": False,
+                "constraints": "No leakage (no fitting); uses tslearn.barycenters.dtw_barycenter_averaging",
+                "risks": ["Computationally heavier than mean", "May smooth phase-shifted peaks"],
+                "validation_plan": "rolling",
+                "params": {"method": "dba", "top_k": int(min(top_k, n_models)), "max_iter": 30},
+            }
+        )
         _add(
             {
                 "name": "robust_median",
@@ -778,6 +826,20 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
 
     _add(
         {
+            "name": "dba_combination",
+            "type": "baseline",
+            "description": "DTW Barycenter Averaging - centroid sequence minimising average DTW distance; ref: Petitjean et al. (2011). Robust when model predictions have phase shifts or non-linear divergence.",
+            "formula": "y_hat = argmin_y \u03a3_m DTW(y_m, y)^2 via DBA algorithm",
+            "learns_weights": False,
+            "constraints": "No leakage (no fitting); uses tslearn.barycenters.dtw_barycenter_averaging",
+            "risks": ["Computationally heavier than mean", "May smooth phase-shifted peaks"],
+            "validation_plan": "rolling",
+            "params": {"method": "dba", "top_k": int(max(2, min(int(round(np.sqrt(max(n_models, 1)))), n_models))), "max_iter": 30},
+        }
+    )
+
+    _add(
+        {
             "name": "best_single_by_validation",
             "type": "selection",
             "description": "Select single best model by past validation RMSE (rolling)",
@@ -929,7 +991,237 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @tool
-def list_candidate_schema_tool() -> str:
+def build_fold_cot_context_tool() -> str:
+    """Build chain-of-thought context from validation folds ONLY (val1, val2, val3).
+
+    IMPORTANT: This tool NEVER accesses final test values — only validation folds with known y_true.
+
+    For each validation fold, computes per-model:
+    - Linear trend slope/intercept (via polyfit degree=1)
+    - Detrended residuals as seasonality proxy
+    - trend_slope_error: |model_slope - ytrue_slope| / (|ytrue_slope| + eps)  [lower = better]
+    - seasonality_corr: Pearson correlation of detrended residuals  [higher = better]
+    - per-horizon MAE for early vs late horizon analysis
+
+    Outputs compact JSON for LLM chain-of-thought reasoning about model selection and
+    combination method choice.
+    """
+    all_validations = get_context("all_validations")
+    if not all_validations:
+        return json.dumps({"error": "all_validations not found in context"})
+
+    predictions_list = all_validations.get("predictions", [])
+    test_list = all_validations.get("test", [])
+    n_windows = min(len(predictions_list), len(test_list))
+    if n_windows == 0:
+        return json.dumps({"error": "No validation windows found"})
+
+    first_window = predictions_list[0]
+    model_names: List[str] = list(first_window.keys()) if isinstance(first_window, dict) else []
+    if not model_names:
+        return json.dumps({"error": "No models found in validation data"})
+
+    # Determine consistent horizon
+    horizons: List[int] = []
+    for i in range(n_windows):
+        y_t = test_list[i]
+        w_preds = predictions_list[i]
+        if y_t is None:
+            continue
+        lengths = [len(y_t)]
+        for m in model_names:
+            if m in w_preds and w_preds[m] is not None:
+                lengths.append(len(w_preds[m]))
+        horizons.append(min(lengths) if lengths else 0)
+    horizon = min([h for h in horizons if h > 0], default=0)
+    if horizon <= 0:
+        return json.dumps({"error": "Could not determine horizon"})
+
+    # Stack all data: y_true (n_windows, horizon), y_preds (n_windows, n_models, horizon)
+    y_true = np.full((n_windows, horizon), np.nan, dtype=float)
+    y_preds_arr = np.full((n_windows, len(model_names), horizon), np.nan, dtype=float)
+    for i in range(n_windows):
+        y_t = np.asarray(test_list[i], dtype=float)[:horizon]
+        y_true[i, :len(y_t)] = y_t
+        w_preds = predictions_list[i]
+        for j, m in enumerate(model_names):
+            if m not in w_preds or w_preds[m] is None:
+                continue
+            arr = np.asarray(w_preds[m], dtype=float)[:horizon]
+            y_preds_arr[i, j, :len(arr)] = arr
+
+    t_idx = np.arange(horizon, dtype=float)
+    eps = 1e-8
+
+    def _linear_decompose(series: np.ndarray) -> tuple:
+        valid = ~np.isnan(series)
+        if np.sum(valid) < 2:
+            slope, intercept = 0.0, float(np.nanmean(series))
+        else:
+            p = np.polyfit(t_idx[valid], series[valid], 1)
+            slope, intercept = float(p[0]), float(p[1])
+        trend_line = slope * t_idx + intercept
+        residuals = series - trend_line
+        return slope, intercept, trend_line, residuals
+
+    def _pearson(a: np.ndarray, b: np.ndarray) -> float:
+        valid = ~(np.isnan(a) | np.isnan(b))
+        if np.sum(valid) < 2:
+            return 0.0
+        av = a[valid] - np.mean(a[valid])
+        bv = b[valid] - np.mean(b[valid])
+        denom = np.std(av) * np.std(bv)
+        if denom < 1e-10:
+            return 0.0
+        return float(np.dot(av, bv) / (len(av) * denom))
+
+    # ── Per-model aggregates across all validation folds ──────────────────────
+    model_agg: Dict[str, Any] = {}
+    for j, m in enumerate(model_names):
+        slope_errors, seas_corrs, rmse_vals = [], [], []
+        per_h_errors: List[List[float]] = [[] for _ in range(horizon)]
+
+        for i in range(n_windows):
+            yt = y_true[i, :]
+            preds = y_preds_arr[i, j, :]
+            if np.all(np.isnan(preds)):
+                continue
+            yt_slope, _, _, yt_resid = _linear_decompose(yt)
+            m_slope, _, _, m_resid = _linear_decompose(preds)
+            slope_errors.append(abs(m_slope - yt_slope) / (abs(yt_slope) + eps))
+            seas_corrs.append(_pearson(m_resid, yt_resid))
+            valid = ~(np.isnan(preds) | np.isnan(yt))
+            if np.any(valid):
+                rmse_vals.append(float(np.sqrt(np.mean((preds[valid] - yt[valid]) ** 2))))
+            for h in range(horizon):
+                if not np.isnan(preds[h]) and not np.isnan(yt[h]):
+                    per_h_errors[h].append(float(abs(preds[h] - yt[h])))
+
+        ph_avg = [
+            round(float(np.mean(errs)), 4) if errs else None
+            for errs in per_h_errors
+        ]
+        n_early = max(1, horizon // 3)
+        n_late = max(1, horizon // 3)
+        early_mae = float(np.nanmean([v for v in ph_avg[:n_early] if v is not None])) if any(v is not None for v in ph_avg[:n_early]) else float("nan")
+        late_mae = float(np.nanmean([v for v in ph_avg[-n_late:] if v is not None])) if any(v is not None for v in ph_avg[-n_late:]) else float("nan")
+
+        model_agg[m] = {
+            "avg_trend_slope_err": round(float(np.mean(slope_errors)), 4) if slope_errors else None,
+            "avg_seas_corr": round(float(np.mean(seas_corrs)), 4) if seas_corrs else None,
+            "avg_rmse": round(float(np.mean(rmse_vals)), 4) if rmse_vals else None,
+            "early_horizon_mae": round(early_mae, 4) if np.isfinite(early_mae) else None,
+            "late_horizon_mae": round(late_mae, 4) if np.isfinite(late_mae) else None,
+        }
+
+    # ── Concatenated y_true decomposition (across folds) ─────────────────────
+    y_true_concat = y_true.reshape(-1)  # flatten all folds
+    t_concat = np.arange(len(y_true_concat), dtype=float)
+    valid_yt = ~np.isnan(y_true_concat)
+    if np.sum(valid_yt) >= 2:
+        p_yt = np.polyfit(t_concat[valid_yt], y_true_concat[valid_yt], 1)
+        yt_trend_concat = np.polyval(p_yt, t_concat)
+        yt_seas_concat = y_true_concat - yt_trend_concat
+    else:
+        yt_trend_concat = np.zeros_like(y_true_concat)
+        yt_seas_concat = y_true_concat.copy()
+        p_yt = [0.0, 0.0]
+
+    # Per-fold trend direction
+    per_fold_slope = []
+    per_fold_direction = []
+    for i in range(n_windows):
+        s, _, _, _ = _linear_decompose(y_true[i, :])
+        per_fold_slope.append(round(s, 6))
+        per_fold_direction.append("up" if s > eps else ("down" if s < -eps else "flat"))
+
+    # ── Rankings ──────────────────────────────────────────────────────────────
+    def _rank(key: str, reverse: bool = False) -> List[str]:
+        valid = [(m, model_agg[m][key]) for m in model_names if model_agg[m].get(key) is not None and not np.isnan(model_agg[m][key])]
+        valid.sort(key=lambda x: x[1], reverse=reverse)
+        return [m for m, _ in valid]
+
+    rmse_rank = _rank("avg_rmse")
+    trend_rank = _rank("avg_trend_slope_err")  # lower = better
+    seas_rank = _rank("avg_seas_corr", reverse=True)  # higher = better
+    early_rank = _rank("early_horizon_mae")
+    late_rank = _rank("late_horizon_mae")
+
+    n_tier = max(1, len(rmse_rank) // 3)
+    tier1 = rmse_rank[:n_tier]
+    tier2 = rmse_rank[n_tier: 2 * n_tier]
+    tier3 = rmse_rank[2 * n_tier:]
+
+    # ── Insights ──────────────────────────────────────────────────────────────
+    rmse_vals_list = [model_agg[m]["avg_rmse"] for m in model_names if model_agg[m].get("avg_rmse") is not None]
+    if len(rmse_vals_list) >= 2:
+        rmse_spread = (max(rmse_vals_list) - min(rmse_vals_list)) / (min(rmse_vals_list) + eps)
+    else:
+        rmse_spread = 0.0
+
+    seas_vals = [model_agg[m]["avg_seas_corr"] for m in model_names if model_agg[m].get("avg_seas_corr") is not None]
+    seas_var = (max(seas_vals) - min(seas_vals)) if len(seas_vals) >= 2 else 0.0
+    high_disagreement_flag = rmse_spread > 0.3
+    high_seas_variance = seas_var > 0.3
+
+    if high_disagreement_flag and high_seas_variance:
+        method_hint, weighting_hint = "dba_combination", "mixed"
+    elif len(set(trend_rank[:3])) < 3 and not high_disagreement_flag:
+        method_hint, weighting_hint = "best_single_by_validation", "trend"
+    elif high_seas_variance:
+        method_hint, weighting_hint = "inverse_rmse_weights", "seasonality"
+    elif rmse_spread > 0.3:
+        method_hint, weighting_hint = "topk_mean_per_horizon", "error"
+    else:
+        method_hint, weighting_hint = "topk_mean_per_horizon", "error"
+
+    out = {
+        "n_folds_analyzed": n_windows,
+        "horizon": horizon,
+        "n_models": len(model_names),
+        "ytrue_decomposition": {
+            "per_fold_slope": per_fold_slope,
+            "per_fold_trend_direction": per_fold_direction,
+            "overall_trend_slope": round(float(p_yt[0]), 6),
+            "concatenated_trend": [round(float(v), 4) if not np.isnan(v) else None for v in yt_trend_concat.tolist()],
+            "concatenated_seasonality": [round(float(v), 4) if not np.isnan(v) else None for v in yt_seas_concat.tolist()],
+            "seasonality_amplitude": round(float(np.nanstd(yt_seas_concat)), 4),
+        },
+        "model_scores": model_agg,
+        "rankings": {
+            "trend_champions": trend_rank[:5],
+            "seasonality_champions": seas_rank[:5],
+            "overall_rmse_champions": rmse_rank[:5],
+            "early_horizon_specialists": early_rank[:3],
+            "late_horizon_specialists": late_rank[:3],
+            "worst_by_rmse": rmse_rank[-3:] if len(rmse_rank) >= 3 else rmse_rank,
+        },
+        "model_tiers": {
+            "tier1_best": tier1,
+            "tier2_mid": tier2,
+            "tier3_worst": tier3,
+        },
+        "insights": {
+            "rmse_spread_ratio": round(rmse_spread, 4),
+            "seasonality_corr_variance": round(seas_var, 4),
+            "high_model_disagreement": high_disagreement_flag,
+            "high_seasonality_variance": high_seas_variance,
+            "recommended_method_hint": method_hint,
+            "recommended_weighting_basis": weighting_hint,
+        },
+    }
+
+    set_context("pattern_analyst_cot_context", out)
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("build_fold_cot_context_tool")
+    set_context("tools_called", tools_called)
+
+    return json.dumps(out, indent=2)
+
+
+
     """Returns the strict JSON schema expected for candidate strategies."""
 
     schema = {
