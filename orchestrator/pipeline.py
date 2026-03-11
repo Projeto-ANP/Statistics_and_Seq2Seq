@@ -176,10 +176,16 @@ def _validate_actions_against_universe(
         cand_override_keys = [k for k in override_keys if k in allowed_override]
 
     if still_unknown:
-        raise RuntimeError(
-            f"{who} tried to override params for candidates not in current/add set or universe: {still_unknown}. "
-            f"Current candidates: {sorted(current_set)} (hard-stop)"
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            f"{who}: params_overrides references names not found anywhere in the universe "
+            f"(likely hallucinated by the LLM): {still_unknown}. "
+            f"These overrides will be silently dropped."
         )
+        # Drop the unknown keys so they don't pollute the override dict
+        overrides_raw = {k: v for k, v in overrides_raw.items() if str(k) not in still_unknown}
+        override_keys = [k for k in override_keys if k not in still_unknown]
+        cand_override_keys = [k for k in override_keys if k in allowed_override]
 
     # Normalize overrides: allow either per-candidate overrides or a flat "knob override" that
     # applies the same params to every candidate in current/add set. This prevents false hard-stops
@@ -747,9 +753,25 @@ def run_llm_pipeline(
     n_models = len(models_available) if isinstance(models_available, list) and models_available else int(summary.get("n_models", 1) or 1)
 
     proposer_candidate_names = [str(c.get("name")) for c in candidates_payload.get("candidates", []) if isinstance(c, dict) and c.get("name")]
+
+    # Pre-filter params_overrides: drop any keys that reference names the LLM hallucinated
+    # (i.e. names that were already stripped from selected_names because they aren't in the
+    # candidate library).  This prevents a hard-stop inside _validate_actions_against_universe
+    # and emits a clear, actionable log message instead.
+    _raw_overrides: Dict[str, Any] = pr_obj.get("params_overrides") or {}
+    _dropped_override_keys = [
+        k for k in _raw_overrides if str(k) not in by_name and str(k) not in ALLOWED_PARAM_EDITS
+    ]
+    if _dropped_override_keys:
+        _log(
+            f"[ORCH|LLM] Proposer params_overrides references names not in candidate_library "
+            f"(will be ignored): {_dropped_override_keys}"
+        )
+        _raw_overrides = {k: v for k, v in _raw_overrides.items() if k not in _dropped_override_keys}
+
     proposer_actions = _validate_actions_against_universe(
-        {"add_names": [], "remove_names": [], "params_overrides": pr_obj.get("params_overrides", {})},
-        proposer_candidate_names,
+        {"add_names": [], "remove_names": [], "params_overrides": _raw_overrides},
+        universe_names,  # full library so auto-promotion works for real candidates
         current_names=proposer_candidate_names,
         who="Proposer",
     )
