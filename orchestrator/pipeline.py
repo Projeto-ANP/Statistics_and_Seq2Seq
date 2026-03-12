@@ -613,7 +613,7 @@ def run_llm_pipeline(
     eval_config = {
         "rolling": {"mode": rolling_mode, "train_window": int(train_window)},
         "metrics": {"mape_zero": "skip", "mape_epsilon": 1e-8},
-        "score": {"a_rmse": 0.4, "b_smape": 0.3, "c_mape": 0.3, "d_pocid": 0.1},
+        "score": {"a_rmse": 0.2, "b_smape": 0.4, "c_mape": 0.3, "d_pocid": 0.1},
     }
 
     # ── Step 0: PatternAnalyst — fold decomposition CoT (non-fatal) ───────────

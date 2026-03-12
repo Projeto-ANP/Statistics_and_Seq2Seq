@@ -664,12 +664,12 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
-    dataset = "ANP_MONTHLY"
+    dataset = "ETTH1"
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
         use_llm=True,
-        ollama_model="mychen76/qwen3_cline_roocode:14b",
+        ollama_model="qwen3.5:9b",
         debug=False,
         rolling="expanding",
         train_window=5,

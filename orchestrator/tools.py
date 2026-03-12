@@ -95,14 +95,12 @@ def proposer_brief_tool() -> str:
     pattern_insights = get_context("pattern_analyst_cot_context", {})
     if isinstance(pattern_insights, dict) and pattern_insights:
         out["pattern_analyst_insights"] = {
-            "trend_champions": pattern_insights.get("rankings", {}).get("trend_champions", []),
-            "seasonality_champions": pattern_insights.get("rankings", {}).get("seasonality_champions", []),
-            "overall_rmse_champions": pattern_insights.get("rankings", {}).get("overall_rmse_champions", []),
-            "early_horizon_specialists": pattern_insights.get("rankings", {}).get("early_horizon_specialists", []),
-            "late_horizon_specialists": pattern_insights.get("rankings", {}).get("late_horizon_specialists", []),
+            "rmse_rankings": pattern_insights.get("rmse_rankings", {}),
+            "model_metrics": pattern_insights.get("model_metrics", {}),
+            "model_stl_decomposition": pattern_insights.get("model_stl_decomposition", {}),
+            "ytrue_stl_decomposition": pattern_insights.get("ytrue_stl_decomposition", {}),
             "model_tiers": pattern_insights.get("model_tiers", {}),
             "insights": pattern_insights.get("insights", {}),
-            "ytrue_trend_directions": pattern_insights.get("ytrue_decomposition", {}).get("per_fold_trend_direction", []),
         }
 
     set_context("orchestrator_proposer_brief", out)
@@ -997,11 +995,12 @@ def build_fold_cot_context_tool() -> str:
     IMPORTANT: This tool NEVER accesses final test values — only validation folds with known y_true.
 
     For each validation fold, computes per-model:
-    - Linear trend slope/intercept (via polyfit degree=1)
-    - Detrended residuals as seasonality proxy
-    - trend_slope_error: |model_slope - ytrue_slope| / (|ytrue_slope| + eps)  [lower = better]
-    - seasonality_corr: Pearson correlation of detrended residuals  [higher = better]
-    - per-horizon MAE for early vs late horizon analysis
+    - STL decomposition (Seasonal-Trend decomposition using LOESS) for trend and seasonality
+    - Raw trend values and seasonal values for LLM interpretation
+    - RMSE metrics for early vs late horizon analysis (RMSE, SMAPE, MAPE, POCID only)
+
+    The LLM will analyze the raw decomposition values and decide which models are
+    trend_champions and seasonality_champions based on its interpretation.
 
     Outputs compact JSON for LLM chain-of-thought reasoning about model selection and
     combination method choice.
@@ -1053,16 +1052,61 @@ def build_fold_cot_context_tool() -> str:
     t_idx = np.arange(horizon, dtype=float)
     eps = 1e-8
 
-    def _linear_decompose(series: np.ndarray) -> tuple:
+    def _stl_decompose(series: np.ndarray, period: int = None) -> tuple:
+        """Decompose series using STL (Seasonal-Trend decomposition using LOESS).
+        
+        Returns: (trend_values, seasonal_values, residual_values)
+        For short series (< 2*period), falls back to linear detrending.
+        """
+        from statsmodels.tsa.seasonal import STL
+        
         valid = ~np.isnan(series)
-        if np.sum(valid) < 2:
-            slope, intercept = 0.0, float(np.nanmean(series))
-        else:
+        n_valid = np.sum(valid)
+        
+        # Determine period: default to horizon//2 or 2 (minimum for STL)
+        if period is None:
+            period = max(2, min(horizon // 2, n_valid // 2))
+        
+        # STL requires at least 2 full periods
+        if n_valid < 2 * period or n_valid < 4:
+            # Fallback: linear detrending
+            if n_valid < 2:
+                trend = np.full_like(series, np.nanmean(series))
+                seasonal = np.zeros_like(series)
+                residual = np.zeros_like(series)
+            else:
+                p = np.polyfit(t_idx[valid], series[valid], 1)
+                trend = np.polyval(p, t_idx)
+                seasonal = np.zeros_like(series)  # No seasonality extracted
+                residual = series - trend
+            return trend, seasonal, residual
+        
+        try:
+            # Fill NaNs temporarily for STL
+            series_filled = series.copy()
+            if np.any(~valid):
+                series_filled[~valid] = np.nanmean(series)
+            
+            stl = STL(series_filled, period=period, robust=True)
+            result = stl.fit()
+            
+            trend = result.trend
+            seasonal = result.seasonal
+            residual = result.resid
+            
+            # Restore NaNs
+            trend[~valid] = np.nan
+            seasonal[~valid] = np.nan
+            residual[~valid] = np.nan
+            
+            return trend, seasonal, residual
+        except Exception:
+            # Fallback to linear detrending if STL fails
             p = np.polyfit(t_idx[valid], series[valid], 1)
-            slope, intercept = float(p[0]), float(p[1])
-        trend_line = slope * t_idx + intercept
-        residuals = series - trend_line
-        return slope, intercept, trend_line, residuals
+            trend = np.polyval(p, t_idx)
+            seasonal = np.zeros_like(series)
+            residual = series - trend
+            return trend, seasonal, residual
 
     def _pearson(a: np.ndarray, b: np.ndarray) -> float:
         valid = ~(np.isnan(a) | np.isnan(b))
@@ -1076,81 +1120,116 @@ def build_fold_cot_context_tool() -> str:
         return float(np.dot(av, bv) / (len(av) * denom))
 
     # ── Per-model aggregates across all validation folds ──────────────────────
+    # Store raw STL decomposition values for LLM to interpret and decide champions
     model_agg: Dict[str, Any] = {}
+    model_stl_data: Dict[str, Dict[str, Any]] = {}  # Raw STL values for LLM interpretation
+    
     for j, m in enumerate(model_names):
-        slope_errors, seas_corrs, rmse_vals = [], [], []
-        per_h_errors: List[List[float]] = [[] for _ in range(horizon)]
+        rmse_vals, smape_vals = [], []
+        trend_corrs, seas_corrs = [], []  # Correlation with y_true components
+        per_h_sq_errors: List[List[float]] = [[] for _ in range(horizon)]
+        
+        # Store raw trend/seasonal values per fold for LLM analysis
+        model_trends: List[List[float]] = []
+        model_seasonals: List[List[float]] = []
 
         for i in range(n_windows):
             yt = y_true[i, :]
             preds = y_preds_arr[i, j, :]
             if np.all(np.isnan(preds)):
                 continue
-            yt_slope, _, _, yt_resid = _linear_decompose(yt)
-            m_slope, _, _, m_resid = _linear_decompose(preds)
-            slope_errors.append(abs(m_slope - yt_slope) / (abs(yt_slope) + eps))
-            seas_corrs.append(_pearson(m_resid, yt_resid))
+            
+            # STL decomposition for y_true and model predictions
+            yt_trend, yt_seasonal, _ = _stl_decompose(yt)
+            m_trend, m_seasonal, _ = _stl_decompose(preds)
+            
+            # Store raw values for LLM interpretation
+            model_trends.append([round(float(v), 4) if np.isfinite(v) else None for v in m_trend])
+            model_seasonals.append([round(float(v), 4) if np.isfinite(v) else None for v in m_seasonal])
+            
+            # Correlation between model's trend and y_true's trend
+            trend_corrs.append(_pearson(m_trend, yt_trend))
+            # Correlation between model's seasonality and y_true's seasonality
+            seas_corrs.append(_pearson(m_seasonal, yt_seasonal))
+            
             valid = ~(np.isnan(preds) | np.isnan(yt))
             if np.any(valid):
                 rmse_vals.append(float(np.sqrt(np.mean((preds[valid] - yt[valid]) ** 2))))
+                # SMAPE calculation
+                smape_val = float(np.mean(2 * np.abs(preds[valid] - yt[valid]) / (np.abs(preds[valid]) + np.abs(yt[valid]) + eps)))
+                smape_vals.append(smape_val)
+            
             for h in range(horizon):
                 if not np.isnan(preds[h]) and not np.isnan(yt[h]):
-                    per_h_errors[h].append(float(abs(preds[h] - yt[h])))
+                    per_h_sq_errors[h].append(float((preds[h] - yt[h]) ** 2))
+        
+        # Store raw STL data for LLM to analyze
+        model_stl_data[m] = {
+            "trend_per_fold": model_trends,
+            "seasonal_per_fold": model_seasonals,
+            "avg_trend_corr": round(float(np.mean(trend_corrs)), 4) if trend_corrs else None,
+            "avg_seasonal_corr": round(float(np.mean(seas_corrs)), 4) if seas_corrs else None,
+        }
 
-        ph_avg = [
-            round(float(np.mean(errs)), 4) if errs else None
-            for errs in per_h_errors
+        # Compute RMSE for early and late horizons (using only approved metrics)
+        ph_rmse = [
+            round(float(np.sqrt(np.mean(errs))), 4) if errs else None
+            for errs in per_h_sq_errors
         ]
         n_early = max(1, horizon // 3)
         n_late = max(1, horizon // 3)
-        early_mae = float(np.nanmean([v for v in ph_avg[:n_early] if v is not None])) if any(v is not None for v in ph_avg[:n_early]) else float("nan")
-        late_mae = float(np.nanmean([v for v in ph_avg[-n_late:] if v is not None])) if any(v is not None for v in ph_avg[-n_late:]) else float("nan")
+        early_rmse = float(np.nanmean([v for v in ph_rmse[:n_early] if v is not None])) if any(v is not None for v in ph_rmse[:n_early]) else float("nan")
+        late_rmse = float(np.nanmean([v for v in ph_rmse[-n_late:] if v is not None])) if any(v is not None for v in ph_rmse[-n_late:]) else float("nan")
 
         model_agg[m] = {
-            "avg_trend_slope_err": round(float(np.mean(slope_errors)), 4) if slope_errors else None,
-            "avg_seas_corr": round(float(np.mean(seas_corrs)), 4) if seas_corrs else None,
+            "avg_trend_corr": round(float(np.mean(trend_corrs)), 4) if trend_corrs else None,
+            "avg_seasonal_corr": round(float(np.mean(seas_corrs)), 4) if seas_corrs else None,
             "avg_rmse": round(float(np.mean(rmse_vals)), 4) if rmse_vals else None,
-            "early_horizon_mae": round(early_mae, 4) if np.isfinite(early_mae) else None,
-            "late_horizon_mae": round(late_mae, 4) if np.isfinite(late_mae) else None,
+            "avg_smape": round(float(np.mean(smape_vals)), 4) if smape_vals else None,
+            "early_horizon_rmse": round(early_rmse, 4) if np.isfinite(early_rmse) else None,
+            "late_horizon_rmse": round(late_rmse, 4) if np.isfinite(late_rmse) else None,
         }
 
-    # ── Concatenated y_true decomposition (across folds) ─────────────────────
+    # ── Concatenated y_true decomposition using STL (across folds) ────────────
     y_true_concat = y_true.reshape(-1)  # flatten all folds
-    t_concat = np.arange(len(y_true_concat), dtype=float)
-    valid_yt = ~np.isnan(y_true_concat)
-    if np.sum(valid_yt) >= 2:
-        p_yt = np.polyfit(t_concat[valid_yt], y_true_concat[valid_yt], 1)
-        yt_trend_concat = np.polyval(p_yt, t_concat)
-        yt_seas_concat = y_true_concat - yt_trend_concat
-    else:
-        yt_trend_concat = np.zeros_like(y_true_concat)
-        yt_seas_concat = y_true_concat.copy()
-        p_yt = [0.0, 0.0]
+    
+    # Apply STL to concatenated y_true for overall trend/seasonality
+    yt_trend_concat, yt_seas_concat, _ = _stl_decompose(y_true_concat)
 
-    # Per-fold trend direction
-    per_fold_slope = []
-    per_fold_direction = []
+    # Per-fold STL decomposition for y_true
+    ytrue_stl_per_fold: List[Dict[str, Any]] = []
     for i in range(n_windows):
-        s, _, _, _ = _linear_decompose(y_true[i, :])
-        per_fold_slope.append(round(s, 6))
-        per_fold_direction.append("up" if s > eps else ("down" if s < -eps else "flat"))
+        yt_fold = y_true[i, :]
+        trend_fold, seas_fold, _ = _stl_decompose(yt_fold)
+        
+        # Determine trend direction from trend component
+        trend_diff = trend_fold[-1] - trend_fold[0] if len(trend_fold) > 1 else 0.0
+        direction = "up" if trend_diff > eps else ("down" if trend_diff < -eps else "flat")
+        
+        ytrue_stl_per_fold.append({
+            "fold": i,
+            "trend_values": [round(float(v), 4) if np.isfinite(v) else None for v in trend_fold],
+            "seasonal_values": [round(float(v), 4) if np.isfinite(v) else None for v in seas_fold],
+            "trend_direction": direction,
+            "trend_strength": round(float(np.nanstd(trend_fold)), 4),
+            "seasonal_amplitude": round(float(np.nanstd(seas_fold)), 4),
+        })
 
-    # ── Rankings ──────────────────────────────────────────────────────────────
-    def _rank(key: str, reverse: bool = False) -> List[str]:
-        valid = [(m, model_agg[m][key]) for m in model_names if model_agg[m].get(key) is not None and not np.isnan(model_agg[m][key])]
-        valid.sort(key=lambda x: x[1], reverse=reverse)
-        return [m for m, _ in valid]
+    # ── Rankings by RMSE only (approved metric) ───────────────────────────────
+    # LLM will decide trend/seasonality champions from raw STL data
+    def _rank(key: str, reverse: bool = False) -> List[Dict[str, Any]]:
+        items = [(m, model_agg[m][key]) for m in model_names if model_agg[m].get(key) is not None and not np.isnan(model_agg[m][key])]
+        items.sort(key=lambda x: x[1], reverse=reverse)
+        return [{"model": m, key: round(v, 4)} for m, v in items]
 
     rmse_rank = _rank("avg_rmse")
-    trend_rank = _rank("avg_trend_slope_err")  # lower = better
-    seas_rank = _rank("avg_seas_corr", reverse=True)  # higher = better
-    early_rank = _rank("early_horizon_mae")
-    late_rank = _rank("late_horizon_mae")
+    early_rank = _rank("early_horizon_rmse")
+    late_rank = _rank("late_horizon_rmse")
 
     n_tier = max(1, len(rmse_rank) // 3)
-    tier1 = rmse_rank[:n_tier]
-    tier2 = rmse_rank[n_tier: 2 * n_tier]
-    tier3 = rmse_rank[2 * n_tier:]
+    tier1 = [r["model"] for r in rmse_rank[:n_tier]]
+    tier2 = [r["model"] for r in rmse_rank[n_tier: 2 * n_tier]]
+    tier3 = [r["model"] for r in rmse_rank[2 * n_tier:]]
 
     # ── Insights ──────────────────────────────────────────────────────────────
     rmse_vals_list = [model_agg[m]["avg_rmse"] for m in model_names if model_agg[m].get("avg_rmse") is not None]
@@ -1159,39 +1238,26 @@ def build_fold_cot_context_tool() -> str:
     else:
         rmse_spread = 0.0
 
-    seas_vals = [model_agg[m]["avg_seas_corr"] for m in model_names if model_agg[m].get("avg_seas_corr") is not None]
-    seas_var = (max(seas_vals) - min(seas_vals)) if len(seas_vals) >= 2 else 0.0
+    seas_corr_vals = [model_agg[m]["avg_seasonal_corr"] for m in model_names if model_agg[m].get("avg_seasonal_corr") is not None]
+    seas_var = (max(seas_corr_vals) - min(seas_corr_vals)) if len(seas_corr_vals) >= 2 else 0.0
     high_disagreement_flag = rmse_spread > 0.3
     high_seas_variance = seas_var > 0.3
-
-    if high_disagreement_flag and high_seas_variance:
-        method_hint, weighting_hint = "dba_combination", "mixed"
-    elif len(set(trend_rank[:3])) < 3 and not high_disagreement_flag:
-        method_hint, weighting_hint = "best_single_by_validation", "trend"
-    elif high_seas_variance:
-        method_hint, weighting_hint = "inverse_rmse_weights", "seasonality"
-    elif rmse_spread > 0.3:
-        method_hint, weighting_hint = "topk_mean_per_horizon", "error"
-    else:
-        method_hint, weighting_hint = "topk_mean_per_horizon", "error"
 
     out = {
         "n_folds_analyzed": n_windows,
         "horizon": horizon,
         "n_models": len(model_names),
-        "ytrue_decomposition": {
-            "per_fold_slope": per_fold_slope,
-            "per_fold_trend_direction": per_fold_direction,
-            "overall_trend_slope": round(float(p_yt[0]), 6),
-            "concatenated_trend": [round(float(v), 4) if not np.isnan(v) else None for v in yt_trend_concat.tolist()],
-            "concatenated_seasonality": [round(float(v), 4) if not np.isnan(v) else None for v in yt_seas_concat.tolist()],
-            "seasonality_amplitude": round(float(np.nanstd(yt_seas_concat)), 4),
+        "decomposition_method": "STL (Seasonal-Trend decomposition using LOESS)",
+        "ytrue_stl_decomposition": {
+            "per_fold": ytrue_stl_per_fold,
+            "concatenated_trend": [round(float(v), 4) if np.isfinite(v) else None for v in yt_trend_concat],
+            "concatenated_seasonality": [round(float(v), 4) if np.isfinite(v) else None for v in yt_seas_concat],
+            "overall_seasonal_amplitude": round(float(np.nanstd(yt_seas_concat)), 4),
         },
-        "model_scores": model_agg,
-        "rankings": {
-            "trend_champions": trend_rank[:5],
-            "seasonality_champions": seas_rank[:5],
-            "overall_rmse_champions": rmse_rank[:5],
+        "model_stl_decomposition": model_stl_data,
+        "model_metrics": model_agg,
+        "rmse_rankings": {
+            "overall": rmse_rank[:5],
             "early_horizon_specialists": early_rank[:3],
             "late_horizon_specialists": late_rank[:3],
             "worst_by_rmse": rmse_rank[-3:] if len(rmse_rank) >= 3 else rmse_rank,
@@ -1203,11 +1269,14 @@ def build_fold_cot_context_tool() -> str:
         },
         "insights": {
             "rmse_spread_ratio": round(rmse_spread, 4),
-            "seasonality_corr_variance": round(seas_var, 4),
+            "seasonal_corr_variance": round(seas_var, 4),
             "high_model_disagreement": high_disagreement_flag,
             "high_seasonality_variance": high_seas_variance,
-            "recommended_method_hint": method_hint,
-            "recommended_weighting_basis": weighting_hint,
+        },
+        "llm_decision_required": {
+            "trend_champion": "Analyze model_stl_decomposition.avg_trend_corr to decide which model best captures y_true trend",
+            "seasonality_champion": "Analyze model_stl_decomposition.avg_seasonal_corr to decide which model best captures y_true seasonality",
+            "recommended_method": "Based on insights and model performance, decide the best combination method",
         },
     }
 
