@@ -85,6 +85,7 @@ def plot_combination_results(dataset_name, combinations_to_plot, output_dir="plo
 
 
 if __name__ == "__main__":
-    combinations_to_plot = ["mean", "dba", "median", "orchestrator_llm_v3_ade"]
-    dataset_name = "ANP_MONTHLY"
+    combinations_to_plot = ["mean", "dba", "median", "orchestrator_llm_v1_qwen3.5"]
+    dataset_name = "ETTH1"
     plot_combination_results(dataset_name, combinations_to_plot)
+    

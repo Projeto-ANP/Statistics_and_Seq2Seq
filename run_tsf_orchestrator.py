@@ -669,7 +669,7 @@ if __name__ == "__main__":
         models,
         dataset=dataset,
         use_llm=True,
-        ollama_model="qwen3.5:9b",
+        ollama_model="mychen76/qwen3_cline_roocode:14b",
         debug=False,
         rolling="expanding",
         train_window=5,

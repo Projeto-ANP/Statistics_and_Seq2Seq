@@ -101,6 +101,12 @@ def proposer_brief_tool() -> str:
             "ytrue_stl_decomposition": pattern_insights.get("ytrue_stl_decomposition", {}),
             "model_tiers": pattern_insights.get("model_tiers", {}),
             "insights": pattern_insights.get("insights", {}),
+            "pattern_rankings": pattern_insights.get("pattern_rankings", {}),
+            "pattern_recommendations": pattern_insights.get("pattern_recommendations", {}),
+            "analysis_summary": pattern_insights.get("analysis_summary", ""),
+            "trend_champion": pattern_insights.get("trend_champion"),
+            "seasonality_champion": pattern_insights.get("seasonality_champion"),
+            "recommended_method_hint": pattern_insights.get("recommended_method_hint"),
         }
 
     set_context("orchestrator_proposer_brief", out)
@@ -990,20 +996,14 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
 
 @tool
 def build_fold_cot_context_tool() -> str:
-    """Build chain-of-thought context from validation folds ONLY (val1, val2, val3).
+    """PatternAnalyst: analisa tendencia/sazonalidade nos folds de validacao (val1..n).
 
-    IMPORTANT: This tool NEVER accesses final test values — only validation folds with known y_true.
-
-    For each validation fold, computes per-model:
-    - STL decomposition (Seasonal-Trend decomposition using LOESS) for trend and seasonality
-    - Raw trend values and seasonal values for LLM interpretation
-    - RMSE metrics for early vs late horizon analysis (RMSE, SMAPE, MAPE, POCID only)
-
-    The LLM will analyze the raw decomposition values and decide which models are
-    trend_champions and seasonality_champions based on its interpretation.
-
-    Outputs compact JSON for LLM chain-of-thought reasoning about model selection and
-    combination method choice.
+    - Usa apenas folds de validacao (nunca dados de teste final).
+    - Calcula decomposicao STL de cada modelo e do y_true por fold.
+    - Mede correlacao de tendencia e sazonalidade entre modelo e y_true.
+    - Calcula RMSE (early/late) para robustez.
+    - Gera rankings automáticos e escolhe campeoes de tendencia e sazonalidade.
+    - Retorna JSON com recomendacoes e um resumo curto para orientar o Proposer.
     """
     all_validations = get_context("all_validations")
     if not all_validations:
@@ -1215,23 +1215,45 @@ def build_fold_cot_context_tool() -> str:
             "seasonal_amplitude": round(float(np.nanstd(seas_fold)), 4),
         })
 
-    # ── Rankings by RMSE only (approved metric) ───────────────────────────────
-    # LLM will decide trend/seasonality champions from raw STL data
+    # ── Rankings and pattern-focused scoring ─────────────────────────────────
     def _rank(key: str, reverse: bool = False) -> List[Dict[str, Any]]:
-        items = [(m, model_agg[m][key]) for m in model_names if model_agg[m].get(key) is not None and not np.isnan(model_agg[m][key])]
+        items = [
+            (m, model_agg[m][key])
+            for m in model_names
+            if model_agg[m].get(key) is not None and not np.isnan(model_agg[m][key])
+        ]
         items.sort(key=lambda x: x[1], reverse=reverse)
         return [{"model": m, key: round(v, 4)} for m, v in items]
 
     rmse_rank = _rank("avg_rmse")
     early_rank = _rank("early_horizon_rmse")
     late_rank = _rank("late_horizon_rmse")
+    trend_rank = _rank("avg_trend_corr", reverse=True)
+    seasonality_rank = _rank("avg_seasonal_corr", reverse=True)
+
+    def _pattern_score(m: str) -> Optional[float]:
+        t_corr = model_agg[m].get("avg_trend_corr")
+        s_corr = model_agg[m].get("avg_seasonal_corr")
+        if t_corr is None and s_corr is None:
+            return None
+        t_corr = 0.0 if t_corr is None or np.isnan(t_corr) else float(t_corr)
+        s_corr = 0.0 if s_corr is None or np.isnan(s_corr) else float(s_corr)
+        return 0.6 * t_corr + 0.4 * s_corr
+
+    pattern_scores = {m: _pattern_score(m) for m in model_names}
+    pattern_rank = [
+        {"model": m, "pattern_score": round(v, 4)}
+        for m, v in pattern_scores.items()
+        if v is not None and np.isfinite(v)
+    ]
+    pattern_rank.sort(key=lambda x: x["pattern_score"], reverse=True)
 
     n_tier = max(1, len(rmse_rank) // 3)
     tier1 = [r["model"] for r in rmse_rank[:n_tier]]
     tier2 = [r["model"] for r in rmse_rank[n_tier: 2 * n_tier]]
     tier3 = [r["model"] for r in rmse_rank[2 * n_tier:]]
 
-    # ── Insights ──────────────────────────────────────────────────────────────
+    # ── Insights and automatic recommendations ───────────────────────────────
     rmse_vals_list = [model_agg[m]["avg_rmse"] for m in model_names if model_agg[m].get("avg_rmse") is not None]
     if len(rmse_vals_list) >= 2:
         rmse_spread = (max(rmse_vals_list) - min(rmse_vals_list)) / (min(rmse_vals_list) + eps)
@@ -1241,7 +1263,30 @@ def build_fold_cot_context_tool() -> str:
     seas_corr_vals = [model_agg[m]["avg_seasonal_corr"] for m in model_names if model_agg[m].get("avg_seasonal_corr") is not None]
     seas_var = (max(seas_corr_vals) - min(seas_corr_vals)) if len(seas_corr_vals) >= 2 else 0.0
     high_disagreement_flag = rmse_spread > 0.3
-    high_seas_variance = seas_var > 0.3
+    high_seasonality_variance = seas_var > 0.3
+
+    trend_champion = trend_rank[0]["model"] if trend_rank else None
+    seasonality_champion = seasonality_rank[0]["model"] if seasonality_rank else None
+    pattern_top = [r["model"] for r in pattern_rank[:3]]
+
+    def _fmt(v: Optional[float]) -> str:
+        if v is None or (isinstance(v, float) and not np.isfinite(v)):
+            return "nan"
+        return f"{float(v):.3f}"
+
+    analysis_summary = (
+        f"Melhor alinhamento de tendencia: {trend_champion or 'nenhum'} (corr={_fmt(trend_rank[0]['avg_trend_corr']) if trend_rank else 'nan'}). "
+        f"Melhor sazonalidade: {seasonality_champion or 'nenhum'} (corr={_fmt(seasonality_rank[0]['avg_seasonal_corr']) if seasonality_rank else 'nan'}). "
+        f"Top padrao combinado: {', '.join(pattern_top) if pattern_top else 'n/a'}. "
+        f"Dispersao de RMSE={_fmt(rmse_spread)}; variacao de sazonalidade={_fmt(seas_var)}."
+    )
+
+    if high_disagreement_flag:
+        recommended_method_hint = "Preferir combinacoes robustas (median ou trimmed_mean) dado alto desacordo entre modelos."
+    elif high_seasonality_variance:
+        recommended_method_hint = "Dar peso extra ao campeao de sazonalidade ao combinar modelos."
+    else:
+        recommended_method_hint = "Combinar campeoes de tendencia e sazonalidade com media ponderada."
 
     out = {
         "n_folds_analyzed": n_windows,
@@ -1262,22 +1307,32 @@ def build_fold_cot_context_tool() -> str:
             "late_horizon_specialists": late_rank[:3],
             "worst_by_rmse": rmse_rank[-3:] if len(rmse_rank) >= 3 else rmse_rank,
         },
+        "pattern_rankings": {
+            "trend_corr": trend_rank,
+            "seasonality_corr": seasonality_rank,
+            "pattern_score": pattern_rank,
+        },
+        "trend_champion": trend_champion,
+        "seasonality_champion": seasonality_champion,
+        "recommended_method_hint": recommended_method_hint,
         "model_tiers": {
             "tier1_best": tier1,
             "tier2_mid": tier2,
             "tier3_worst": tier3,
         },
+        "pattern_recommendations": {
+            "trend_champion": trend_champion,
+            "seasonality_champion": seasonality_champion,
+            "pattern_top": pattern_top,
+            "recommended_method_hint": recommended_method_hint,
+        },
         "insights": {
             "rmse_spread_ratio": round(rmse_spread, 4),
             "seasonal_corr_variance": round(seas_var, 4),
             "high_model_disagreement": high_disagreement_flag,
-            "high_seasonality_variance": high_seas_variance,
+            "high_seasonality_variance": high_seasonality_variance,
         },
-        "llm_decision_required": {
-            "trend_champion": "Analyze model_stl_decomposition.avg_trend_corr to decide which model best captures y_true trend",
-            "seasonality_champion": "Analyze model_stl_decomposition.avg_seasonal_corr to decide which model best captures y_true seasonality",
-            "recommended_method": "Based on insights and model performance, decide the best combination method",
-        },
+        "analysis_summary": analysis_summary,
     }
 
     set_context("pattern_analyst_cot_context", out)
@@ -1288,27 +1343,6 @@ def build_fold_cot_context_tool() -> str:
     set_context("tools_called", tools_called)
 
     return json.dumps(out, indent=2)
-
-
-
-    """Returns the strict JSON schema expected for candidate strategies."""
-
-    schema = {
-        "candidates": [
-            {
-                "name": "topk_mean_per_horizon_k3",
-                "type": "selection",
-                "description": "Top-k mean per horizon (rolling selection)",
-                "formula": "For each horizon h: choose top-k models by past RMSE and average their preds",
-                "learns_weights": False,
-                "constraints": "anti-leakage: selection uses only past windows",
-                "risks": ["instability if few windows"],
-                "validation_plan": "rolling",
-                "params": {"method": "topk_mean_per_horizon", "top_k": 3},
-            }
-        ]
-    }
-    return json.dumps(schema, indent=2)
 
 
 @tool
