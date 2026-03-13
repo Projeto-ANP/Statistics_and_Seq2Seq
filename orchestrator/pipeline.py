@@ -227,7 +227,12 @@ def _validate_actions_against_universe(
     for cand in cand_override_keys:
         ov = overrides_raw.get(cand, {})
         if not isinstance(ov, dict):
-            raise RuntimeError(f"{who}.params_overrides['{cand}'] must be a dict (hard-stop)")
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"{who}.params_overrides['{cand}'] is not a dict (got {type(ov).__name__}: {ov}). "
+                f"Gracefully ignoring this specific override to prevent hard-stop."
+            )
+            continue
         overrides[cand] = dict(ov)
 
     # Global knob overrides (apply to all current/add candidates)
@@ -239,21 +244,28 @@ def _validate_actions_against_universe(
             overrides[cand].update(global_override)
 
     # Validate allowed keys for each override payload
+    valid_overrides = {}
     for cand, ov in overrides.items():
         if not isinstance(ov, dict):
-            raise RuntimeError(f"{who}.params_overrides['{cand}'] must be a dict (hard-stop)")
+            continue
+        
         bad_keys = [k for k in ov.keys() if str(k) not in ALLOWED_PARAM_EDITS and str(k) != "method"]
         if bad_keys:
-            raise RuntimeError(
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
                 f"{who} used unsupported override keys for '{cand}': {bad_keys}. "
-                f"Allowed: {sorted(ALLOWED_PARAM_EDITS)} (hard-stop)"
+                f"Allowed: {sorted(ALLOWED_PARAM_EDITS)}. Ignoring bad keys instead of hard-stopping."
             )
+            ov = {k: v for k, v in ov.items() if k not in bad_keys}
+            
+        if ov:
+            valid_overrides[cand] = ov
 
     # Return normalized copy
     return {
         "add_names": add_names_norm,
         "remove_names": remove_names_norm,
-        "params_overrides": overrides,
+        "params_overrides": valid_overrides,
         "rationale": actions.get("rationale"),
         "changes": actions.get("changes"),
         "when_good": actions.get("when_good"),
