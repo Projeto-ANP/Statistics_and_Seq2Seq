@@ -10,7 +10,7 @@ from agno.tools import tool
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agent.context import get_context, set_context
+from orchestrator_langchain.context import get_context, set_context
 
 from orchestrator.data_contract import load_validation_from_context
 from orchestrator.evaluator import EvaluationConfig, evaluate_all

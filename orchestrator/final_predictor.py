@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
-from agent.context import get_context, set_context
+from orchestrator_langchain.context import get_context, set_context
 
 from orchestrator.data_contract import load_validation_from_context
 from orchestrator.schemas import CandidateStrategy

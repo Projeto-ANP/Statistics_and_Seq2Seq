@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from streamfuels.datasets import DatasetLoader
 from sklearn.metrics import mean_absolute_percentage_error as mape
-
+from orchestrator_langchain.context import read_model_preds
 from all_functions import calculate_smape, calculate_rmse, calculate_msmape, calculate_mae, pocid
 
 
@@ -16,18 +16,18 @@ def extract_values(list_str):
     return []
 
 
-def read_model_preds(model_name, dataset_index, dataset="ANP_MONTHLY"):
-    df = pd.read_csv(
-        f"./timeseries/mestrado/resultados/{model_name}/normal/{dataset}.csv",
-        sep=";",
-    )
-    df = df[df["dataset_index"] == dataset_index]
+# def read_model_preds(model_name, dataset_index, dataset="ANP_MONTHLY"):
+#     df = pd.read_csv(
+#         f"./timeseries/mestrado/resultados/{model_name}/normal/{dataset}.csv",
+#         sep=";",
+#     )
+#     df = df[df["dataset_index"] == dataset_index]
 
-    df["start_test"] = pd.to_datetime(df["start_test"], errors="coerce", infer_datetime_format=True)
-    df["final_test"] = pd.to_datetime(df["final_test"], errors="coerce", infer_datetime_format=True)
-    df = df.sort_values(by="start_test")
+#     df["start_test"] = pd.to_datetime(df["start_test"], errors="coerce", infer_datetime_format=True)
+#     df["final_test"] = pd.to_datetime(df["final_test"], errors="coerce", infer_datetime_format=True)
+#     df = df.sort_values(by="start_test")
 
-    return df
+#     return df
 
 
 COLS_SERIE = [
@@ -136,7 +136,7 @@ def exec_dataset_orchestrator(
     ollama_model: str = "mychen76/qwen3_cline_roocode:14b",
     debug: bool = False,
     rolling: str = "expanding",
-    train_window: int = 5,
+    train_window: int = 3,
     llm_logs: bool = True,
     # start_index: int = 0,
     # end_index: int = 182,
@@ -170,7 +170,7 @@ def exec_dataset_orchestrator(
     os.makedirs(path_experiments, exist_ok=True)
     os.makedirs(path_llm_artifacts, exist_ok=True)
 
-    from agent.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
+    from orchestrator_langchain.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
     from orchestrator.pipeline import run_deterministic_pipeline, run_llm_pipeline
     from orchestrator_langchain.pipeline import run_langchain_pipeline
 
@@ -193,7 +193,7 @@ def exec_dataset_orchestrator(
     for i in range(num_series):
         init_context()
         CONTEXT_MEMORY["models_available"] = models
-        generate_all_validations_context(models, i)
+        generate_all_validations_context(models, i, train_window=train_window)
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:
@@ -672,7 +672,7 @@ if __name__ == "__main__":
         ollama_model="mychen76/qwen3_cline_roocode:14b",
         debug=False,
         rolling="expanding",
-        train_window=5,
+        train_window=3,
         llm_logs=True,
         # start_index=0,
         # end_index=182,
