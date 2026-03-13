@@ -102,6 +102,31 @@ def _run_agent_with_retry(
     raise RuntimeError(f"{agent_name} exhausted all {max_retries} retry attempts")
 
 
+import re
+import difflib
+
+def _resolve_candidate_name(name: str, valid_set: set) -> str:
+    """Auto-corrects candidate names by fixing float suffixes or minor typos."""
+    if name in valid_set:
+        return name
+        
+    # Strip trailing zeros from decimals to match things like "0.2" with "0.20"
+    def strip_trailing_zeros(s: str) -> str:
+        return re.sub(r'(\.\d*?[1-9])0+(?=[^\d]|$)|(\.)0+(?=[^\d]|$)', r'\1', s)
+        
+    normalized_valid_map = {strip_trailing_zeros(v): v for v in valid_set}
+    stripped_target = strip_trailing_zeros(name)
+    
+    if stripped_target in normalized_valid_map:
+        return normalized_valid_map[stripped_target]
+        
+    # Fallback to fuzzy string matching
+    matches = difflib.get_close_matches(name, valid_set, n=1, cutoff=0.85)
+    if matches:
+        return matches[0]
+        
+    return name
+
 
 def _validate_actions_against_universe(
     actions: Dict[str, Any],
@@ -126,6 +151,8 @@ def _validate_actions_against_universe(
     if not isinstance(add_names, list):
         raise RuntimeError(f"{who}.add_names must be a list (hard-stop)")
     add_names_norm = [str(x) for x in add_names if str(x)]
+    add_names_norm = [_resolve_candidate_name(n, valid_set) for n in add_names_norm]
+
     unknown_add = [n for n in add_names_norm if n not in valid_set]
     if unknown_add:
         raise RuntimeError(
@@ -139,6 +166,8 @@ def _validate_actions_against_universe(
     if not isinstance(remove_names, list):
         raise RuntimeError(f"{who}.remove_names must be a list (hard-stop)")
     remove_names_norm = [str(x) for x in remove_names if str(x)]
+    remove_names_norm = [_resolve_candidate_name(n, current_set) for n in remove_names_norm]
+
     # Disallow removing candidates that are neither currently present nor being added.
     allowed_remove = set(current_set) | set(add_names_norm)
     unknown_remove = [n for n in remove_names_norm if n not in allowed_remove]
@@ -153,6 +182,8 @@ def _validate_actions_against_universe(
         overrides_raw = {}
     if not isinstance(overrides_raw, dict):
         raise RuntimeError(f"{who}.params_overrides must be an object/dict (hard-stop)")
+
+    overrides_raw = {_resolve_candidate_name(str(k), valid_set): v for k, v in overrides_raw.items()}
 
     allowed_override = set(current_set) | set(add_names_norm)
     override_keys = [str(k) for k in overrides_raw.keys()]

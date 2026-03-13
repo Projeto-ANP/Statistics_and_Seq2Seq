@@ -84,7 +84,7 @@ def extract_values(list_str):
         return [float(num) for num in numbers]
     return []
 
-def generate_all_validations_context(models: List[str], dataset_index, train_window: int) -> None:
+def generate_all_validations_context(models: List[str], dataset_index, train_window: int, dataset="ANP_MONTHLY") -> None:
     """Generate validation context from model predictions."""
     # Track dataset identifier for downstream logging
     set_context("dataset_index", dataset_index)
@@ -99,7 +99,7 @@ def generate_all_validations_context(models: List[str], dataset_index, train_win
     })
     
     sample_model = models[0]
-    df_sample = read_model_preds(sample_model, dataset_index)
+    df_sample = read_model_preds(sample_model, dataset_index, dataset=dataset)
     df_filtred_sample = df_sample.iloc[-train_window:-1]
     n_windows = len(df_filtred_sample)
 
@@ -111,7 +111,7 @@ def generate_all_validations_context(models: List[str], dataset_index, train_win
     final_test_predictions = {}
     
     for model in models:  
-        df_model = read_model_preds(model, dataset_index)
+        df_model = read_model_preds(model, dataset_index, dataset=dataset)
         df_filtred = df_model.iloc[-train_window:-1]
         df_final_test = df_model.iloc[-1]
         predictions_final = extract_values(df_final_test["predictions"])
