@@ -905,7 +905,7 @@ def run_darts_series(args):
             # path_derivado = f'{results_file}/{derivado}/{transform}'
             # flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
             exp_name = f"{regr}_{transform}"
-            path_experiments = f"./timeseries/mestrado/resultados/{regr}/{transform}/"
+            path_experiments = f"./timeseries/mestrado/resultados/{regr}/{transform}"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             flag = generate_experiment(path_csv, i, final_test)
@@ -1090,18 +1090,19 @@ if __name__ == "__main__":
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
-        # "nn5_weekly_dataset.tsf",
+        "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
-        # "us_births_dataset.tsf",
-        #"australian_electricity_demand_dataset.tsf",
-        #"m4_hourly_dataset.tsf",
-        #"m4_weekly_dataset.tsf",
-        #"nn5_daily_dataset_without_missing_values.tsf",
-        #"nn5_weekly_dataset.tsf",
-        # "ETTh1.tsf",
-        "ETTh2.tsf",
-        "ETTm1.tsf",
-        "ETTm2.tsf",
+        "us_births_dataset.tsf",
+        # "australian_electricity_demand_dataset.tsf",
+        # "m4_hourly_dataset.tsf",
+        # "m4_weekly_dataset.tsf",
+        # "nn5_daily_dataset_without_missing_values.tsf",
+        # "nn5_weekly_dataset.tsf",
+        "ETTH1.tsf",
+        "ETTH2.tsf",
+        "ETTM1.tsf",
+        "ETTM2.tsf",
+        # "tourism_monthly_dataset.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
     ]
