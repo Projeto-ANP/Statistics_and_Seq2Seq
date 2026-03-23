@@ -565,7 +565,7 @@ def run_tsf_image_series(args):
             else:
                 representation_mod = representation
             exp_name = f"{representation_mod}_{regr}_{transform}"
-            path_experiments = f"./timeseries/mestrado/resultados/{representation_mod}_{regr}/{transform}/"
+            path_experiments = f"./timeseries/mestrado/resultados/{representation_mod}_{regr}/{transform}"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
@@ -959,7 +959,7 @@ if __name__ == "__main__":
         "ETTH2.tsf",
         "ETTM1.tsf",
         "ETTM2.tsf",
-        "tourism_monthly_dataset.tsf",
+        # "tourism_monthly_dataset.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
     ]
