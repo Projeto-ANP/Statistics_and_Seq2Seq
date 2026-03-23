@@ -947,18 +947,19 @@ if __name__ == "__main__":
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
-        # "nn5_weekly_dataset.tsf",
+        "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
-        # "us_births_dataset.tsf",
+        "us_births_dataset.tsf",
         # "australian_electricity_demand_dataset.tsf",
         # "m4_hourly_dataset.tsf",
         # "m4_weekly_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
         # "nn5_weekly_dataset.tsf",
-        "ETTh1.tsf",
-        "ETTh2.tsf",
-        "ETTm1.tsf",
-        "ETTm2.tsf",
+        "ETTH1.tsf",
+        "ETTH2.tsf",
+        "ETTM1.tsf",
+        "ETTM2.tsf",
+        "tourism_monthly_dataset.tsf",
         # "traffic_hourly_dataset.tsf",
         # "traffic_weekly_dataset.tsf",
     ]
@@ -981,7 +982,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "rf"
+        regr = "ridge"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args

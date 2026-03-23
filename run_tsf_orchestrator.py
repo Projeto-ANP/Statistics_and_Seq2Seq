@@ -193,7 +193,7 @@ def exec_dataset_orchestrator(
     for i in range(num_series):
         init_context()
         CONTEXT_MEMORY["models_available"] = models
-        generate_all_validations_context(models, i, train_window=train_window)
+        generate_all_validations_context(models, i, train_window=train_window, dataset=dataset)
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:

@@ -259,7 +259,7 @@ No modo 2 você também passa:
 ### 8.1 Executar o loop por dataset (Modo 1 – determinístico)
 
 ```bash
-conda activate agno
+conda activate <seu_ambiente>
 cd /home/anp/Documents/lucas_mestrado/Statistics_and_Seq2Seq
 python run_tsf_orchestrator.py
 ```
@@ -284,7 +284,7 @@ exec_dataset_orchestrator(
 Depois rode:
 
 ```bash
-conda activate agno
+conda activate <seu_ambiente>
 cd /home/anp/Documents/lucas_mestrado/Statistics_and_Seq2Seq
 python run_tsf_orchestrator.py
 ```
@@ -294,7 +294,7 @@ python run_tsf_orchestrator.py
 O research loop standalone está em `orchestrator/run_research_loop.py`:
 
 ```bash
-conda activate agno
+conda activate <seu_ambiente>
 cd /home/anp/Documents/lucas_mestrado/Statistics_and_Seq2Seq
 python -m orchestrator.run_research_loop --dataset-index 146 --models ARIMA,ETS,THETA --use-llm
 ```

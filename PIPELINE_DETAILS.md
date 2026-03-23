@@ -60,7 +60,12 @@ Um guard rígido garante que mesmo que um agente LLM alucinado passe `train_wind
 
 ---
 
-## 3. Visão Geral do Pipeline de Execução
+## 3. Arquitetura (Integração Exclusiva LangChain) e Visão Geral de Execução
+
+O projeto encapsula todo o framework comportamental de IA utilizando exclusivamente **LangChain**. O pipeline lógico emprega uma estrutura padronizada para invocar os Agentes através da biblioteca `langchain_ollama` combinada com o `langchain_core.tools`.
+
+- **Orchestrator LangChain**: A infraestrutura principal define a classe `LangchainAgent`, que realiza as chamadas aos modelos locais (como Ollama) utilizando a funcionalidade `ChatOllama.bind_tools()`.
+  - ***Force-Tool-Call Limit***: Esta classe implementa um robusto loop manual de segurança ("force-tool-call"). Porque LLMs tendem a falhar ao retornar JSONs estritos em vez de ferramentas, o sistema verifica se o agente acionou a tool correspondente. Se o LLM responder com texto contínuo em vez de executar o JSON/tool, o sistema envia mensagens coercivas em loop (ex: *"You MUST call one of these tools"*... *"CRITICAL: Call the tool NOW"*) até extrair obrigatoriamente um output estruturado válido.
 
 O pipeline completo segue esta sequência orquestrada no `pipeline.py`:
 
@@ -272,6 +277,18 @@ onde:
 2. **Raciocínio explícito**: A LLM explica sua escolha no campo `cot_narrative`
 3. **Flexibilidade**: Em casos de empate ou valores muito próximos, a LLM pode usar critérios secundários
 
+### A Variável `model_tiers` (Partição Determinística)
+
+Além dos dados estritos da decomposição STL, a tool fornece ao LLM um agrupamento pronto dos modelos pelo desempenho histórico através da variável `model_tiers`.
+
+**Como é calculada:**
+A função ordena todos os modelos base computando o RMSE médio ao longo de todos os horizontes e folds passados. A lista ordenada de modelos é então fatiada rigidamente em três *terços* (`n_tier = max(1, len(rmse_rank) // 3)`).
+- **`tier1_best`**: O terço superior (menor erro, melhores modelos da série).
+- **`tier2_mid`**: O terço intermediário.
+- **`tier3_worst`**: O terço inferior (piores modelos).
+
+**Embate contra Alucinação:** Essa simples estrutura garante que o LLM (seja no raciocínio do Pattern Analyst ou do Proposer mais adiante) use explicitamente `tier1_best` para sugerir modelos campeões. Ela atua como um viés de ancoragem forçado, reduzindo drasticamente cenários em que a IA inventaria ou selecionaria aleatoriamente um modelo fraco como salvador sem embasamento matemático.
+
 ---
 
 ## 5. Agente 2 — Proposer
@@ -284,9 +301,9 @@ Temperatura: `0.2` (mais objetivo, menos criativo).
 
 ### O que ele faz (Passo a Passo)
 
-**1. Chama a tool `proposer_brief`**
+**1. Chama a tool `proposer_brief` (Input)**
 
-Essa ferramenta Python prepara um "briefing completo", que contém:
+Pelo padrão da arquitetura, o Proposer sempre invoca esta ferramenta para obter contexto. Essa ferramenta Python prepara um "briefing completo", que contém:
 
 ```json
 {
@@ -357,7 +374,9 @@ O Proposer usa uma tabela de decisão interna:
 - Deve incluir pelo menos **1 candidato do tipo `selection`, `weighted` ou `stacking`** (não pode ser tudo `baseline`).
 - Só pode referenciar nomes que existem na `candidate_library` — nomes inventados geram hard-stop imediato.
 
-**3. Retorna JSON — Output Final do `Proposer`**
+**3. Retorna JSON Schema Exato (Output Final)**
+
+O JSON do Proposer mapeia as escolhas para o resto do pipeline:
 
 ```json
 {
@@ -433,7 +452,7 @@ Temperatura: `0.2`.
 
 ### O que ele faz (Passo a Passo)
 
-**1. Chama a tool `debate_packet`**
+**1. Chama a tool `debate_packet` (Input)**
 
 Essa ferramenta prepara um pacote com:
 
@@ -469,7 +488,9 @@ Essa ferramenta prepara um pacote com:
 - **Redundância**: Há 3 variantes quase idênticas de `trimmed_mean`? Remove as mais fracas, mantém apenas 1.
 - **Diversidade mínima**: O conjunto deve ter ao menos 2 tipos distintos.
 
-**3. Retorna JSON — Output Final do `Skeptic`**
+**3. Retorna JSON Schema Exato (Output Final)**
+
+O *Skeptic* obrigatoriamente devolve as modificações usando as chaves `add_names` e `remove_names`.
 
 ```json
 {
@@ -494,7 +515,7 @@ Temperatura: `0.2`.
 
 ### O que ele faz (Passo a Passo)
 
-**1. Chama a tool `debate_packet`** (mesma que o Skeptic, mas analisa diferente)
+**1. Chama a tool `debate_packet` (Input)** (mesma que o Skeptic, mas analisa de forma propositiva para hiperparâmetros)
 
 **2. Raciocina com base em evidências quantitativas**
 
@@ -515,7 +536,9 @@ Ele também se baseia em referências acadêmicas:
 - **Ridge stacking** (Gaillard & Goude, 2015): ótimo quando `n_windows ≥ 2 × n_models`.
 - **Top-k mean** (M4 Competition, 2020): reduz variância de modelos outliers; `k = sqrt(n_models)` é um bom default.
 
-**3. Retorna JSON — Output Final do `Statistician`**
+**3. Retorna JSON Schema Exato (Output Final)**
+
+O *Statistician* foca as alterações mais em `params_overrides` para modificar chaves como `shrinkage` e `top_k`, mas também pode adicionar metódos usando `add_names`.
 
 ```json
 {
@@ -538,28 +561,28 @@ Ele também se baseia em referências acadêmicas:
 
 ---
 
-## 9. O Orquestrador Determinístico
+## 9. O Orquestrador Determinístico (Avaliação Pós-Debate via Python Puro)
 
-Após todos os agentes terem falado, o Orquestrador executa a **avaliação final puramente matemática** — sem LLM, sem probabilidade, sem alucinação. É o juiz imparcial.
+Após todos os agentes (Proposer, Skeptic, Statistician) terem falado e o conjunto final de candidatos ser definido, o Orquestrador executa a **avaliação final puramente matemática** através do arquivo `evaluator.py` chamando em Python as tools, **sem intervenção de LLM, sem alucinação e sem IA**. É o juiz imparcial.
 
 ### Como ele avalia cada candidata
 
-Para cada estratégia candidata, o sistema simula como ela teria se saído em **cada janela de validação histórica**, usando apenas dados anteriores àquela janela:
+Para cada estratégia candidata, a infraestrutura simula em Python como ela teria se saído em **cada janela de validação histórica**, obedecendo o restrito fatiamento _anti-leakage_:
 
 ```
 Janela i=0: sem dados anteriores → fallback para mean
-Janela i=1: traineia com dados de i=0, prediz i=1
-Janela i=2: traineia com dados de i=0 e i=1, prediz i=2
-Janela i=3: traineia com dados de i=0, i=1, i=2, prediz i=3
+Janela i=1: treina com dados de i=0, prediz i=1
+Janela i=2: treina com dados de i=0 e i=1, prediz i=2
+Janela i=3: treina com dados de i=0, i=1, i=2, prediz i=3
 ```
 
-Para cada janela avaliada, computa-se as métricas contra o `y_true` daquela janela.
+Para cada janela avaliada, computa-se as métricas unindo predições base contra o `y_true`.
 
-### O Ranking Final
+### O Ranking Final e o Composite Score
 
-O resultado é um vetor de scores. O candidato com o **menor composite score** ganha.
+Em vez de eleger ganhadores arbitrários, o framework utiliza uma métrica conjunta, o **Composite Score** (veja seção 11 para a fórmula exata). O modelo recebe um ranking com a métrica calculada, onde a candidata com o **menor composite score determinístico** é definida como a vencedora definitiva. O papel do LLM nessa etapa do "Orquestrador" é apenas redigir um parágrafo ("reasoning") explicando por que ela ganhou, mas quem decide a posição exata é a matemática via Python Puro.
 
-Exemplo de ranking:
+Exemplo de ranking gerado pelo `evaluator.py`:
 
 ```json
 {

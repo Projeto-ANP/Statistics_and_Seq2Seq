@@ -9,21 +9,21 @@ from orchestrator import tools as orch_tools
 def proposer_brief() -> str:
     """Deterministic brief for proposer (validation summary + candidate library + pattern insights)."""
 
-    return orch_tools.proposer_brief_tool.entrypoint()
+    return orch_tools.proposer_brief_tool()
 
 
 @tool("debate_packet")
 def debate_packet() -> str:
     """Deterministic debate packet with evaluation numbers."""
 
-    return orch_tools.build_debate_packet_tool.entrypoint()
+    return orch_tools.build_debate_packet_tool()
 
 
 @tool("evaluate_strategies")
 def evaluate_strategies(candidates_json: str, config_json: str = "") -> str:
     """Deterministic evaluation of candidate strategies."""
 
-    return orch_tools.evaluate_strategies_tool.entrypoint(
+    return orch_tools.evaluate_strategies_tool(
         candidates_json=candidates_json,
         config_json=config_json,
     )
@@ -33,4 +33,4 @@ def evaluate_strategies(candidates_json: str, config_json: str = "") -> str:
 def build_fold_cot_context() -> str:
     """Build chain-of-thought context from validation folds (trend/seasonality decomposition per model)."""
 
-    return orch_tools.build_fold_cot_context_tool.entrypoint()
+    return orch_tools.build_fold_cot_context_tool()

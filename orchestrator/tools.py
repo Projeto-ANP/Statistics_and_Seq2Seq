@@ -6,7 +6,6 @@ import sys
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from agno.tools import tool
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -28,7 +27,7 @@ SCORE_PRESETS: Dict[str, Dict[str, float]] = {
 }
 
 
-@tool
+
 def proposer_brief_tool() -> str:
     """Returns a compact, deterministic brief for the Proposer.
 
@@ -994,7 +993,7 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@tool
+
 def build_fold_cot_context_tool() -> str:
     """PatternAnalyst: analisa tendencia/sazonalidade nos folds de validacao (val1..n).
 
@@ -1345,7 +1344,7 @@ def build_fold_cot_context_tool() -> str:
     return json.dumps(out, indent=2)
 
 
-@tool
+
 def summarize_validation_tool(config_json: str = "") -> str:
     """Deterministically summarizes validation behavior for data-driven proposals.
 
@@ -1362,7 +1361,7 @@ def summarize_validation_tool(config_json: str = "") -> str:
     return json.dumps(summary, indent=2)
 
 
-@tool
+
 def generate_data_driven_candidates_tool(max_candidates: int = 10, config_json: str = "") -> str:
     """Deterministically generates a candidate set conditioned on validation data.
 
@@ -1380,7 +1379,7 @@ def generate_data_driven_candidates_tool(max_candidates: int = 10, config_json: 
     return json.dumps(out, indent=2)
 
 
-@tool
+
 def build_debate_packet_tool(candidates_json: str = "", config_json: str = "", top_n: int = 5) -> str:
     """Builds a deterministic debate packet with real numbers.
 
@@ -1537,7 +1536,7 @@ def build_debate_packet_tool(candidates_json: str = "", config_json: str = "", t
     return json.dumps(packet, indent=2)
 
 
-@tool
+
 def evaluate_strategies_tool(candidates_json: str, config_json: str = "") -> str:
     """Deterministically evaluates candidate strategies on the validation windows.
 
