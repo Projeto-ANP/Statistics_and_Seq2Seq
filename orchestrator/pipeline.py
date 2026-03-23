@@ -4,7 +4,7 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from agent.context import get_context, set_context
+from orchestrator_langchain.context import get_context, set_context
 
 from orchestrator.evaluator import EvaluationConfig, evaluate_all
 from orchestrator.final_predictor import predict_final_from_context
@@ -102,6 +102,31 @@ def _run_agent_with_retry(
     raise RuntimeError(f"{agent_name} exhausted all {max_retries} retry attempts")
 
 
+import re
+import difflib
+
+def _resolve_candidate_name(name: str, valid_set: set) -> str:
+    """Auto-corrects candidate names by fixing float suffixes or minor typos."""
+    if name in valid_set:
+        return name
+        
+    # Strip trailing zeros from decimals to match things like "0.2" with "0.20"
+    def strip_trailing_zeros(s: str) -> str:
+        return re.sub(r'(\.\d*?[1-9])0+(?=[^\d]|$)|(\.)0+(?=[^\d]|$)', r'\1', s)
+        
+    normalized_valid_map = {strip_trailing_zeros(v): v for v in valid_set}
+    stripped_target = strip_trailing_zeros(name)
+    
+    if stripped_target in normalized_valid_map:
+        return normalized_valid_map[stripped_target]
+        
+    # Fallback to fuzzy string matching
+    matches = difflib.get_close_matches(name, valid_set, n=1, cutoff=0.85)
+    if matches:
+        return matches[0]
+        
+    return name
+
 
 def _validate_actions_against_universe(
     actions: Dict[str, Any],
@@ -126,6 +151,8 @@ def _validate_actions_against_universe(
     if not isinstance(add_names, list):
         raise RuntimeError(f"{who}.add_names must be a list (hard-stop)")
     add_names_norm = [str(x) for x in add_names if str(x)]
+    add_names_norm = [_resolve_candidate_name(n, valid_set) for n in add_names_norm]
+
     unknown_add = [n for n in add_names_norm if n not in valid_set]
     if unknown_add:
         raise RuntimeError(
@@ -139,6 +166,8 @@ def _validate_actions_against_universe(
     if not isinstance(remove_names, list):
         raise RuntimeError(f"{who}.remove_names must be a list (hard-stop)")
     remove_names_norm = [str(x) for x in remove_names if str(x)]
+    remove_names_norm = [_resolve_candidate_name(n, current_set) for n in remove_names_norm]
+
     # Disallow removing candidates that are neither currently present nor being added.
     allowed_remove = set(current_set) | set(add_names_norm)
     unknown_remove = [n for n in remove_names_norm if n not in allowed_remove]
@@ -153,6 +182,8 @@ def _validate_actions_against_universe(
         overrides_raw = {}
     if not isinstance(overrides_raw, dict):
         raise RuntimeError(f"{who}.params_overrides must be an object/dict (hard-stop)")
+
+    overrides_raw = {_resolve_candidate_name(str(k), valid_set): v for k, v in overrides_raw.items()}
 
     allowed_override = set(current_set) | set(add_names_norm)
     override_keys = [str(k) for k in overrides_raw.keys()]
@@ -196,7 +227,12 @@ def _validate_actions_against_universe(
     for cand in cand_override_keys:
         ov = overrides_raw.get(cand, {})
         if not isinstance(ov, dict):
-            raise RuntimeError(f"{who}.params_overrides['{cand}'] must be a dict (hard-stop)")
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"{who}.params_overrides['{cand}'] is not a dict (got {type(ov).__name__}: {ov}). "
+                f"Gracefully ignoring this specific override to prevent hard-stop."
+            )
+            continue
         overrides[cand] = dict(ov)
 
     # Global knob overrides (apply to all current/add candidates)
@@ -208,21 +244,28 @@ def _validate_actions_against_universe(
             overrides[cand].update(global_override)
 
     # Validate allowed keys for each override payload
+    valid_overrides = {}
     for cand, ov in overrides.items():
         if not isinstance(ov, dict):
-            raise RuntimeError(f"{who}.params_overrides['{cand}'] must be a dict (hard-stop)")
+            continue
+        
         bad_keys = [k for k in ov.keys() if str(k) not in ALLOWED_PARAM_EDITS and str(k) != "method"]
         if bad_keys:
-            raise RuntimeError(
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
                 f"{who} used unsupported override keys for '{cand}': {bad_keys}. "
-                f"Allowed: {sorted(ALLOWED_PARAM_EDITS)} (hard-stop)"
+                f"Allowed: {sorted(ALLOWED_PARAM_EDITS)}. Ignoring bad keys instead of hard-stopping."
             )
+            ov = {k: v for k, v in ov.items() if k not in bad_keys}
+            
+        if ov:
+            valid_overrides[cand] = ov
 
     # Return normalized copy
     return {
         "add_names": add_names_norm,
         "remove_names": remove_names_norm,
-        "params_overrides": overrides,
+        "params_overrides": valid_overrides,
         "rationale": actions.get("rationale"),
         "changes": actions.get("changes"),
         "when_good": actions.get("when_good"),
