@@ -304,19 +304,18 @@ def rolling_validation_regressors(X_train, y_train, horizonte_validacao=12):
 
 
 def recursive_multistep_forecasting(X_test, model, horizon):
-    # example é composto pelas últimas observações vistas
-    # na prática, é o primeiro exemplo do conjunto de teste
     example = X_test.iloc[0].values.reshape(1, -1)
-
     preds = []
+    import numpy as np
     for i in range(horizon):
-        pred = model.predict(example)[0]
+        try:
+            pred = model.predict(example)[0]
+        except ValueError as e:
+            print(f"Error at step {i}")
+            print(f"example: {example}")
+            raise e
         preds.append(pred)
-
-        # Descartar o valor da primeira posição do vetor de características
         example = example[:, 1:]
-
-        # Adicionar o valor predito na última posição do vetor de características
         example = np.append(example, pred)
         example = example.reshape(1, -1)
     return preds
