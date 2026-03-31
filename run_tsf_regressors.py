@@ -8,6 +8,7 @@ from sklearn.metrics import mean_absolute_percentage_error as mape
 import multiprocessing
 import traceback
 from sklearn.svm import SVR
+from sklearn.svm import LinearSVR
 from catboost import CatBoostRegressor
 import optuna
 from sklearn.linear_model import Ridge, RidgeCV
@@ -61,7 +62,7 @@ def objective_optuna(trial):
     elif regr == "svr":
         param = {
             "kernel": trial.suggest_categorical("kernel", ["rbf"]),
-            "C": trial.suggest_categorical("C", [0.1, 1, 10, 100, 1000]),
+            "C": trial.suggest_categorical("C", [0.1, 1, 10]),
             "gamma": trial.suggest_categorical(
                 "gamma", [0.0001, 0.001, 0.005, 0.1, 1, 3, 5]
             ),
@@ -69,6 +70,17 @@ def objective_optuna(trial):
             # 'random_state': 42
         }
         model = SVR(**param)
+        
+    elif regr == "linear_svr":
+        param = {
+                "C": trial.suggest_float("C", 1e-4, 100.0, log=True),
+                "epsilon": trial.suggest_float("epsilon", 1e-5, 1.0, log=True),
+                "loss": trial.suggest_categorical("loss", ["epsilon_insensitive", "squared_epsilon_insensitive"]),
+                "tol": trial.suggest_float("tol", 1e-5, 1e-1, log=True),
+                "max_iter": 5000,          # Recomendado aumentar para garantir convergência
+                "random_state": 42         # Reprodutibilidade
+            }
+        model = LinearSVR(**param)
 
     elif regr == "catboost":
         param = {
@@ -351,6 +363,8 @@ def image_error_series(args):
                             rg = RidgeCV(**results_rg)
                         elif regr == "svr":
                             rg = SVR(**results_rg)
+                        elif regr == "linear_svr":
+                            rg = LinearSVR(**results_rg)
                         elif regr == "fpca":
                             rg = FPCARegressor(
                                 n_jobs=1,
@@ -849,6 +863,8 @@ def run_tsf_normal_series(args):
                         rg = RidgeCV(**results_rg)
                     elif regr == "svr":
                         rg = SVR(**results_rg)
+                    elif regr == "linear_svr":
+                            rg = LinearSVR(**results_rg)
                     elif regr == "fpca":
                         rg = FPCARegressor(
                             n_jobs=1,
@@ -947,14 +963,14 @@ if __name__ == "__main__":
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
-        "nn5_weekly_dataset.tsf",
+        # "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
         "us_births_dataset.tsf",
         # "australian_electricity_demand_dataset.tsf",
         # "m4_hourly_dataset.tsf",
-        # "m4_weekly_dataset.tsf",
+        "m4_weekly_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
-        # "nn5_weekly_dataset.tsf",
+        "nn5_weekly_dataset.tsf",
         "ETTH1.tsf",
         "ETTH2.tsf",
         "ETTM1.tsf",
@@ -982,7 +998,7 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "ridge"
+        regr = "rf"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
