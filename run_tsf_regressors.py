@@ -213,13 +213,8 @@ def run_tsf_image_series(args):
     global representation
     global wavelet
     global level
-<<<<<<< HEAD
-    representation = "FT"
-    only_features = False
-=======
     representation = representation_tf
     # only_features =
->>>>>>> 885aed4bb531ed810ad8d46a04bffa2ef29ac745
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
     # horizon = 12
@@ -799,14 +794,6 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-<<<<<<< HEAD
-        regr = "catboost"
-
-        def run_wrapper(args):
-            # frequency, horizon, line, i = args
-            run_tsf_image_series(args)
-            # run_tsf_normal_series(args)
-=======
         # regr = "catboost"
 
         def run_wrapper(args):
@@ -815,7 +802,6 @@ if __name__ == "__main__":
                 run_tsf_image_series(args)
             elif type_series == "normal":  
                 run_tsf_normal_series(args)
->>>>>>> 885aed4bb531ed810ad8d46a04bffa2ef29ac745
 
         tasks = [
             (frequency, horizon, df.iloc[i], i, regr, dataset, representation_tf, only_features) for i in range(len(df))
