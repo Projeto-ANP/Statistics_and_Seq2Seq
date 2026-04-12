@@ -1,3 +1,4 @@
+import argparse
 import os
 import time
 from all_functions import *
@@ -207,13 +208,13 @@ wavelet = "none"
 
 
 def run_tsf_image_series(args):
-    frequency, horizon, line, i, regressor, dataset = args
+    frequency, horizon, line, i, regressor, dataset, representation_tf, only_features = args
     global regr
     global representation
     global wavelet
     global level
-    representation = "CWT"
-    only_features = True
+    representation = representation_tf
+    # only_features =
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
     # horizon = 12
@@ -466,7 +467,7 @@ def run_tsf_image_series(args):
 
 
 def run_tsf_normal_series(args):
-    frequency, horizon, line, i, regressor, dataset = args
+    frequency, horizon, line, i, regressor, dataset, representation_tf, only_features = args
     global regr
     # horizon = 12
     window = horizon
@@ -713,7 +714,48 @@ if __name__ == "__main__":
     # frequency = metadata['frequency']
     # horizon = metadata['horizon']
     # regr = 'catboost'
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--regr",
+        type=str,
+        required=True,
+        help="Regressor name (e.g. NaiveSeasonal, catboost, etc.)"
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        required=True,
+        help="Type of series to run: [image, normal]"
+    )
+    
+    parser.add_argument(
+        "--transform",
+        type=str,
+        required=True,
+        help="Type of transformation to apply: [CWT, DWT, FT, None]"
+    )
+    
+    parser.add_argument(
+        "--only_feat",
+        type=bool,
+        required=True,
+        help="Add features to training data? [True, False]"
+    )
 
+    args = parser.parse_args()
+    regr = args.regr
+    type_series = args.type
+    representation_tf = args.transform
+    only_features = args.only_feat
+    
+    
+    allowed_representations = ["CWT", "DWT", "FT", "None"]
+    if representation_tf not in allowed_representations:
+        raise ValueError(f"Transformação desconhecida: {representation_tf}. Escolha entre {allowed_representations}.")
+    allowed_type = ["image", "normal"]
+    if type_series not in allowed_type:
+        raise ValueError(f"Tipo de série desconhecido: {type_series}. Escolha entre {allowed_type}.")
+    
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
@@ -752,15 +794,17 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "catboost"
+        # regr = "catboost"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
-            run_tsf_image_series(args)
-            # run_tsf_normal_series(args)
+            if type_series == "image":
+                run_tsf_image_series(args)
+            elif type_series == "normal":  
+                run_tsf_normal_series(args)
 
         tasks = [
-            (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
+            (frequency, horizon, df.iloc[i], i, regr, dataset, representation_tf, only_features) for i in range(len(df))
         ]
 
         with multiprocessing.Pool(processes=6) as pool:

@@ -1,3 +1,5 @@
+import argparse
+
 import pandas as pd
 from darts import TimeSeries
 from darts.datasets import AirPassengersDataset
@@ -1091,6 +1093,16 @@ if __name__ == "__main__":
 
     # mask = df["series_value"].apply(should_remove)
     # df = df[~mask]
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--regr",
+        type=str,
+        required=True,
+        help="Regressor name (e.g. NaiveSeasonal, catboost, etc.)"
+    )
+
+    args = parser.parse_args()
+    regr = args.regr
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
@@ -1129,8 +1141,10 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "NaiveSeasonal"
-
+        # regr = "NaiveSeasonal"
+        av_models = ["ARIMA", "ETS", "THETA", "NaiveSeasonal", "NaiveMean", "NaiveDrift", "NaiveMovingAverage", "TBATS", "RandomForest", "CatBoost", "NBEATS", "Transformer", "TFT", "NHiTS"]
+        if regr not in av_models:
+            raise ValueError(f"Regressor {regr} não disponível. Escolha entre: {av_models}")
         # df.iloc[i]
         def run_wrapper(args):
             # frequency, horizon, line, i = args
