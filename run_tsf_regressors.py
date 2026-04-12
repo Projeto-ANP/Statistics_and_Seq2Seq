@@ -1,3 +1,4 @@
+import argparse
 import os
 import time
 from all_functions import *
@@ -19,7 +20,7 @@ from tsml.feature_based import FPCARegressor
 
 warnings.filterwarnings("ignore")
 
-
+date_only_freqs = {"D"}
 def print_log(message):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n[{current_time}] {message}")
@@ -143,7 +144,7 @@ def checkFolder(pasta, arquivo, tipo):
     return False
 
 
-def generate_experiment(caminho_arquivo, dataset_index, final_test):
+def generate_experiment(caminho_arquivo, dataset_index, final_test, freq):
     try:
         if not os.path.exists(caminho_arquivo):
             print_log(f"Arquivo nao encontrado: {caminho_arquivo}")
@@ -156,7 +157,11 @@ def generate_experiment(caminho_arquivo, dataset_index, final_test):
             print_log("Coluna 'final_test' nao encontrada no arquivo.")
             return True
 
-        if str(final_test) not in df["final_test"].values:
+        str_final_test = str(final_test)
+        if freq in date_only_freqs:
+            str_final_test = str(pd.Timestamp(final_test).date())
+            
+        if str_final_test not in df["final_test"].values:
             print_log(f'Continuando... {final_test} em "{caminho_arquivo}".')
             return True
     except Exception as e:
@@ -202,267 +207,19 @@ level = -1
 wavelet = "none"
 
 
-def image_error_series(args):
-    directory, file = args
-    global regr
-    global representation
-    global wavelet
-    global level
-    representation = "WPT"
-    wavelet = "bior2.2"
-    level = 2  # only DWT/SWT
-    horizon = 12
-    window = 12
-    regr = "ridge"
-    chave = ""
-    model_file = f"{representation}_{regr}{chave}"
-    results_file = f"./paper_roma/{model_file}"
-    transformations = ["normal", "deseasonal"]
-    cols = [
-        "train_range",
-        "test_range",
-        "time",
-        "UF",
-        "PRODUCT",
-        "MODEL",
-        "PARAMS",
-        "WINDOW",
-        "HORIZON",
-        "RMSE",
-        "MAPE",
-        "POCID",
-        "PBE",
-        "MCPM",
-        "MASE",
-        "P1",
-        "P2",
-        "P3",
-        "P4",
-        "P5",
-        "P6",
-        "P7",
-        "P8",
-        "P9",
-        "P10",
-        "P11",
-        "P12",
-        "error_series",
-    ]
-
-    if file.endswith(".csv"):
-
-        uf = file.split("_")[1].upper()
-        derivado = file.split("_")[2].split(".")[0]
-
-        full_path = os.path.join(directory, file)
-        df = pd.read_csv(
-            full_path,
-            header=0,
-            parse_dates=["timestamp"],
-            sep=";",
-            date_parser=custom_parser,
-        )
-        df["timestamp"] = pd.to_datetime(df["timestamp"], infer_datetime_format=True)
-        df = df.set_index("timestamp", inplace=False)
-        df.index = df.index.to_period("M")
-        series = df["m3"]
-        train_test_splits = []
-        min_train_size = 36 + (12 * 25)
-
-        aux_series = series
-        while len(aux_series) > horizon + min_train_size:
-            train, test = aux_series[:-horizon], aux_series[-horizon:]
-            train_test_splits.append((train, test))
-            aux_series = train
-
-        for train, test in train_test_splits:
-            train_stl = train
-            _, test_val = train_test_stats(train, horizon)
-            if "noresid" in chave:
-                print_log("----------- SEM RESIDUO NA SERIE ---------")
-                transformer = STLTransformer(sp=12)
-                stl = transformer.fit(train)
-                train_stl = stl.seasonal_ + stl.trend_
-            train_val, _ = train_test_stats(train_stl, horizon)
-            start_train = train_stl.index.tolist()[0]
-            final_train = train_stl.index.tolist()[-1]
-
-            start_test = test.index.tolist()[0]
-            final_test = test.index.tolist()[-1]
-
-            train_range = f"{start_train}_{final_train}"
-            test_range = f"{start_test}_{final_test}"
-
-            for transform in transformations:
-                path_derivado = f"{results_file}/{derivado}/{transform}"
-                flag = checkFolder(path_derivado, f"transform_{uf}.csv", test_range)
-                start_exp = time.perf_counter()
-                if flag:
-                    train_tf = transform_regressors(train_stl, transform)
-                    train_tf_val = transform_regressors(train_val, format=transform)
-                    try:
-                        data = rolling_window_image(
-                            pd.concat(
-                                [
-                                    train_tf,
-                                    pd.Series(
-                                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-                                        index=test.index,
-                                    ),
-                                ]
-                            ),
-                            window,
-                            representation,
-                            wavelet,
-                            level,
-                        )
-                        data = data.dropna()
-                        X_train, X_test, y_train, _ = train_test_split(data, horizon)
-
-                        results_rg = {"alphas": np.logspace(-3, 3, 10)}
-                        # necessita fazer isso para nao implicar na sazonalidade do val com train
-                        if regr != "ridge" and regr != "fpca":
-                            data_val = rolling_window_image(
-                                pd.concat(
-                                    [
-                                        train_tf_val,
-                                        pd.Series(
-                                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                                            index=test.index,
-                                        ),
-                                    ]
-                                ),
-                                window,
-                                representation,
-                                wavelet,
-                                level,
-                            )
-                            data_val = data_val.dropna()
-
-                            X_train_v, X_test_v, y_train_v, _ = train_test_split(
-                                data_val, horizon
-                            )
-                            results_rg = find_best_parameter_optuna(
-                                X_train_v,
-                                X_test_v,
-                                y_train_v,
-                                train_val,
-                                test_val,
-                                transform,
-                            )
-
-                        if regr == "rf":
-                            results_rg["random_state"] = 42
-                            rg = RandomForestRegressor(**results_rg)
-                        elif regr == "knn":
-                            rg = KNeighborsRegressor(**results_rg)
-                        elif regr == "catboost":
-                            results_rg["random_state"] = 42
-                            rg = CatBoostRegressor(**results_rg)
-                        elif regr == "ridge":
-                            rg = RidgeCV(**results_rg)
-                        elif regr == "svr":
-                            rg = SVR(**results_rg)
-                        elif regr == "linear_svr":
-                            rg = LinearSVR(**results_rg)
-                        elif regr == "fpca":
-                            rg = FPCARegressor(
-                                n_jobs=1,
-                                bspline=True,
-                                order=4,
-                                # estimator=RidgeCV(**{'alphas': np.logspace(-3, 3, 10)}),
-                                n_basis=10,
-                                # n_basis=None
-                            )
-                        else:
-                            raise ValueError("nao existe esse regressor")
-                        rg.fit(X_train, y_train)
-
-                        predictions = recursive_step(
-                            X_test,
-                            train_stl,
-                            rg,
-                            horizon,
-                            window,
-                            transform,
-                            representation,
-                            wavelet,
-                            level,
-                        )
-                        preds_real = pd.Series(predictions, index=test.index)
-                        end_exp = time.perf_counter()
-
-                        error_series = [
-                            a - b for a, b in zip(test.tolist(), preds_real)
-                        ]
-                        y_baseline = train[-horizon * 1 :].values
-                        rmse_result = rmse(test, preds_real)
-                        mape_result = mape(test, preds_real)
-                        pocid_result = pocid(test, preds_real)
-                        pbe_result = pbe(test, preds_real)
-                        mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
-                        mase_result = mase(test, preds_real, y_baseline)
-
-                        os.makedirs(path_derivado, exist_ok=True)
-                        csv_path = f"{path_derivado}/transform_{uf}.csv"
-
-                        if not os.path.exists(csv_path):
-                            pd.DataFrame(columns=cols).to_csv(
-                                csv_path, sep=";", index=False
-                            )
-                        final_exp = end_exp - start_exp
-                        df_temp = pd.DataFrame(
-                            {
-                                "train_range": train_range,
-                                "test_range": test_range,
-                                "time": final_exp,
-                                "UF": uf,
-                                "PRODUCT": derivado,
-                                "MODEL": f"{representation}_{regr}_{wavelet}",
-                                "PARAMS": str(results_rg),
-                                "WINDOW": window,
-                                "HORIZON": horizon,
-                                "RMSE": rmse_result,
-                                "MAPE": mape_result,
-                                "POCID": pocid_result,
-                                "PBE": pbe_result,
-                                "MCPM": mcpm_result,
-                                "MASE": mase_result,
-                                "P1": preds_real[0],
-                                "P2": preds_real[1],
-                                "P3": preds_real[2],
-                                "P4": preds_real[3],
-                                "P5": preds_real[4],
-                                "P6": preds_real[5],
-                                "P7": preds_real[6],
-                                "P8": preds_real[7],
-                                "P9": preds_real[8],
-                                "P10": preds_real[9],
-                                "P11": preds_real[10],
-                                "P12": preds_real[11],
-                                "error_series": [error_series],
-                            },
-                            index=[0],
-                        )
-                        df_temp.to_csv(
-                            csv_path, sep=";", mode="a", header=False, index=False
-                        )
-
-                    except Exception as e:
-                        print_log(
-                            f"Error: Not possible to train for {derivado}-{transform} in {uf}\n {e}"
-                        )
-                        traceback.print_exc()
-
-
 def run_tsf_image_series(args):
-    frequency, horizon, line, i, regressor, dataset = args
+    frequency, horizon, line, i, regressor, dataset, representation_tf, only_features = args
     global regr
     global representation
     global wavelet
     global level
+<<<<<<< HEAD
     representation = "FT"
     only_features = False
+=======
+    representation = representation_tf
+    # only_features =
+>>>>>>> 885aed4bb531ed810ad8d46a04bffa2ef29ac745
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
     # horizon = 12
@@ -584,7 +341,7 @@ def run_tsf_image_series(args):
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
             start_exp = time.perf_counter()
-            flag = generate_experiment(path_csv, i, final_test)
+            flag = generate_experiment(path_csv, i, final_test, freq)
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
                 train_tf_val = transform_regressors(train_val, format=transform)
@@ -715,7 +472,7 @@ def run_tsf_image_series(args):
 
 
 def run_tsf_normal_series(args):
-    frequency, horizon, line, i, regressor, dataset = args
+    frequency, horizon, line, i, regressor, dataset, representation_tf, only_features = args
     global regr
     # horizon = 12
     window = horizon
@@ -811,7 +568,7 @@ def run_tsf_normal_series(args):
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             # flag = True
-            flag = generate_experiment(path_csv, i, start_test)
+            flag = generate_experiment(path_csv, i, start_test, freq)
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
                 train_tf_val = transform_regressors(train_val, format=transform)
@@ -935,6 +692,9 @@ def run_tsf_normal_series(args):
                     )
 
                 except Exception as e:
+                    print_log(f" ==== DATASET {dataset} line {i}")
+                    print_log(f" ==== FINAL_TEST {final_test}")
+                    print_log(f" ==== LINE {line}")
                     print_log(e)
                     traceback.print_exc()
 
@@ -959,7 +719,48 @@ if __name__ == "__main__":
     # frequency = metadata['frequency']
     # horizon = metadata['horizon']
     # regr = 'catboost'
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--regr",
+        type=str,
+        required=True,
+        help="Regressor name (e.g. NaiveSeasonal, catboost, etc.)"
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        required=True,
+        help="Type of series to run: [image, normal]"
+    )
+    
+    parser.add_argument(
+        "--transform",
+        type=str,
+        required=True,
+        help="Type of transformation to apply: [CWT, DWT, FT, None]"
+    )
+    
+    parser.add_argument(
+        "--only_feat",
+        type=bool,
+        required=True,
+        help="Add features to training data? [True, False]"
+    )
 
+    args = parser.parse_args()
+    regr = args.regr
+    type_series = args.type
+    representation_tf = args.transform
+    only_features = args.only_feat
+    
+    
+    allowed_representations = ["CWT", "DWT", "FT", "None"]
+    if representation_tf not in allowed_representations:
+        raise ValueError(f"Transformação desconhecida: {representation_tf}. Escolha entre {allowed_representations}.")
+    allowed_type = ["image", "normal"]
+    if type_series not in allowed_type:
+        raise ValueError(f"Tipo de série desconhecido: {type_series}. Escolha entre {allowed_type}.")
+    
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
@@ -998,18 +799,29 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
+<<<<<<< HEAD
         regr = "catboost"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
             run_tsf_image_series(args)
             # run_tsf_normal_series(args)
+=======
+        # regr = "catboost"
+
+        def run_wrapper(args):
+            # frequency, horizon, line, i = args
+            if type_series == "image":
+                run_tsf_image_series(args)
+            elif type_series == "normal":  
+                run_tsf_normal_series(args)
+>>>>>>> 885aed4bb531ed810ad8d46a04bffa2ef29ac745
 
         tasks = [
-            (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
+            (frequency, horizon, df.iloc[i], i, regr, dataset, representation_tf, only_features) for i in range(len(df))
         ]
 
-        with multiprocessing.Pool(processes=10) as pool:
+        with multiprocessing.Pool(processes=6) as pool:
             pool.map(run_wrapper, tasks)
 
     print_log(

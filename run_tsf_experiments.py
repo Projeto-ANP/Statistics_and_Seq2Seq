@@ -1,3 +1,5 @@
+import argparse
+
 import pandas as pd
 from darts import TimeSeries
 from darts.datasets import AirPassengersDataset
@@ -38,7 +40,7 @@ from neuralforecast import NeuralForecast
 from neuralforecast.models import NHITS, NBEATS, MLP
 
 from metaforecast.ensembles import ADE
-
+date_only_freqs = {"D"}
 
 def objective_optuna(trial, train_val_darts, train_val, transform, test_val):
     try:
@@ -790,7 +792,7 @@ def run_error_tsf_file(tsf_file, dataset_name):
     df_final = pd.DataFrame([data_dataset])
     df_final.to_csv(path_dataset, sep=";", mode="a", header=False, index=False)
 
-def generate_experiment(caminho_arquivo, dataset_index, final_test):
+def generate_experiment(caminho_arquivo, dataset_index, final_test, freq):
     try:
         if not os.path.exists(caminho_arquivo):
             print_log(f"Arquivo nao encontrado: {caminho_arquivo}")
@@ -803,7 +805,11 @@ def generate_experiment(caminho_arquivo, dataset_index, final_test):
             print_log("Coluna 'final_test' nao encontrada no arquivo.")
             return True
 
-        if str(final_test) not in df["final_test"].values:
+        str_final_test = str(final_test)
+        if freq in date_only_freqs:
+            str_final_test = str(pd.Timestamp(final_test).date())
+            
+        if str_final_test not in df["final_test"].values:
             print_log(f'Continuando... {final_test} em "{caminho_arquivo}".')
             return True
     except Exception as e:
@@ -820,7 +826,7 @@ def run_darts_series(args):
     regr = regressor
     transformations = ["normal"]
     chave = ""
-
+    print_log(f'Rodando dataset {dataset} com regressor {regr}')
     cols_serie = [
         "dataset_index",
         "horizon",
@@ -852,12 +858,12 @@ def run_darts_series(args):
         "hourly": "H",
         "half_hourly": "30min",  # 30T
         "15min": "15min",
-    }
+    }    
 
     freq = freq_map.get(frequency)
     if freq is None:
         raise ValueError(f"Frequência desconhecida: {frequency}")
-
+    print_log(f"Frequência mapeada: {frequency} -> {freq}")
     index_series = pd.date_range(
         start=start_timestamp, periods=len(series_value), freq=freq
     )
@@ -908,7 +914,7 @@ def run_darts_series(args):
             path_experiments = f"./timeseries/mestrado/resultados/{regr}/{transform}"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
-            flag = generate_experiment(path_csv, i, final_test)
+            flag = generate_experiment(path_csv, i, final_test, freq)
             start_exp = time.perf_counter()
             if flag:
                 train_tf = transform_regressors(train_stl, transform)
@@ -1087,6 +1093,16 @@ if __name__ == "__main__":
 
     # mask = df["series_value"].apply(should_remove)
     # df = df[~mask]
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--regr",
+        type=str,
+        required=True,
+        help="Regressor name (e.g. NaiveSeasonal, catboost, etc.)"
+    )
+
+    args = parser.parse_args()
+    regr = args.regr
     files = [
         # "m4_daily_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
@@ -1125,8 +1141,10 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "ARIMA"
-
+        # regr = "NaiveSeasonal"
+        av_models = ["ARIMA", "ETS", "THETA", "NaiveSeasonal", "NaiveMean", "NaiveDrift", "NaiveMovingAverage", "TBATS", "RandomForest", "CatBoost", "NBEATS", "Transformer", "TFT", "NHiTS"]
+        if regr not in av_models:
+            raise ValueError(f"Regressor {regr} não disponível. Escolha entre: {av_models}")
         # df.iloc[i]
         def run_wrapper(args):
             # frequency, horizon, line, i = args
