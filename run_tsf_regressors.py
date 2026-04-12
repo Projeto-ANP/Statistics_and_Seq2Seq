@@ -686,6 +686,9 @@ def run_tsf_normal_series(args):
                     )
 
                 except Exception as e:
+                    print_log(f" ==== DATASET {dataset} line {i}")
+                    print_log(f" ==== FINAL_TEST {final_test}")
+                    print_log(f" ==== LINE {line}")
                     print_log(e)
                     traceback.print_exc()
 
