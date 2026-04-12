@@ -212,7 +212,7 @@ def run_tsf_image_series(args):
     global representation
     global wavelet
     global level
-    representation = "DWT"
+    representation = "CWT"
     only_features = True
     wavelet = "bior2.2"
     level = 2  # only DWT/SWT
@@ -749,18 +749,18 @@ if __name__ == "__main__":
 
         frequency = metadata["frequency"]
         horizon = metadata["horizon"]
-        regr = "rf"
+        regr = "catboost"
 
         def run_wrapper(args):
             # frequency, horizon, line, i = args
-            # run_tsf_image_series(args)
-            run_tsf_normal_series(args)
+            run_tsf_image_series(args)
+            # run_tsf_normal_series(args)
 
         tasks = [
             (frequency, horizon, df.iloc[i], i, regr, dataset) for i in range(len(df))
         ]
 
-        with multiprocessing.Pool(processes=10) as pool:
+        with multiprocessing.Pool(processes=6) as pool:
             pool.map(run_wrapper, tasks)
 
     print_log(
