@@ -26,11 +26,27 @@ def print_log(message):
     print(f"\n[{current_time}] {message}")
 
 
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+
+    value = str(value).strip().lower()
+    if value in {"true", "1", "yes", "y", "t"}:
+        return True
+    if value in {"false", "0", "no", "n", "f"}:
+        return False
+
+    raise argparse.ArgumentTypeError(
+        f"Valor booleano inválido: {value}. Use True/False."
+    )
+
+
 def objective_optuna(trial):
     global X_train_v, y_train_v, X_test_v
     global train_original, test_val
     global regr, format_v, horizon
     global representation, wavelet, level
+    global use_image_recursive, only_features_optuna, freq_optuna
 
     if regr == "xgb":
         param = {
@@ -85,11 +101,20 @@ def objective_optuna(trial):
 
     elif regr == "catboost":
         param = {
-            "iterations": trial.suggest_categorical("iterations", [100, 200]),
-            "learning_rate": trial.suggest_uniform("learning_rate", 0.01, 0.3),
-            "depth": trial.suggest_int("depth", 4, 9),
-            "loss_function": trial.suggest_categorical("loss_function", ["RMSE"]),
+            "iterations": trial.suggest_categorical("iterations", [100, 200, 500]),
+            "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.05), 
+            "depth": trial.suggest_int("depth", 4, 8),
+            
+            "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 5.0, 20.0),
+            "loss_function": "MAE",
             "random_state": 42,
+            "verbose": 0,
+
+            "leaf_estimation_backtracking": "AnyImprovement",
+            "leaf_estimation_iterations": 1,
+            "bootstrap_type": "Bernoulli",
+            "subsample": trial.suggest_float("subsample", 0.5, 0.8),
+            "early_stopping_rounds": 20 
         }
         model = CatBoostRegressor(**param)
 
@@ -97,17 +122,32 @@ def objective_optuna(trial):
         raise ValueError(f"MODELO {regr} nao existe")
 
     try:
-        model.fit(X_train_v, y_train_v)
+        if regr == "catboost":
+            model.fit(X_train_v, y_train_v, verbose=0)
+        else:
+            model.fit(X_train_v, y_train_v)
 
-        # transformados
-        # predictions = recursive_step(X_test_v, train_original, model, horizon, window, format_v, representation, wavelet, level)
-        # preds_real = pd.Series(predictions, index=test_val.index)
-
-        predictions = recursive_multistep_forecasting(X_test_v, model, horizon)
-        preds = pd.Series(predictions, index=test_val.index)
-        preds_real = reverse_regressors(
-            train_original, preds, window=horizon, format=format_v
-        )
+        if use_image_recursive:
+            predictions = recursive_step(
+                X_test_v,
+                train_original,
+                model,
+                horizon,
+                horizon,
+                format_v,
+                representation,
+                wavelet,
+                level,
+                only_features=only_features_optuna,
+                freq=freq_optuna,
+            )
+            preds_real = pd.Series(predictions, index=test_val.index)
+        else:
+            predictions = recursive_multistep_forecasting(X_test_v, model, horizon)
+            preds = pd.Series(predictions, index=test_val.index)
+            preds_real = reverse_regressors(
+                train_original, preds, window=horizon, format=format_v
+            )
 
         mape_result = mape(test_val, preds_real)
     except Exception as e:
@@ -162,14 +202,24 @@ def generate_experiment(caminho_arquivo, dataset_index, final_test, freq):
             str_final_test = str(pd.Timestamp(final_test).date())
             
         if str_final_test not in df["final_test"].values:
-            print_log(f'Continuando... {final_test} em "{caminho_arquivo}".')
+            print_log(f'CHECK {final_test} != {df["final_test"].values} em "{caminho_arquivo}".')
             return True
     except Exception as e:
         print_log(f"Erro em: {caminho_arquivo} | {e}")
     return False
 
 
-def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format):
+def find_best_parameter_optuna(
+    train_x,
+    test_x,
+    train_y,
+    train_v,
+    test_v,
+    format,
+    use_recursive_image=False,
+    only_features=False,
+    freq=None,
+):
     global X_train_v
     global y_train_v
     global X_test_v
@@ -177,6 +227,9 @@ def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format
     global regr
     global test_val
     global format_v
+    global use_image_recursive
+    global only_features_optuna
+    global freq_optuna
 
     X_train_v = train_x
     y_train_v = train_y
@@ -184,6 +237,9 @@ def find_best_parameter_optuna(train_x, test_x, train_y, train_v, test_v, format
     train_original = train_v
     test_val = test_v
     format_v = format
+    use_image_recursive = use_recursive_image
+    only_features_optuna = only_features
+    freq_optuna = freq
     if regr == "ridge":
         return {"alphas": np.logspace(-3, 3, 10)}
 
@@ -205,10 +261,22 @@ regr = "SEM MODELO"
 representation = "NONE"
 level = -1
 wavelet = "none"
+use_image_recursive = False
+only_features_optuna = False
+freq_optuna = None
 
 
 def run_tsf_image_series(args):
-    frequency, horizon, line, i, regressor, dataset, representation_tf, only_features = args
+    (
+        frequency,
+        horizon,
+        line,
+        i,
+        regressor,
+        dataset,
+        representation_tf,
+        only_features,
+    ) = args
     global regr
     global representation
     global wavelet
@@ -220,7 +288,7 @@ def run_tsf_image_series(args):
     # horizon = 12
     window = horizon
     regr = regressor
-    transformations = ["normal"]
+    transformations = ["log"]
     chave = ""
 
     cols_serie = [
@@ -331,7 +399,7 @@ def run_tsf_image_series(args):
             else:
                 representation_mod = representation
             exp_name = f"{representation_mod}_{regr}_{transform}"
-            path_experiments = f"./timeseries/mestrado/resultados/{representation_mod}_{regr}/{transform}"
+            path_experiments = f"./timeseries/mestrado/resultados/{representation_mod}_{regr}/normal"
             path_csv = f"{path_experiments}/{dataset}.csv"
             os.makedirs(path_experiments, exist_ok=True)
             flag = True
@@ -349,7 +417,12 @@ def run_tsf_image_series(args):
                     level,
                     only_features,
                 )
-                data = data.dropna()
+                data = data.replace([np.inf, -np.inf], np.nan).dropna()
+                if len(data) <= horizon:
+                    print_log(
+                        f"Dados insuficientes após limpeza (train) | dataset={dataset} | line={i} | transform={transform}"
+                    )
+                    continue
                 X_train, X_test, y_train, _ = train_test_split(data, horizon)
 
                 results_rg = {"alphas": np.logspace(-3, 3, 10)}
@@ -365,13 +438,26 @@ def run_tsf_image_series(args):
                         level,
                         only_features,
                     )
-                    data_val = data_val.dropna()
+                    data_val = data_val.replace([np.inf, -np.inf], np.nan).dropna()
+                    if len(data_val) <= horizon:
+                        print_log(
+                            f"Dados insuficientes após limpeza (val) | dataset={dataset} | line={i} | transform={transform}"
+                        )
+                        continue
 
                     X_train_v, X_test_v, y_train_v, _ = train_test_split(
                         data_val, horizon
                     )
                     results_rg = find_best_parameter_optuna(
-                        X_train_v, X_test_v, y_train_v, train_val, test_val, transform
+                        X_train_v,
+                        X_test_v,
+                        y_train_v,
+                        train_val,
+                        test_val,
+                        transform,
+                        use_recursive_image=True,
+                        only_features=only_features,
+                        freq=freq,
                     )
 
                 if regr == "rf":
@@ -410,6 +496,7 @@ def run_tsf_image_series(args):
                     wavelet,
                     level,
                     only_features=only_features,
+                    freq=freq,
                 )
                 preds_real = pd.Series(predictions, index=test.index)
                 end_exp = time.perf_counter()
@@ -423,7 +510,12 @@ def run_tsf_image_series(args):
                 # mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
                 # mase_result = mase(test, preds_real, y_baseline)
 
-                preds_real_array = np.array(preds_real.values)
+                preds_real_array = np.array(preds_real.values, dtype=float)
+                if not np.all(np.isfinite(preds_real_array)):
+                    print_log(
+                        f"Predições não finitas em image | dataset={dataset} | line={i} | transform={transform} | regr={regr}"
+                    )
+                    continue
                 preds_real_reshaped = preds_real_array.reshape(1, -1)
                 test_reshaped = test.values.reshape(1, -1)
                 smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
@@ -467,12 +559,21 @@ def run_tsf_image_series(args):
 
 
 def run_tsf_normal_series(args):
-    frequency, horizon, line, i, regressor, dataset, representation_tf, only_features = args
+    (
+        frequency,
+        horizon,
+        line,
+        i,
+        regressor,
+        dataset,
+        representation_tf,
+        only_features,
+    ) = args
     global regr
     # horizon = 12
     window = horizon
     regr = regressor
-    transformations = ["normal"]
+    transformations = ["log"]
     chave = ""
 
     cols_serie = [
@@ -574,7 +675,12 @@ def run_tsf_normal_series(args):
                         ),
                         window,
                     )
-                    data = data.dropna()
+                    data = data.replace([np.inf, -np.inf], np.nan).dropna()
+                    if len(data) <= horizon:
+                        print_log(
+                            f"Dados insuficientes após limpeza (train) | dataset={dataset} | line={i} | transform={transform}"
+                        )
+                        continue
                     X_train, X_test, y_train, _ = train_test_split(data, horizon)
 
                     results_rg = {"alphas": np.logspace(-3, 3, 10)}
@@ -589,7 +695,12 @@ def run_tsf_normal_series(args):
                             ),
                             window,
                         )
-                        data_val = data_val.dropna()
+                        data_val = data_val.replace([np.inf, -np.inf], np.nan).dropna()
+                        if len(data_val) <= horizon:
+                            print_log(
+                                f"Dados insuficientes após limpeza (val) | dataset={dataset} | line={i} | transform={transform}"
+                            )
+                            continue
 
                         X_train_v, X_test_v, y_train_v, _ = train_test_split(
                             data_val, horizon
@@ -646,7 +757,12 @@ def run_tsf_normal_series(args):
                     # mcpm_result = mcpm(rmse_result, mape_result, pocid_result)
                     # mase_result = mase(test, preds_real, y_baseline)
 
-                    preds_real_array = np.array(preds_real.values)
+                    preds_real_array = np.array(preds_real.values, dtype=float)
+                    if not np.all(np.isfinite(preds_real_array)):
+                        print_log(
+                            f"Predições não finitas em normal | dataset={dataset} | line={i} | transform={transform} | regr={regr}"
+                        )
+                        continue
                     preds_real_reshaped = preds_real_array.reshape(1, -1)
                     test_reshaped = test.values.reshape(1, -1)
                     smape_result = calculate_smape(preds_real_reshaped, test_reshaped)
@@ -737,7 +853,7 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--only_feat",
-        type=bool,
+        type=parse_bool,
         required=True,
         help="Add features to training data? [True, False]"
     )
@@ -752,6 +868,7 @@ if __name__ == "__main__":
     allowed_representations = ["CWT", "DWT", "FT", "None"]
     if representation_tf not in allowed_representations:
         raise ValueError(f"Transformação desconhecida: {representation_tf}. Escolha entre {allowed_representations}.")
+
     allowed_type = ["image", "normal"]
     if type_series not in allowed_type:
         raise ValueError(f"Tipo de série desconhecido: {type_series}. Escolha entre {allowed_type}.")
@@ -761,12 +878,12 @@ if __name__ == "__main__":
         # "nn5_daily_dataset_without_missing_values.tsf",
         # "nn5_weekly_dataset.tsf",
         # "pedestrian_counts_dataset.tsf",
-        "us_births_dataset.tsf",
+        # "us_births_dataset.tsf",
         # "australian_electricity_demand_dataset.tsf",
         # "m4_hourly_dataset.tsf",
-        "m4_weekly_dataset.tsf",
+        # "m4_weekly_dataset.tsf",
         # "nn5_daily_dataset_without_missing_values.tsf",
-        "nn5_weekly_dataset.tsf",
+        # "nn5_weekly_dataset.tsf",
         "ETTH1.tsf",
         "ETTH2.tsf",
         "ETTM1.tsf",
@@ -804,7 +921,17 @@ if __name__ == "__main__":
                 run_tsf_normal_series(args)
 
         tasks = [
-            (frequency, horizon, df.iloc[i], i, regr, dataset, representation_tf, only_features) for i in range(len(df))
+            (
+                frequency,
+                horizon,
+                df.iloc[i],
+                i,
+                regr,
+                dataset,
+                representation_tf,
+                only_features,
+            )
+            for i in range(len(df))
         ]
 
         with multiprocessing.Pool(processes=6) as pool:

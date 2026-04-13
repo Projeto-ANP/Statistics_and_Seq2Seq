@@ -18,40 +18,87 @@ import ast
 
 warnings.filterwarnings("ignore")
 
+NORM_EPS = 1e-8
+MAX_EXPM1_INPUT = np.log(np.finfo(np.float64).max) - 1e-9
+
+
+def _safe_std(std_value, eps=NORM_EPS):
+    if not np.isfinite(std_value) or abs(std_value) < eps:
+        return eps
+    return std_value
+
+
+def signed_log1p(x):
+    if isinstance(x, pd.Series):
+        transformed = np.sign(x.values) * np.log1p(np.abs(x.values))
+        return pd.Series(transformed, index=x.index)
+
+    values = np.asarray(x, dtype=float)
+    return np.sign(values) * np.log1p(np.abs(values))
+
+
+def signed_expm1(x):
+    if isinstance(x, pd.Series):
+        clipped = np.clip(np.abs(x.values), 0.0, MAX_EXPM1_INPUT)
+        inverted = np.sign(x.values) * np.expm1(clipped)
+        return pd.Series(inverted, index=x.index)
+
+    values = np.asarray(x, dtype=float)
+    clipped = np.clip(np.abs(values), 0.0, MAX_EXPM1_INPUT)
+    return np.sign(values) * np.expm1(clipped)
+
 
 def znorm(x):
-    x_znorm = (x - np.mean(x)) / np.std(x)
-    return x_znorm
+    if isinstance(x, pd.Series):
+        mean = np.mean(x.values)
+        std = np.std(x.values)
+        if not np.isfinite(std) or abs(std) < NORM_EPS:
+            return pd.Series(np.zeros_like(x.values, dtype=float), index=x.index)
+        x_znorm = (x.values - mean) / std
+        return pd.Series(x_znorm, index=x.index)
+
+    values = np.asarray(x, dtype=float)
+    mean = np.mean(values)
+    std = np.std(values)
+    if not np.isfinite(std) or abs(std) < NORM_EPS:
+        return np.zeros_like(values, dtype=float)
+    return (values - mean) / std
 
 
 def znorm_2(x):
     if isinstance(x, pd.Series):
         index_x = x.index
+        values = x.values
     else:
         index_x = None
+        values = np.asarray(x, dtype=float)
 
-    std = np.std(x)
+    std = np.std(values)
+    if not np.isfinite(std) or abs(std) < NORM_EPS:
+        zeros = np.zeros_like(values, dtype=float)
+        return pd.Series(zeros, index=index_x) if index_x is not None else zeros
 
-    if std == 0:
-        return pd.Series(np.zeros_like(x), index=index_x)
-    else:
-        x_znorm = (x - np.mean(x)) / std
-        return pd.Series(x_znorm, index=index_x) if index_x is not None else x_znorm
+    x_znorm = (values - np.mean(values)) / std
+    return pd.Series(x_znorm, index=index_x) if index_x is not None else x_znorm
 
 
 def znorm_by(x, serie_ref):
     mean = np.mean(serie_ref)
     std = np.std(serie_ref)
+    if not np.isfinite(std) or abs(std) < NORM_EPS:
+        return 0.0
     x_znorm = (x - mean) / std
     return x_znorm
 
 
 def znorm_mean_std(x, mean, std):
+    std = _safe_std(std)
     x_znorm = (x - mean) / std
     return x_znorm
 
 
 def znorm_reverse(x, mean_x, std_x):
+    std_x = _safe_std(std_x)
     x_denormalized = (x * std_x) + mean_x
     return x_denormalized
 
@@ -979,9 +1026,7 @@ def transform_regressors(train, format="normal"):
         # train_deseasonal = fit_transform_STL(train, train)
         return train_deseasonal
     elif format == "log":
-        constante = 10
-        train_log = np.log(train + constante)
-        return train_log
+        return signed_log1p(train)
     elif format == "normal":
         return train
 
@@ -997,26 +1042,25 @@ def reverse_regressors(train_real, preds, window, format="normal"):
 
         # _, mean, std = rolling_window_series(series_before_norm, window)
         mean = np.mean(series_before_norm.iloc[-window:])
-        std = np.std(series_before_norm.iloc[-window:])
+        std = _safe_std(np.std(series_before_norm.iloc[-window:]))
         preds_transformed = znorm_reverse(preds, mean, std)
 
         series_real = transform.inverse_transform(preds_transformed)
         # series_real = fit_inverse_transform_STL(train_real, preds_transformed)
         return series_real
     elif format == "log":
-        constante = 10
-        series_before_norm = np.log(train_real)
+        series_before_norm = signed_log1p(train_real)
         # _, mean, std = rolling_window_series(series_before_norm, window)
         mean = np.mean(series_before_norm.iloc[-window:])
-        std = np.std(series_before_norm.iloc[-window:])
+        std = _safe_std(np.std(series_before_norm.iloc[-window:]))
 
         preds_transformed = znorm_reverse(preds, mean, std)
 
-        return np.exp(preds_transformed) - constante
+        return signed_expm1(preds_transformed)
     elif format == "normal":
         # _, mean, std = rolling_window_series(train_real, window)
         mean = np.mean(train_real.iloc[-window:])
-        std = np.std(train_real.iloc[-window:])
+        std = _safe_std(np.std(train_real.iloc[-window:]))
 
         preds_real = znorm_reverse(preds, mean, std)
         return preds_real
@@ -1740,27 +1784,59 @@ def inverse_tranformation(train, serie_target, window, format="normal"):
         series_before_norm = transform.transform(train)
 
         mean = np.mean(series_before_norm.iloc[-window:])
-        std = np.std(series_before_norm.iloc[-window:])
+        std = _safe_std(np.std(series_before_norm.iloc[-window:]))
 
         preds_transformed = znorm_reverse(serie_target, mean, std)
 
         series_real = transform.inverse_transform(preds_transformed)
         return series_real
     elif format == "log":
-        constante = 10
-        series_before_norm = np.log(train)
+        series_before_norm = signed_log1p(train)
         mean = np.mean(series_before_norm.iloc[-window:])
-        std = np.std(series_before_norm.iloc[-window:])
+        std = _safe_std(np.std(series_before_norm.iloc[-window:]))
         preds_transformed = znorm_reverse(serie_target, mean, std)
 
-        return np.exp(preds_transformed) - constante
+        return signed_expm1(preds_transformed)
     elif format == "normal":
         mean = np.mean(train.iloc[-window:])
-        std = np.std(train.iloc[-window:])
+        std = _safe_std(np.std(train.iloc[-window:]))
         preds_real = znorm_reverse(serie_target, mean, std)
         return preds_real
 
     raise ValueError("nao existe essa transformacao")
+
+
+def _get_next_index_value(index, freq=None):
+    last_value = index[-1]
+
+    if freq is not None:
+        try:
+            return last_value + pd.tseries.frequencies.to_offset(freq)
+        except Exception:
+            pass
+
+    index_freq = getattr(index, "freq", None)
+    if index_freq is not None:
+        return last_value + index_freq
+
+    try:
+        inferred_freq = pd.infer_freq(index) if len(index) >= 3 else None
+    except Exception:
+        inferred_freq = None
+
+    if inferred_freq is not None:
+        try:
+            return last_value + pd.tseries.frequencies.to_offset(inferred_freq)
+        except Exception:
+            pass
+
+    if len(index) >= 2:
+        return last_value + (index[-1] - index[-2])
+
+    try:
+        return last_value + pd.Timedelta(days=1)
+    except Exception:
+        return last_value + 1
 
 
 def recursive_step(
@@ -1774,22 +1850,25 @@ def recursive_step(
     wavelet,
     level,
     only_features=False,
+    freq=None,
 ):
     example = X_test.iloc[0].values.reshape(1, -1)
-    last_window_train = train_completo[-window:].tolist()
-    last_window_train_pd = train_completo[-window:]
     preds = []
     preds_real = []
     for i in range(horizon):
         pred = model.predict(example)[0]
         preds.append(pred)
 
-        # normaliza a ultima janela de train original
-        last_window_train_pd = znorm_2(last_window_train_pd)
+        # aplica transformacao de escala antes da normalizacao para manter
+        # consistencia forward/inverse em cada passo recursivo
+        last_window_real_pd = train_completo.iloc[-window:]
+        last_window_transformed_pd = transform_regressors(
+            last_window_real_pd, format=transform
+        )
+        last_window_train_pd = znorm_2(last_window_transformed_pd)
 
         # pega o valor do proximo index de train para adicionar em predicao
-        # index_pred = last_window_train_pd.index[-1] + 1
-        index_pred = last_window_train_pd.index[-1] + pd.DateOffset(months=1)
+        index_pred = _get_next_index_value(last_window_train_pd.index, freq=freq)
         # print("LAST WINDOW")
         # print(last_window_train_pd.index[-1])
         # print("INDEX PRED")
@@ -1809,19 +1888,17 @@ def recursive_step(
         ).iloc[-1]
 
         # adiciona preds real ao pedaco do train real para proximas reversoes
-        index_pred_real = train_completo.index[-1] + pd.DateOffset(months=1)
+        index_pred_real = _get_next_index_value(train_completo.index, freq=freq)
         pred_real_as_pd = pd.Series([pred_real], index=[index_pred_real])
         train_completo = pd.concat([train_completo, pred_real_as_pd])
 
         # adiciona a predicao em escala real na lista de preds real
         preds_real.append(pred_real)
 
-        # pega ultima janela do train original e tira o primeiro valor para concatenar a predicao posteriormente
-        last_window_train = last_window_train[1:]
-        last_window_train.append(pred_real)
-
-        # normalizo o ultimo pedaco do train(window) + preds
-        last_window_train_norm = znorm_2(last_window_train)
+        # normaliza novamente a ultima janela transformada para gerar o proximo X
+        next_window_real = train_completo.iloc[-window:]
+        next_window_transformed = transform_regressors(next_window_real, format=transform)
+        last_window_train_norm = np.asarray(znorm_2(next_window_transformed), dtype=float)
 
         # transformo novamente para gerar novo X_test
         if only_features:
