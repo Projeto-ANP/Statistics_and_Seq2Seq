@@ -1055,6 +1055,174 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def resolve_unknown_candidate(name: str, n_models: int, n_windows: int) -> Optional[Dict[str, Any]]:
+    """Parse an LLM-invented candidate name and produce a valid candidate dict.
+
+    Returns None if the name cannot be mapped to any supported method.
+    The canonical name in the returned dict matches the naming convention used by
+    _candidate_universe_from_summary, so the resolved candidate can be inserted
+    into `by_name` transparently.
+    """
+    import re
+
+    raw = name.strip().lower().replace(" ", "_").replace("-", "_")
+
+    def _clamp(v: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, v))
+
+    def _pct(v: float) -> float:
+        return v / 100.0 if v > 1.0 else v
+
+    nm = max(2, int(n_models or 2))
+
+    # ── trimmed mean ─────────────────────────────────────────────────────────
+    # patterns: trimmed_mean_tr0.2, trimmed_mean_0.2, trimmed_mean_20, trim_0.2, trim_20pct
+    m = re.match(r"(?:trimmed_?mean|trim)(?:_(?:tr?|ratio)?_?)?(\d+\.?\d*)", raw)
+    if m:
+        val = _clamp(_pct(float(m.group(1))), 0.0, 0.4)
+        cname = f"trimmed_mean_r{val:.2f}"
+        return {
+            "name": cname, "type": "baseline", "learns_weights": False,
+            "constraints": "No leakage (no fitting)", "validation_plan": "rolling",
+            "params": {"method": "trimmed_mean", "trim_ratio": val},
+        }
+
+    # ── topk mean ────────────────────────────────────────────────────────────
+    # patterns: topk_mean_k3, topk3, top_k_3, top3_mean, top_mean_k4
+    m = re.match(r"top_?k?_?(?:mean|avg)?_?(?:per_?horizon)?_?k?_?(\d+)", raw) or \
+        re.match(r"(?:topk|top)(\d+)_?(?:mean|avg)?", raw)
+    if m:
+        k = _clamp(int(m.group(1)), 2, nm)
+        cname = f"topk_mean_per_horizon_k{int(k)}"
+        return {
+            "name": cname, "type": "selection", "learns_weights": False,
+            "constraints": "anti-leakage: selection uses only past windows",
+            "validation_plan": "rolling",
+            "params": {"method": "topk_mean_per_horizon", "top_k": int(k)},
+        }
+
+    # ── inverse RMSE weights ─────────────────────────────────────────────────
+    # patterns: inv_rmse_k3_sh0.25, inverse_rmse_k4, inv_rmse_weights_k3_shrink0.2,
+    #           invrmse_3_0.25, irw_k3_sh0.25
+    m = re.match(
+        r"(?:inv(?:erse)?_?rmse|irw)(?:_?weights)?_?(?:k?_?(\d+))?(?:_?(?:sh|shrink(?:age)?)?_?(\d+\.?\d*))?", raw
+    )
+    if m and (m.group(1) or m.group(2)):
+        k = int(_clamp(int(m.group(1)), 2, nm)) if m.group(1) else min(3, nm)
+        sh = _clamp(_pct(float(m.group(2))), 0.0, 0.9) if m.group(2) else 0.25
+        cname = f"inverse_rmse_weights_k{k}_sh{sh:.2f}"
+        return {
+            "name": cname, "type": "weighted", "learns_weights": True,
+            "constraints": "anti-leakage: weights learned only from past windows",
+            "validation_plan": "rolling",
+            "params": {"method": "inverse_rmse_weights_per_horizon", "top_k": k, "shrinkage": sh},
+        }
+
+    # ── ridge / stacking ─────────────────────────────────────────────────────
+    # patterns: stacking_topk3_sh0.25, ridge_k4_l210, ridge_stacking_k3, stacking_k3
+    # Note: LLMs sometimes confuse shrinkage with l2 — map small values to l2 range.
+    m = re.match(
+        r"(?:ridge_?)?(?:stacking|stack)(?:_?(?:topk?|k)_?(\d+))?(?:_?(?:sh(?:rink(?:age)?)?|l2)_?(\d+\.?\d*))?",
+        raw,
+    ) or re.match(
+        r"ridge(?:_?k?_?(\d+))?(?:_?l2_?(\d+\.?\d*))?", raw
+    )
+    if m and raw.startswith(("stack", "ridge")):
+        k = int(_clamp(int(m.group(1)), 2, nm)) if m.group(1) else min(3, nm)
+        raw_l2 = float(m.group(2)) if m.group(2) else 10.0
+        # If value looks like shrinkage (0 < v ≤ 1), map to l2 heuristically
+        l2 = _clamp(raw_l2 * 40.0 if raw_l2 <= 1.0 else raw_l2, 0.1, 1000.0)
+        cname = f"ridge_stacking_l2{l2:.0f}_topk{k}"
+        return {
+            "name": cname, "type": "stacking", "learns_weights": True,
+            "constraints": "anti-leakage: ridge fit uses only past windows",
+            "validation_plan": "rolling",
+            "params": {"method": "ridge_stacking_per_horizon", "l2": l2, "top_k": k},
+        }
+
+    # ── exp weighted average (EWA) ───────────────────────────────────────────
+    # patterns: exp_weighted_eta1.0, ewa_eta2, exp_avg_e1.5_trim0.8
+    m = re.match(
+        r"(?:exp_?(?:weighted|avg)?|ewa?)(?:_?(?:eta|e)_?(\d+\.?\d*))?(?:_?trim_?(\d+\.?\d*))?", raw
+    )
+    if m and raw.startswith(("exp", "ewa")):
+        eta = _clamp(float(m.group(1)), 0.1, 10.0) if m.group(1) else 1.0
+        tr = _clamp(_pct(float(m.group(2))), 0.5, 1.0) if m.group(2) else 0.8
+        cname = f"exp_weighted_average_eta{eta:.1f}_trim{tr:.1f}"
+        return {
+            "name": cname, "type": "weighted", "learns_weights": True,
+            "constraints": "anti-leakage: weights computed on past windows",
+            "validation_plan": "rolling",
+            "params": {"method": "exp_weighted_average_per_horizon", "eta": eta, "trim_ratio": tr},
+        }
+
+    # ── ADE / dynamic error ──────────────────────────────────────────────────
+    # patterns: ade_beta0.5, ade_dynamic_beta0.3_trim0.8
+    m = re.match(r"ade(?:_?dynamic)?(?:_?(?:beta|b)_?(\d+\.?\d*))?(?:_?trim_?(\d+\.?\d*))?", raw)
+    if m and raw.startswith("ade"):
+        beta = _clamp(float(m.group(1)), 0.1, 0.9) if m.group(1) else 0.5
+        tr = _clamp(_pct(float(m.group(2))), 0.5, 1.0) if m.group(2) else 0.8
+        cname = f"ade_dynamic_error_beta{beta:.1f}_trim{tr:.1f}"
+        return {
+            "name": cname, "type": "weighted", "learns_weights": True,
+            "constraints": "anti-leakage: uses past-window errors only",
+            "validation_plan": "rolling",
+            "params": {"method": "ade_dynamic_error_per_horizon", "beta": beta, "eta": 1.0, "trim_ratio": tr},
+        }
+
+    # ── DBA ──────────────────────────────────────────────────────────────────
+    # patterns: dba_k3, dtw_k4, dtw_barycenter
+    m = re.match(r"(?:dba|dtw)(?:_?(?:bary(?:center)?|combo)?)?(?:_?k?_?(\d+))?", raw)
+    if m and raw.startswith(("dba", "dtw")):
+        k = int(_clamp(int(m.group(1)), 2, nm)) if m.group(1) else nm
+        return {
+            "name": "dba_combination", "type": "baseline", "learns_weights": False,
+            "constraints": "No leakage (no fitting)", "validation_plan": "rolling",
+            "params": {"method": "dba", "top_k": k, "max_iter": 30},
+        }
+
+    # ── STL hierarchical stacking ─────────────────────────────────────────────
+    # patterns: stl_stacking_p12_sh0.2, stl_hierarchical_p7, hierarchical_stl_p4
+    m = re.match(
+        r"(?:stl_?)?(?:hierarchical|hier)_?(?:stl|stacking)?(?:_?p_?(\d+))?(?:_?sh_?(\d+\.?\d*))?", raw
+    ) or re.match(
+        r"stl_?(?:stacking|stack|hierarchical)?(?:_?p_?(\d+))?(?:_?sh_?(\d+\.?\d*))?", raw
+    )
+    if m and ("stl" in raw or "hier" in raw):
+        p = max(2, int(m.group(1))) if m.group(1) else 2
+        sh = _clamp(float(m.group(2)), 0.0, 0.9) if m.group(2) else 0.0
+        cname = f"stl_hierarchical_stacking_p{p}_sh{sh:.1f}"
+        return {
+            "name": cname, "type": "stacking", "learns_weights": True,
+            "constraints": "anti-leakage: per-component weights learned only from past windows",
+            "validation_plan": "rolling",
+            "params": {"method": "stl_hierarchical_stacking", "period": p, "shrinkage": sh},
+        }
+
+    # ── best single / best per horizon ───────────────────────────────────────
+    if re.match(r"best_?single|best_?model|best_?1|winner", raw):
+        return {
+            "name": "best_single_by_validation", "type": "selection", "learns_weights": False,
+            "constraints": "anti-leakage", "validation_plan": "rolling",
+            "params": {"method": "best_single"},
+        }
+    if re.match(r"best_?per_?horiz|best_?h", raw):
+        return {
+            "name": "best_per_horizon_by_validation", "type": "selection", "learns_weights": False,
+            "constraints": "anti-leakage", "validation_plan": "rolling",
+            "params": {"method": "best_per_horizon"},
+        }
+
+    # ── median ───────────────────────────────────────────────────────────────
+    if re.match(r"(?:robust_?)?median", raw):
+        return {
+            "name": "robust_median", "type": "baseline", "learns_weights": False,
+            "constraints": "No leakage (no fitting)", "validation_plan": "rolling",
+            "params": {"method": "median"},
+        }
+
+    return None
+
 
 def build_fold_cot_context_tool() -> str:
     """PatternAnalyst: analisa tendencia/sazonalidade nos folds de validacao (val1..n).

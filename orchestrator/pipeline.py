@@ -17,6 +17,7 @@ from orchestrator.tools import (
     proposer_brief_tool as _proposer_brief_tool,
     build_fold_cot_context_tool as _build_fold_cot_context_tool,
     build_debate_packet_tool as _build_debate_packet_tool,
+    resolve_unknown_candidate as _resolve_unknown_candidate,
 )
 from orchestrator.agents import (
     create_pattern_analyst_agent,
@@ -133,10 +134,15 @@ def _validate_actions_against_universe(
     universe_names: List[str],
     current_names: Optional[List[str]],
     who: str,
+    by_name_registry: Optional[Dict[str, Any]] = None,
+    n_models: int = 2,
+    n_windows: int = 3,
 ) -> Dict[str, Any]:
     """Validate that LLM actions only reference real candidates.
 
-    We hard-stop on unknown names to avoid silent hallucinations.
+    Unknown add_names are first tried against resolve_unknown_candidate (pattern
+    parser) before hard-stopping, so the LLM can propose variants with slightly
+    different naming conventions without triggering a crash.
     """
 
     if not isinstance(actions, dict):
@@ -152,6 +158,26 @@ def _validate_actions_against_universe(
         raise RuntimeError(f"{who}.add_names must be a list (hard-stop)")
     add_names_norm = [str(x) for x in add_names if str(x)]
     add_names_norm = [_resolve_candidate_name(n, valid_set) for n in add_names_norm]
+
+    # Try pattern-based resolution for any name still not in the universe.
+    resolved_add_names: List[str] = []
+    for _an in add_names_norm:
+        if _an in valid_set:
+            resolved_add_names.append(_an)
+            continue
+        _rc = _resolve_unknown_candidate(_an, n_models, n_windows)
+        if _rc is not None:
+            _rn = str(_rc["name"])
+            if _rn not in valid_set:
+                valid_set.add(_rn)
+                universe_names.append(_rn)
+                if by_name_registry is not None and _rn not in by_name_registry:
+                    by_name_registry[_rn] = _rc
+            _log(f"[ORCH|LLM] {who} add_names: resolved '{_an}' → '{_rn}'")
+            resolved_add_names.append(_rn)
+        else:
+            resolved_add_names.append(_an)  # keep for hard-stop check below
+    add_names_norm = resolved_add_names
 
     unknown_add = [n for n in add_names_norm if n not in valid_set]
     if unknown_add:
@@ -772,13 +798,38 @@ def run_llm_pipeline(
     if not isinstance(selected_names, list):
         selected_names = []
     selected_names_norm = [str(x) for x in selected_names if str(x)]
-    dropped_selected_names = [n for n in selected_names_norm if n not in by_name]
-    selected_names = [n for n in selected_names_norm if n in by_name]
-    if dropped_selected_names:
+
+    # ── Resolve unknown names before dropping them ────────────────────────────
+    # Instead of hard-ignoring LLM-invented names, try to parse them via regex
+    # and register dynamically into by_name / universe_names so evaluation can
+    # proceed.  Only truly unrecognisable names are silently dropped.
+    models_available_early = get_context("models_available", [])
+    _nm_early = len(models_available_early) if isinstance(models_available_early, list) and models_available_early else int(summary.get("n_models", 2) or 2)
+    _nw_early = int(summary.get("n_windows", 3) or 3)
+    _resolved_names: List[str] = []
+    _truly_dropped: List[str] = []
+    for _unk in selected_names_norm:
+        if _unk in by_name:
+            _resolved_names.append(_unk)
+            continue
+        _resolved = _resolve_unknown_candidate(_unk, _nm_early, _nw_early)
+        if _resolved is not None:
+            _rname = str(_resolved["name"])
+            if _rname not in by_name:
+                by_name[_rname] = _resolved
+                candidates_all.append(_resolved)
+                if _rname not in universe_names:
+                    universe_names.append(_rname)
+            _log(f"[ORCH|LLM] Resolved unknown Proposer name '{_unk}' → '{_rname}'")
+            _resolved_names.append(_rname)
+        else:
+            _truly_dropped.append(_unk)
+    if _truly_dropped:
         _log(
-            "Proposer selected names not in candidate_library; they will be ignored: "
-            f"{dropped_selected_names}"
+            "Proposer selected names not in candidate_library and could not be resolved; "
+            f"they will be ignored: {_truly_dropped}"
         )
+    selected_names = _resolved_names
 
     # Ensure at least 2 candidates (safety). Do NOT silently inject baseline_mean
     # unless we can't keep a minimal set.
@@ -805,20 +856,29 @@ def run_llm_pipeline(
 
     proposer_candidate_names = [str(c.get("name")) for c in candidates_payload.get("candidates", []) if isinstance(c, dict) and c.get("name")]
 
-    # Pre-filter params_overrides: drop any keys that reference names the LLM hallucinated
-    # (i.e. names that were already stripped from selected_names because they aren't in the
-    # candidate library).  This prevents a hard-stop inside _validate_actions_against_universe
-    # and emits a clear, actionable log message instead.
+    # Pre-filter params_overrides: try to resolve unknown keys via the same resolver
+    # before dropping them.  This lets the LLM say params_overrides: {"trimmed_mean_tr0.2": {...}}
+    # and have it remapped to the canonical name transparently.
     _raw_overrides: Dict[str, Any] = pr_obj.get("params_overrides") or {}
-    _dropped_override_keys = [
-        k for k in _raw_overrides if str(k) not in by_name and str(k) not in ALLOWED_PARAM_EDITS
-    ]
+    _remapped_overrides: Dict[str, Any] = {}
+    _dropped_override_keys: List[str] = []
+    for _ok, _ov in _raw_overrides.items():
+        if str(_ok) in by_name or str(_ok) in ALLOWED_PARAM_EDITS:
+            _remapped_overrides[str(_ok)] = _ov
+        else:
+            _resolved_ov = _resolve_unknown_candidate(str(_ok), _nm_early, _nw_early)
+            if _resolved_ov is not None:
+                _rk = str(_resolved_ov["name"])
+                _remapped_overrides[_rk] = _ov
+                _log(f"[ORCH|LLM] Proposer params_overrides key '{_ok}' remapped → '{_rk}'")
+            else:
+                _dropped_override_keys.append(str(_ok))
     if _dropped_override_keys:
         _log(
-            f"[ORCH|LLM] Proposer params_overrides references names not in candidate_library "
+            f"[ORCH|LLM] Proposer params_overrides references unresolvable names "
             f"(will be ignored): {_dropped_override_keys}"
         )
-        _raw_overrides = {k: v for k, v in _raw_overrides.items() if k not in _dropped_override_keys}
+    _raw_overrides = _remapped_overrides
 
     proposer_actions = _validate_actions_against_universe(
         {"add_names": [], "remove_names": [], "params_overrides": _raw_overrides},
@@ -968,7 +1028,7 @@ def run_llm_pipeline(
 
         # ── Pre-invoke deterministic packet once so both agents see identical numbers.
         try:
-            _build_debate_packet_tool.entrypoint()
+            _build_debate_packet_tool()
             _log("Pre-invoked build_debate_packet_tool for Round 1.")
         except Exception as _dpt_err:
             _log(f"Pre-invoke debate_packet (R1) failed (non-fatal): {_dpt_err}")
@@ -1078,7 +1138,10 @@ def run_llm_pipeline(
             for c in candidates_payload.get("candidates", [])
             if isinstance(c, dict) and c.get("name")
         ]
-        sk_actions = _validate_actions_against_universe(sk_obj_r2, universe_names, current_names=sk_current_names, who="Skeptic")
+        sk_actions = _validate_actions_against_universe(
+            sk_obj_r2, universe_names, current_names=sk_current_names, who="Skeptic",
+            by_name_registry=by_name, n_models=n_models, n_windows=_nw_early,
+        )
         candidates_payload = _apply_actions_to_payload(candidates_payload, sk_actions, universe_by_name=by_name, n_models=n_models)
         candidates_after_skeptic = _candidate_names_from_payload(candidates_payload)
 
@@ -1090,7 +1153,10 @@ def run_llm_pipeline(
             for c in candidates_payload.get("candidates", [])
             if isinstance(c, dict) and c.get("name")
         ]
-        st_actions = _validate_actions_against_universe(st_obj_r2, universe_names, current_names=st_current_names, who="Statistician")
+        st_actions = _validate_actions_against_universe(
+            st_obj_r2, universe_names, current_names=st_current_names, who="Statistician",
+            by_name_registry=by_name, n_models=n_models, n_windows=_nw_early,
+        )
         candidates_payload = _apply_actions_to_payload(candidates_payload, st_actions, universe_by_name=by_name, n_models=n_models)
         candidates_after_statistician = _candidate_names_from_payload(candidates_payload)
     else:
