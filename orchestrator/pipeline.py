@@ -10,7 +10,7 @@ from orchestrator.evaluator import EvaluationConfig, evaluate_all
 from orchestrator.final_predictor import predict_final_from_context
 from orchestrator.schemas import CandidateStrategy
 from orchestrator.strategies import RollingConfig
-from orchestrator.utils import extract_json_object
+from orchestrator.utils import extract_json_object, strip_think_blocks as _strip_think_blocks_util
 from orchestrator.schemas import parse_candidates
 from orchestrator.tools import (
     SCORE_PRESETS,
@@ -31,17 +31,7 @@ ALLOWED_PARAM_EDITS = {"top_k", "trim_ratio", "shrinkage", "l2", "period"}
 
 
 def _strip_think_blocks(text: str) -> str:
-    """Remove <think>...</think> blocks from model output for robust JSON parsing."""
-
-    if not isinstance(text, str) or not text:
-        return ""
-    while True:
-        start = text.find("<think>")
-        end = text.find("</think>")
-        if start == -1 or end == -1 or end < start:
-            break
-        text = text[:start] + text[end + len("</think>") :]
-    return text
+    return _strip_think_blocks_util(text)
 
 
 def _run_agent_with_retry(
