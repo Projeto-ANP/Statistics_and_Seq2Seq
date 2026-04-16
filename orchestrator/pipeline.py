@@ -26,7 +26,7 @@ from orchestrator.agents import (
 )
 
 
-ALLOWED_PARAM_EDITS = {"top_k", "trim_ratio", "shrinkage", "l2"}
+ALLOWED_PARAM_EDITS = {"top_k", "trim_ratio", "shrinkage", "l2", "period"}
 
 
 def _strip_think_blocks(text: str) -> str:
@@ -326,6 +326,10 @@ def _apply_actions_to_payload(
                 vv = _clamp_float(v, 0.1, 1000.0)
                 if vv is not None:
                     new_params[k] = vv
+            elif k == "period":
+                vv = _clamp_int(v, 2, 24)
+                if vv is not None:
+                    new_params[k] = vv
         return new_params
 
     out_candidates: List[Dict[str, Any]] = []
@@ -457,6 +461,10 @@ def _sanitize_candidate_payload(
                     new_params[k] = v
             elif k == "l2":
                 v = _clamp_float(item_params.get(k), 0.1, 1000.0)
+                if v is not None:
+                    new_params[k] = v
+            elif k == "period":
+                v = _clamp_int(item_params.get(k), 2, 24)
                 if v is not None:
                     new_params[k] = v
 
@@ -837,6 +845,7 @@ def run_llm_pipeline(
         "debate_trigger": "disabled",
         "debate_margin_top2": None,
         "debate_margin_threshold": float(effective_debate_margin),
+        "statistical_tie_break": None,
         "best_pre_debate": None,
         "best_post_debate": None,
     }
@@ -845,6 +854,8 @@ def run_llm_pipeline(
     # (2) record what would have been chosen without debate.
     pre_eval = None
     try:
+        from orchestrator.diagnostics import tie_break_analysis as _tie_break_analysis
+
         data = load_validation_from_context()
         candidates_for_eval = parse_candidates(candidates_payload.get("candidates"))
         if candidates_for_eval:
@@ -866,15 +877,57 @@ def run_llm_pipeline(
                 s1 = float(ranking[0].get("score"))
                 s2 = float(ranking[1].get("score"))
                 debate_trace["debate_margin_top2"] = float(s2 - s1)
+
+            # A2 — Statistical tie-break (Diebold-Mariano + paired bootstrap).
+            details_pre = pre_eval.get("details", []) if isinstance(pre_eval, dict) else []
+            pw_scores: Dict[str, Any] = {}
+            pw_errors: Dict[str, Any] = {}
+            for d in details_pre:
+                if not isinstance(d, dict):
+                    continue
+                cand = d.get("candidate", {}) if isinstance(d.get("candidate"), dict) else {}
+                name = str(cand.get("name", ""))
+                if not name:
+                    continue
+                pws = d.get("per_window_scores")
+                if isinstance(pws, list) and pws:
+                    pw_scores[name] = pws
+                rfl = d.get("residuals_flat")
+                if isinstance(rfl, list) and rfl:
+                    pw_errors[name] = rfl
+            try:
+                tb = _tie_break_analysis(
+                    top_ranking=ranking[:2],
+                    per_window_scores=pw_scores,
+                    per_window_errors=pw_errors,
+                    alpha=0.10,
+                )
+                debate_trace["statistical_tie_break"] = tb
+            except Exception as e:
+                _log(f"Tie-break skipped: {e}")
     except Exception as e:
         _log(f"Pre-debate eval skipped due to error: {e}")
 
-    # Gating: debate if forced OR proposer requested OR ambiguous margin.
+    # Gating: debate if forced OR proposer requested OR statistically tied OR ambiguous margin.
     should_debate = bool(debate) or proposer_force_debate
     if bool(debate):
         debate_trace["debate_trigger"] = "forced"
     elif proposer_force_debate:
         debate_trace["debate_trigger"] = "proposer_forced"
+
+    # A2 — primary automatic trigger: statistical tie between top-1 and top-2.
+    tie_info = debate_trace.get("statistical_tie_break")
+    statistically_tied = bool(
+        isinstance(tie_info, dict)
+        and tie_info.get("available")
+        and tie_info.get("statistically_tied")
+    )
+    if not should_debate and debate_auto and statistically_tied:
+        should_debate = True
+        debate_trace["debate_trigger"] = "auto_statistical_tie"
+        _log("Debate auto-triggered: statistical tie (DM + paired bootstrap cannot separate top-1 vs top-2)")
+
+    # Fallback: narrow score margin (kept for back-compat when tie-break is unavailable).
     if not should_debate and debate_auto:
         m = debate_trace.get("debate_margin_top2")
         if isinstance(m, (int, float)) and m == m and m < float(effective_debate_margin):
@@ -883,8 +936,9 @@ def run_llm_pipeline(
             _log(f"Debate auto-triggered: small margin top2 ({float(m):.4f})")
 
     if should_debate:
-        _log("Debate enabled: running Skeptic + Statistician (tool-grounded)")
+        _log("Debate enabled: running 2-round Skeptic↔Statistician (Du et al. 2023 style)")
         debate_trace["debate_ran"] = True
+        debate_trace["debate_rounds"] = 2
         # Provide tool inputs via context so the LLM doesn't need to pass parameters.
         config_json = json.dumps(
             {
@@ -902,8 +956,7 @@ def run_llm_pipeline(
         set_context("candidate_universe_json_for_debate", universe_json)
         set_context("debate_top_n", 5)
 
-        # Give agents a non-blind view of the candidate universe (names only).
-        current_names = sorted(
+        current_names_r1 = sorted(
             {
                 str(c.get("name"))
                 for c in candidates_payload.get("candidates", [])
@@ -911,89 +964,133 @@ def run_llm_pipeline(
             }
         )
         universe_names_hint = json.dumps(universe_names, ensure_ascii=False)
-        current_names_hint = json.dumps(current_names, ensure_ascii=False)
+        current_names_hint_r1 = json.dumps(current_names_r1, ensure_ascii=False)
 
-        skeptic_prompt = (
-            "Chame build_debate_packet_tool() PRIMEIRO (inputs via context). "
-            "Depois retorne APENAS JSON (sem markdown) com add_names, remove_names, params_overrides, rationale, changes, when_good.\n"
-            "IMPORTANT: you MUST ONLY use candidate names from valid_candidate_names; unknown names hard-stop.\n"
-            "You may only remove/override candidates that are in current_candidate_names (or candidates you are adding).\n"
-            f"valid_candidate_names: {universe_names_hint}\n"
-            f"current_candidate_names: {current_names_hint}"
-        )
-
-        # Pre-invoke debate_packet so it's in context even if the LLM skips the tool call.
+        # ── Pre-invoke deterministic packet once so both agents see identical numbers.
         try:
             _build_debate_packet_tool.entrypoint()
-            _log("Pre-invoked build_debate_packet_tool for Skeptic context.")
+            _log("Pre-invoked build_debate_packet_tool for Round 1.")
         except Exception as _dpt_err:
-            _log(f"Pre-invoke debate_packet for Skeptic failed (non-fatal): {_dpt_err}")
+            _log(f"Pre-invoke debate_packet (R1) failed (non-fatal): {_dpt_err}")
 
-        _log("Skeptic: waiting for LLM response...")
-        sk_out, sk_obj = _run_agent_with_retry(
-            lambda: skeptic.run(skeptic_prompt).content,
-            "Skeptic",
+        def _round_prompt(role: str, round_num: int, peer_json: Optional[str], peer_role: Optional[str]) -> str:
+            header = (
+                "Chame build_debate_packet_tool() PRIMEIRO (inputs via context). "
+                "Depois retorne APENAS JSON (sem markdown) com add_names, remove_names, params_overrides, rationale, changes, when_good.\n"
+                "IMPORTANT: you MUST ONLY use candidate names from valid_candidate_names; unknown names hard-stop.\n"
+                "You may only remove/override candidates that are in current_candidate_names (or candidates you are adding)."
+            )
+            body = (
+                f"\nvalid_candidate_names: {universe_names_hint}\n"
+                f"current_candidate_names: {current_names_hint_r1}\n"
+                f"debate_round: {round_num}"
+            )
+            if peer_json is not None and peer_role is not None:
+                body += (
+                    f"\n{peer_role}_round1_actions: {peer_json}\n"
+                    "Rodada 2: leia as acoes do par (acima), identifique pontos de concordancia/discordancia "
+                    "e responda com JSON final revisado. Se concordar com o par, mantenha/apoie; "
+                    "se discordar, explique em `rationale` e proponha um plano alternativo dentro dos knobs permitidos."
+                )
+            return header + body
+
+        # ── Round 1 ─────────────────────────────────────────────────────────
+        # Both agents respond independently (blind to the peer's output).
+        skeptic_prompt_r1 = _round_prompt("Skeptic", 1, peer_json=None, peer_role=None)
+        statistician_prompt_r1 = _round_prompt("Statistician", 1, peer_json=None, peer_role=None)
+
+        _log("Round 1 — Skeptic: waiting for LLM response...")
+        sk_out_r1, sk_obj_r1 = _run_agent_with_retry(
+            lambda: skeptic.run(skeptic_prompt_r1).content,
+            "Skeptic-R1",
             max_retries=3,
             log_func=_log,
         )
-        llm_artifacts["prompts"]["skeptic"] = skeptic_prompt
-        llm_artifacts["raw"]["skeptic"] = str(sk_out)
-        llm_artifacts["parsed"]["skeptic"] = sk_obj
+        llm_artifacts["prompts"]["skeptic_r1"] = skeptic_prompt_r1
+        llm_artifacts["raw"]["skeptic_r1"] = str(sk_out_r1)
+        llm_artifacts["parsed"]["skeptic_r1"] = sk_obj_r1
+
+        _log("Round 1 — Statistician: waiting for LLM response...")
+        st_out_r1, st_obj_r1 = _run_agent_with_retry(
+            lambda: statistician.run(statistician_prompt_r1).content,
+            "Statistician-R1",
+            max_retries=3,
+            log_func=_log,
+        )
+        llm_artifacts["prompts"]["statistician_r1"] = statistician_prompt_r1
+        llm_artifacts["raw"]["statistician_r1"] = str(st_out_r1)
+        llm_artifacts["parsed"]["statistician_r1"] = st_obj_r1
         set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+        # ── Round 2 ─────────────────────────────────────────────────────────
+        # Each agent sees the peer's Round 1 JSON and can revise.
+        def _compact_peer(obj: Any) -> str:
+            if not isinstance(obj, dict):
+                return "{}"
+            keep = {
+                "add_names": obj.get("add_names"),
+                "remove_names": obj.get("remove_names"),
+                "params_overrides": obj.get("params_overrides"),
+                "rationale": obj.get("rationale"),
+            }
+            return json.dumps(keep, ensure_ascii=False, default=str)
+
+        peer_stat_r1 = _compact_peer(st_obj_r1)
+        peer_sk_r1 = _compact_peer(sk_obj_r1)
+
+        skeptic_prompt_r2 = _round_prompt("Skeptic", 2, peer_json=peer_stat_r1, peer_role="Statistician")
+        statistician_prompt_r2 = _round_prompt("Statistician", 2, peer_json=peer_sk_r1, peer_role="Skeptic")
+
+        _log("Round 2 — Skeptic: revising with peer visibility...")
+        sk_out_r2, sk_obj_r2 = _run_agent_with_retry(
+            lambda: skeptic.run(skeptic_prompt_r2).content,
+            "Skeptic-R2",
+            max_retries=3,
+            log_func=_log,
+        )
+        llm_artifacts["prompts"]["skeptic_r2"] = skeptic_prompt_r2
+        llm_artifacts["raw"]["skeptic_r2"] = str(sk_out_r2)
+        llm_artifacts["parsed"]["skeptic_r2"] = sk_obj_r2
+
+        _log("Round 2 — Statistician: revising with peer visibility...")
+        st_out_r2, st_obj_r2 = _run_agent_with_retry(
+            lambda: statistician.run(statistician_prompt_r2).content,
+            "Statistician-R2",
+            max_retries=3,
+            log_func=_log,
+        )
+        llm_artifacts["prompts"]["statistician_r2"] = statistician_prompt_r2
+        llm_artifacts["raw"]["statistician_r2"] = str(st_out_r2)
+        llm_artifacts["parsed"]["statistician_r2"] = st_obj_r2
+
+        # Expose Round-2 JSON under the legacy keys so downstream logging keeps working.
+        llm_artifacts["prompts"]["skeptic"] = skeptic_prompt_r2
+        llm_artifacts["raw"]["skeptic"] = str(sk_out_r2)
+        llm_artifacts["parsed"]["skeptic"] = sk_obj_r2
+        llm_artifacts["prompts"]["statistician"] = statistician_prompt_r2
+        llm_artifacts["raw"]["statistician"] = str(st_out_r2)
+        llm_artifacts["parsed"]["statistician"] = st_obj_r2
+        set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+        # ── Apply Round-2 actions sequentially: Skeptic first, then Statistician.
         sk_current_names = [
             str(c.get("name"))
             for c in candidates_payload.get("candidates", [])
             if isinstance(c, dict) and c.get("name")
         ]
-        sk_actions = _validate_actions_against_universe(sk_obj, universe_names, current_names=sk_current_names, who="Skeptic")
+        sk_actions = _validate_actions_against_universe(sk_obj_r2, universe_names, current_names=sk_current_names, who="Skeptic")
         candidates_payload = _apply_actions_to_payload(candidates_payload, sk_actions, universe_by_name=by_name, n_models=n_models)
         candidates_after_skeptic = _candidate_names_from_payload(candidates_payload)
 
-        # Refresh tool inputs for the Statistician after Skeptic edits.
+        # Refresh tool inputs between agents so Statistician's action is evaluated on the post-Skeptic payload.
         set_context("candidates_json_for_debate", json.dumps(candidates_payload, ensure_ascii=False))
 
-        current_names = sorted(
-            {
-                str(c.get("name"))
-                for c in candidates_payload.get("candidates", [])
-                if isinstance(c, dict) and c.get("name")
-            }
-        )
-        current_names_hint = json.dumps(current_names, ensure_ascii=False)
-
-        statistician_prompt = (
-            "Chame build_debate_packet_tool() PRIMEIRO (inputs via context). "
-            "Depois retorne APENAS JSON (sem markdown) com add_names, remove_names, params_overrides, rationale, changes, when_good.\n"
-            "IMPORTANT: you MUST ONLY use candidate names from valid_candidate_names; unknown names hard-stop.\n"
-            "You may only remove/override candidates that are in current_candidate_names (or candidates you are adding).\n"
-            f"valid_candidate_names: {universe_names_hint}\n"
-            f"current_candidate_names: {current_names_hint}"
-        )
-
-        # Pre-invoke debate_packet so it's in context even if the LLM skips the tool call.
-        try:
-            _build_debate_packet_tool.entrypoint()
-            _log("Pre-invoked build_debate_packet_tool for Statistician context.")
-        except Exception as _dpt_err2:
-            _log(f"Pre-invoke debate_packet for Statistician failed (non-fatal): {_dpt_err2}")
-
-        _log("Statistician: waiting for LLM response...")
-        st_out, st_obj = _run_agent_with_retry(
-            lambda: statistician.run(statistician_prompt).content,
-            "Statistician",
-            max_retries=3,
-            log_func=_log,
-        )
-        llm_artifacts["prompts"]["statistician"] = statistician_prompt
-        llm_artifacts["raw"]["statistician"] = str(st_out)
-        llm_artifacts["parsed"]["statistician"] = st_obj
-        set_context("orchestrator_llm_artifacts", llm_artifacts)
         st_current_names = [
             str(c.get("name"))
             for c in candidates_payload.get("candidates", [])
             if isinstance(c, dict) and c.get("name")
         ]
-        st_actions = _validate_actions_against_universe(st_obj, universe_names, current_names=st_current_names, who="Statistician")
+        st_actions = _validate_actions_against_universe(st_obj_r2, universe_names, current_names=st_current_names, who="Statistician")
         candidates_payload = _apply_actions_to_payload(candidates_payload, st_actions, universe_by_name=by_name, n_models=n_models)
         candidates_after_statistician = _candidate_names_from_payload(candidates_payload)
     else:

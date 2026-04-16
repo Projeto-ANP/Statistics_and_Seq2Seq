@@ -93,12 +93,20 @@ def evaluate_candidate(
         "POCID_std": float(np.nanstd([m["POCID"] for m in window_metrics])),
     }
 
+    # Per-window residuals (combined_preds - y_true), flattened for DM test.
+    residuals_flat = (np.asarray(combined_preds, dtype=float) - np.asarray(y_true, dtype=float)).reshape(-1)
+    residuals_flat_list: List[float] = [
+        float(v) if np.isfinite(v) else float("nan") for v in residuals_flat.tolist()
+    ]
+
     return {
         "candidate": candidate.to_dict(),
         "aggregate": aggregate,
         "per_horizon": per_horizon,
         "pocid_window_mean": aggregate["POCID"],
         "stability": stability,
+        "per_window_metrics": window_metrics,
+        "residuals_flat": residuals_flat_list,
         "debug": debug,
     }
 
@@ -141,6 +149,12 @@ def evaluate_all(
     )
     baseline_eval = evaluate_candidate(data, baseline, cfg)
     b = baseline_eval["aggregate"]
+    b_windows = baseline_eval.get("per_window_metrics", [])
+
+    def _safe_div(num: float, denom: float) -> float:
+        if denom is None or not np.isfinite(denom) or abs(denom) < 1e-12:
+            return float("inf") if (num is not None and np.isfinite(num) and num != 0) else 0.0
+        return float(num) / float(denom)
 
     results: List[Dict[str, Any]] = []
     for c in candidates:
@@ -153,8 +167,26 @@ def evaluate_all(
 
         score = _score_from_normed(rmse_n, smape_n, mape_n, float(a["POCID"]), cfg.score)
 
+        # Per-window composite score: same formula but per-window ratios against the
+        # baseline_mean window. Provides a paired sample for bootstrap / DM gates.
+        per_window_scores: List[float] = []
+        cand_windows = res.get("per_window_metrics", []) or []
+        for i in range(min(len(cand_windows), len(b_windows))):
+            wc = cand_windows[i]
+            wb = b_windows[i]
+            try:
+                r_n = _safe_div(wc.get("RMSE", float("nan")), wb.get("RMSE", float("nan")))
+                s_n = _safe_div(wc.get("SMAPE", float("nan")), wb.get("SMAPE", float("nan")))
+                m_n = _safe_div(wc.get("MAPE", float("nan")), wb.get("MAPE", float("nan")))
+                p_v = float(wc.get("POCID", float("nan")))
+                sc = _score_from_normed(r_n, s_n, m_n, p_v, cfg.score)
+                per_window_scores.append(float(sc))
+            except Exception:
+                per_window_scores.append(float("nan"))
+
         res["normalized_vs_baseline"] = {"RMSE": rmse_n, "SMAPE": smape_n, "MAPE": mape_n, "POCID": float(a["POCID"]) / 100.0}
         res["score"] = float(score)
+        res["per_window_scores"] = per_window_scores
         results.append(res)
 
     ranked = sorted(results, key=lambda r: r.get("score", float("inf")))

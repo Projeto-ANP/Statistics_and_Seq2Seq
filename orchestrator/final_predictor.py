@@ -331,6 +331,77 @@ def predict_final_from_context(
         debug.update({"l2": l2, "top_k": top_k, "weights_by_horizon": weights_by_h})
         return {"result": out.tolist(), "debug": debug}
 
+    if method == "stl_hierarchical_stacking":
+        from orchestrator.strategies import _stl_decompose_components
+
+        period = int(candidate.params.get("period", max(2, horizon // 2)))
+        shrinkage = float(candidate.params.get("shrinkage", 0.0))
+        eps = float(candidate.params.get("eps", 1e-8))
+
+        # Build stacking matrices on every validation window.
+        yt_T_list, yt_S_list, yt_R_list = [], [], []
+        pr_T_list, pr_S_list, pr_R_list = [], [], []
+        for k in range(n_windows):
+            yt_T, yt_S, yt_R = _stl_decompose_components(y_true[k, :], period=period)
+            yt_T_list.append(yt_T)
+            yt_S_list.append(yt_S)
+            yt_R_list.append(yt_R)
+
+            preds_mat_k = np.zeros((horizon, n_models), dtype=float)
+            seas_mat_k = np.zeros((horizon, n_models), dtype=float)
+            res_mat_k = np.zeros((horizon, n_models), dtype=float)
+            for j in range(n_models):
+                pT, pS, pR = _stl_decompose_components(y_preds[k, j, :], period=period)
+                preds_mat_k[:, j] = pT
+                seas_mat_k[:, j] = pS
+                res_mat_k[:, j] = pR
+            pr_T_list.append(preds_mat_k)
+            pr_S_list.append(seas_mat_k)
+            pr_R_list.append(res_mat_k)
+
+        yt_T_all = np.concatenate(yt_T_list)
+        yt_S_all = np.concatenate(yt_S_list)
+        yt_R_all = np.concatenate(yt_R_list)
+        pr_T_all = np.concatenate(pr_T_list, axis=0)
+        pr_S_all = np.concatenate(pr_S_list, axis=0)
+        pr_R_all = np.concatenate(pr_R_list, axis=0)
+
+        w_T = _weights_inverse_rmse(yt_T_all, pr_T_all, eps=eps, shrinkage=shrinkage)
+        w_S = _weights_inverse_rmse(yt_S_all, pr_S_all, eps=eps, shrinkage=shrinkage)
+        w_R = _weights_inverse_rmse(yt_R_all, pr_R_all, eps=eps, shrinkage=shrinkage)
+
+        # Apply to final (unseen) predictions
+        pred_T = np.zeros((horizon, n_models), dtype=float)
+        pred_S = np.zeros((horizon, n_models), dtype=float)
+        pred_R = np.zeros((horizon, n_models), dtype=float)
+        for j in range(n_models):
+            pT, pS, pR = _stl_decompose_components(final_matrix[j, :], period=period)
+            pred_T[:, j] = pT
+            pred_S[:, j] = pS
+            pred_R[:, j] = pR
+
+        out = (pred_T @ w_T) + (pred_S @ w_S) + (pred_R @ w_R)
+
+        debug.update({
+            "period": period,
+            "shrinkage": shrinkage,
+            "weights_by_component": {
+                "trend": {model_names[j]: float(w_T[j]) for j in range(n_models)},
+                "seasonal": {model_names[j]: float(w_S[j]) for j in range(n_models)},
+                "residual": {model_names[j]: float(w_R[j]) for j in range(n_models)},
+            },
+        })
+        # Provide a per-horizon weights_by_horizon view averaging the three
+        # component weights so downstream logging is consistent with other
+        # methods that emit weights_by_horizon.
+        avg_w = (w_T + w_S + w_R) / 3.0
+        weights_by_h = {
+            str(h): {model_names[j]: float(avg_w[j]) for j in range(n_models)}
+            for h in range(horizon)
+        }
+        debug["weights_by_horizon"] = weights_by_h
+        return {"result": out.tolist(), "debug": debug}
+
     if method == "dba":
         try:
             from tslearn.barycenters import dtw_barycenter_averaging

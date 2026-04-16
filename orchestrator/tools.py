@@ -12,6 +12,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from orchestrator_langchain.context import get_context, set_context
 
 from orchestrator.data_contract import load_validation_from_context
+from orchestrator.diagnostics import (
+    bias_per_horizon,
+    drift_signal,
+    error_similarity_matrix,
+    heteroscedasticity_ratio,
+    hurst_rs,
+    ljung_box_pvalue,
+    rank_stability_kendall,
+    spectral_entropy,
+    tie_break_analysis,
+)
 from orchestrator.evaluator import EvaluationConfig, evaluate_all
 from orchestrator.metrics import MetricConfig, mape_safe, pocid_within_sequence, rmse_safe, smape_safe
 from orchestrator.schemas import parse_candidates
@@ -710,6 +721,28 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
             }
         )
 
+    # STL-hierarchical stacking (A3): strong default when seasonality is detected
+    # or when no single model dominates trend *and* seasonality.
+    horizon_hint = int(summary.get("horizon", 0) or 0)
+    stl_period = max(2, horizon_hint // 2) if horizon_hint > 0 else 2
+    _add(
+        {
+            "name": f"stl_hierarchical_stacking_p{stl_period}_sh0.0",
+            "type": "stacking",
+            "description": "STL-hierarchical stacking (per-component inverse-RMSE simplex)",
+            "formula": "STL(y)=T+S+R; w_T,w_S,w_R from past windows; combine by component",
+            "learns_weights": True,
+            "constraints": "anti-leakage: per-component weights learned only from past windows",
+            "risks": ["STL may collapse to linear detrending on short horizons"],
+            "validation_plan": "rolling",
+            "params": {
+                "method": "stl_hierarchical_stacking",
+                "period": int(stl_period),
+                "shrinkage": 0.0,
+            },
+        }
+    )
+
     return {
         "candidates": candidates,
         "meta": {
@@ -720,6 +753,7 @@ def _suggest_candidates_from_summary(summary: Dict[str, Any], max_candidates: in
             "trim_ratio_weighted": float(trim_ratio_w),
             "shrinkage": float(shrinkage),
             "l2": float(l2),
+            "stl_period": int(stl_period),
             "flags": {
                 "high_disagreement": high_disagreement,
                 "strong_single": strong_single,
@@ -977,6 +1011,34 @@ def _candidate_universe_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
                 }
             )
 
+    # STL-hierarchical stacking (A3): learn per-component (trend / seasonal / residual)
+    # inverse-RMSE simplex weights. Brings an additive decomposition-aware combiner
+    # to the library. See Cleveland et al. (1990) STL; inverse-RMSE weights as in
+    # Stock & Watson (2004) and Timmermann (2006).
+    horizon_meta = int(summary.get("horizon", 0) or 0)
+    default_period = max(2, horizon_meta // 2) if horizon_meta > 0 else 2
+    stl_period_grid = sorted({2, default_period, max(2, min(12, max(2, horizon_meta - 1)) if horizon_meta > 0 else 2)})
+    stl_shrink_grid = [0.0, 0.2]
+    for p in stl_period_grid:
+        for sh in stl_shrink_grid:
+            _add(
+                {
+                    "name": f"stl_hierarchical_stacking_p{int(p)}_sh{sh:.1f}",
+                    "type": "stacking",
+                    "description": "STL-hierarchical stacking; refs: Cleveland et al. (1990), Stock & Watson (2004), Timmermann (2006)",
+                    "formula": "STL(y_true)=T+S+R; learn inverse-RMSE simplex weights per component; combine(test)=T·w_T + S·w_S + R·w_R",
+                    "learns_weights": True,
+                    "constraints": "anti-leakage: per-component weights learned only from past windows",
+                    "risks": ["STL falls back to linear detrending on very short horizons"],
+                    "validation_plan": "rolling",
+                    "params": {
+                        "method": "stl_hierarchical_stacking",
+                        "period": int(p),
+                        "shrinkage": float(sh),
+                    },
+                }
+            )
+
     return {
         "candidates": candidates,
         "meta": {
@@ -1122,12 +1184,23 @@ def build_fold_cot_context_tool() -> str:
     # Store raw STL decomposition values for LLM to interpret and decide champions
     model_agg: Dict[str, Any] = {}
     model_stl_data: Dict[str, Dict[str, Any]] = {}  # Raw STL values for LLM interpretation
-    
+
+    # Matrix of per-fold RMSE (n_windows x n_models) for Kendall-tau rank stability.
+    per_fold_rmse_matrix = np.full((n_windows, len(model_names)), np.nan, dtype=float)
+    # Concatenated residuals per model (across folds, flattened) for redundancy analysis.
+    concat_residuals: Dict[str, np.ndarray] = {}
+
     for j, m in enumerate(model_names):
         rmse_vals, smape_vals = [], []
         trend_corrs, seas_corrs = [], []  # Correlation with y_true components
         per_h_sq_errors: List[List[float]] = [[] for _ in range(horizon)]
-        
+        # bias per horizon: list of (pred - true) vectors, one per fold
+        bias_vectors: List[np.ndarray] = []
+        # residuals concatenated across folds (for Ljung-Box / heteroscedasticity)
+        fold_residuals: List[np.ndarray] = []
+        # per-fold RMSE (for drift signal)
+        rmse_per_fold_list: List[float] = []
+
         # Store raw trend/seasonal values per fold for LLM analysis
         model_trends: List[List[float]] = []
         model_seasonals: List[List[float]] = []
@@ -1137,31 +1210,41 @@ def build_fold_cot_context_tool() -> str:
             preds = y_preds_arr[i, j, :]
             if np.all(np.isnan(preds)):
                 continue
-            
+
             # STL decomposition for y_true and model predictions
             yt_trend, yt_seasonal, _ = _stl_decompose(yt)
             m_trend, m_seasonal, _ = _stl_decompose(preds)
-            
+
             # Store raw values for LLM interpretation
             model_trends.append([round(float(v), 4) if np.isfinite(v) else None for v in m_trend])
             model_seasonals.append([round(float(v), 4) if np.isfinite(v) else None for v in m_seasonal])
-            
+
             # Correlation between model's trend and y_true's trend
             trend_corrs.append(_pearson(m_trend, yt_trend))
             # Correlation between model's seasonality and y_true's seasonality
             seas_corrs.append(_pearson(m_seasonal, yt_seasonal))
-            
+
+            # Bias and residuals for diagnostics
+            diff_fold = preds - yt  # shape (horizon,); NaN-safe downstream
+            bias_vectors.append(diff_fold)
             valid = ~(np.isnan(preds) | np.isnan(yt))
+            fold_residuals.append(diff_fold[valid])
+
             if np.any(valid):
-                rmse_vals.append(float(np.sqrt(np.mean((preds[valid] - yt[valid]) ** 2))))
+                fold_rmse = float(np.sqrt(np.mean((preds[valid] - yt[valid]) ** 2)))
+                rmse_vals.append(fold_rmse)
+                rmse_per_fold_list.append(fold_rmse)
+                per_fold_rmse_matrix[i, j] = fold_rmse
                 # SMAPE calculation
                 smape_val = float(np.mean(2 * np.abs(preds[valid] - yt[valid]) / (np.abs(preds[valid]) + np.abs(yt[valid]) + eps)))
                 smape_vals.append(smape_val)
-            
+            else:
+                rmse_per_fold_list.append(float("nan"))
+
             for h in range(horizon):
                 if not np.isnan(preds[h]) and not np.isnan(yt[h]):
                     per_h_sq_errors[h].append(float((preds[h] - yt[h]) ** 2))
-        
+
         # Store raw STL data for LLM to analyze
         model_stl_data[m] = {
             "trend_per_fold": model_trends,
@@ -1180,6 +1263,26 @@ def build_fold_cot_context_tool() -> str:
         early_rmse = float(np.nanmean([v for v in ph_rmse[:n_early] if v is not None])) if any(v is not None for v in ph_rmse[:n_early]) else float("nan")
         late_rmse = float(np.nanmean([v for v in ph_rmse[-n_late:] if v is not None])) if any(v is not None for v in ph_rmse[-n_late:]) else float("nan")
 
+        # ── Advanced diagnostics (A1) ──────────────────────────────────────────
+        if bias_vectors:
+            bias_stack = np.vstack(bias_vectors)  # (n_valid_folds, horizon)
+            bias_h = bias_per_horizon(np.zeros_like(bias_stack), bias_stack)
+            bias_horizon_list = [
+                round(float(v), 4) if np.isfinite(v) else None for v in bias_h
+            ]
+        else:
+            bias_horizon_list = [None] * horizon
+
+        if fold_residuals:
+            flat_residuals = np.concatenate([r for r in fold_residuals if r.size > 0]) if any(r.size > 0 for r in fold_residuals) else np.array([])
+        else:
+            flat_residuals = np.array([])
+        concat_residuals[m] = flat_residuals
+
+        lb_p = ljung_box_pvalue(flat_residuals, lags=min(4, max(1, horizon - 1))) if flat_residuals.size > 0 else float("nan")
+        hetero = heteroscedasticity_ratio(flat_residuals) if flat_residuals.size > 0 else float("nan")
+        drift = drift_signal(rmse_per_fold_list)
+
         model_agg[m] = {
             "avg_trend_corr": round(float(np.mean(trend_corrs)), 4) if trend_corrs else None,
             "avg_seasonal_corr": round(float(np.mean(seas_corrs)), 4) if seas_corrs else None,
@@ -1187,13 +1290,52 @@ def build_fold_cot_context_tool() -> str:
             "avg_smape": round(float(np.mean(smape_vals)), 4) if smape_vals else None,
             "early_horizon_rmse": round(early_rmse, 4) if np.isfinite(early_rmse) else None,
             "late_horizon_rmse": round(late_rmse, 4) if np.isfinite(late_rmse) else None,
+            "rmse_per_fold": [round(float(v), 4) if np.isfinite(v) else None for v in rmse_per_fold_list],
+            "bias_per_horizon": bias_horizon_list,
+            "ljung_box_p_residual": round(float(lb_p), 4) if np.isfinite(lb_p) else None,
+            "heteroscedasticity_ratio": round(float(hetero), 4) if np.isfinite(hetero) else None,
+            "drift": {
+                "slope_norm": round(float(drift["slope_norm"]), 4) if np.isfinite(drift["slope_norm"]) else None,
+                "mono_increase_frac": round(float(drift["mono_increase_frac"]), 4) if np.isfinite(drift["mono_increase_frac"]) else None,
+            },
         }
 
     # ── Concatenated y_true decomposition using STL (across folds) ────────────
     y_true_concat = y_true.reshape(-1)  # flatten all folds
-    
+
     # Apply STL to concatenated y_true for overall trend/seasonality
     yt_trend_concat, yt_seas_concat, _ = _stl_decompose(y_true_concat)
+
+    # ── Series-level predictability signals (A1) ─────────────────────────────
+    ytrue_spec_ent = spectral_entropy(y_true_concat)
+    ytrue_hurst = hurst_rs(y_true_concat)
+
+    # ── Cross-model diagnostics (A1) ──────────────────────────────────────────
+    rank_kendall = rank_stability_kendall(per_fold_rmse_matrix)
+
+    # Build error similarity across models on aligned residuals.
+    min_len = min((r.size for r in concat_residuals.values() if r.size > 0), default=0)
+    if min_len >= 3 and len(concat_residuals) >= 2:
+        err_stack: List[np.ndarray] = []
+        err_stack_names: List[str] = []
+        for m in model_names:
+            r = concat_residuals.get(m, np.array([]))
+            if r.size >= min_len:
+                err_stack.append(r[:min_len])
+                err_stack_names.append(m)
+        if len(err_stack) >= 2:
+            err_arr = np.vstack(err_stack)
+            err_sim = error_similarity_matrix(err_arr)
+            pair = err_sim.get("most_redundant_pair")
+            if pair is not None and isinstance(pair, list) and len(pair) == 2:
+                err_sim["most_redundant_pair"] = [
+                    err_stack_names[pair[0]],
+                    err_stack_names[pair[1]],
+                ]
+        else:
+            err_sim = {"mean_abs_corr": float("nan"), "most_redundant_pair": None}
+    else:
+        err_sim = {"mean_abs_corr": float("nan"), "most_redundant_pair": None}
 
     # Per-fold STL decomposition for y_true
     ytrue_stl_per_fold: List[Dict[str, Any]] = []
@@ -1287,6 +1429,46 @@ def build_fold_cot_context_tool() -> str:
     else:
         recommended_method_hint = "Combinar campeoes de tendencia e sazonalidade com media ponderada."
 
+    # ── A1 derived flags ─────────────────────────────────────────────────────
+    autocorr_names: List[str] = []
+    drift_names: List[str] = []
+    for m in model_names:
+        lb = model_agg[m].get("ljung_box_p_residual")
+        if lb is not None and lb < 0.05:
+            autocorr_names.append(m)
+        dr = (model_agg[m].get("drift") or {}).get("slope_norm")
+        mf = (model_agg[m].get("drift") or {}).get("mono_increase_frac")
+        if dr is not None and mf is not None and dr > 0.05 and mf >= 0.6:
+            drift_names.append(m)
+
+    any_model_autocorrelated = bool(autocorr_names)
+    concept_drift_detected = bool(drift_names)
+    ytrue_unpredictable = bool(np.isfinite(ytrue_spec_ent) and ytrue_spec_ent > 0.85)
+    rankings_unstable = bool(np.isfinite(rank_kendall) and rank_kendall < 0.3)
+    mean_abs_corr = err_sim.get("mean_abs_corr")
+    models_redundant = bool(np.isfinite(mean_abs_corr) and mean_abs_corr > 0.9)
+
+    insights_v2 = {
+        "ytrue_spectral_entropy": round(float(ytrue_spec_ent), 4) if np.isfinite(ytrue_spec_ent) else None,
+        "ytrue_hurst": round(float(ytrue_hurst), 4) if np.isfinite(ytrue_hurst) else None,
+        "rank_stability_kendall": round(float(rank_kendall), 4) if np.isfinite(rank_kendall) else None,
+        "error_similarity": {
+            "mean_abs_corr": round(float(mean_abs_corr), 4) if np.isfinite(mean_abs_corr) else None,
+            "most_redundant_pair": err_sim.get("most_redundant_pair"),
+            "most_redundant_corr": round(float(err_sim.get("most_redundant_corr", float("nan"))), 4)
+            if np.isfinite(err_sim.get("most_redundant_corr", float("nan"))) else None,
+        },
+        "flags": {
+            "any_model_autocorrelated": any_model_autocorrelated,
+            "concept_drift_detected": concept_drift_detected,
+            "ytrue_unpredictable": ytrue_unpredictable,
+            "rankings_unstable": rankings_unstable,
+            "models_redundant": models_redundant,
+        },
+        "autocorrelated_models": autocorr_names,
+        "drift_models": drift_names,
+    }
+
     out = {
         "n_folds_analyzed": n_windows,
         "horizon": horizon,
@@ -1331,6 +1513,7 @@ def build_fold_cot_context_tool() -> str:
             "high_model_disagreement": high_disagreement_flag,
             "high_seasonality_variance": high_seasonality_variance,
         },
+        "insights_v2": insights_v2,
         "analysis_summary": analysis_summary,
     }
 
@@ -1434,6 +1617,33 @@ def build_debate_packet_tool(candidates_json: str = "", config_json: str = "", t
         if np.isfinite(s1) and np.isfinite(s2):
             margin = float(s2 - s1)
 
+    # ── Statistical tie-break (A2): Diebold-Mariano + paired bootstrap ───────
+    per_window_scores_by_name: Dict[str, np.ndarray] = {}
+    per_window_errors_by_name: Dict[str, np.ndarray] = {}
+    for d in details:
+        if not isinstance(d, dict):
+            continue
+        cand = d.get("candidate", {}) if isinstance(d.get("candidate"), dict) else {}
+        name = str(cand.get("name", ""))
+        if not name:
+            continue
+        pws = d.get("per_window_scores")
+        if isinstance(pws, list) and pws:
+            per_window_scores_by_name[name] = np.asarray(pws, dtype=float)
+        rfl = d.get("residuals_flat")
+        if isinstance(rfl, list) and rfl:
+            per_window_errors_by_name[name] = np.asarray(rfl, dtype=float)
+
+    try:
+        tb = tie_break_analysis(
+            top_ranking=top_rank,
+            per_window_scores=per_window_scores_by_name,
+            per_window_errors=per_window_errors_by_name,
+            alpha=0.10,
+        )
+    except Exception:
+        tb = {"available": False}
+
     per_h_rmse = _per_horizon_winner_by_key(details, "RMSE")
     per_h_smape = _per_horizon_winner_by_key(details, "SMAPE")
     per_h_mape = _per_horizon_winner_by_key(details, "MAPE")
@@ -1496,6 +1706,7 @@ def build_debate_packet_tool(candidates_json: str = "", config_json: str = "", t
         "eval_config": eval_result.get("config", {}),
         "candidate_ranking_top": top_rank,
         "score_margin_top2": margin,
+        "tie_break_analysis": tb,
         "per_horizon_winners": {
             "RMSE": per_h_rmse,
             "SMAPE": per_h_smape,
@@ -1515,12 +1726,13 @@ def build_debate_packet_tool(candidates_json: str = "", config_json: str = "", t
         },
         "recommended_knobs": _recommended_knobs(summary),
         "allowed_edits": {
-            "params_allowed": ["top_k", "trim_ratio", "shrinkage", "l2"],
+            "params_allowed": ["top_k", "trim_ratio", "shrinkage", "l2", "period"],
             "ranges": {
                 "top_k": {"min": 2, "max": max(2, int(summary.get("n_models", 2)))},
                 "trim_ratio": {"min": 0.0, "max": 0.4},
                 "shrinkage": {"min": 0.0, "max": 0.9},
                 "l2": {"min": 0.1, "max": 1000.0},
+                "period": {"min": 2, "max": 24},
             },
             "can_remove_candidates": True,
             "can_add_candidates": True,

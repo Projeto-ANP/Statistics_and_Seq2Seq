@@ -205,6 +205,29 @@ Essa função Python (não o LLM) executa o trabalho pesado. Ela pega todas as j
 
 **Observação Importante**: Note que a tool **não pré-computa** os champions. Ela retorna os valores brutos de correlação (`avg_trend_corr`, `avg_seasonal_corr`) e o campo `llm_decision_required` instrui a LLM a **analisar esses valores e decidir** quais modelos são os melhores captadores de tendência e sazonalidade.
 
+**2b. Diagnósticos Avançados (Tier A1) — `model_metrics` estendido e `insights_v2`**
+
+Além dos campos básicos, a tool `build_fold_cot_context` retorna agora um bloco de diagnóstico estatístico rigoroso, inspirado em literatura recente de robustez de ensembles (Cerqueira et al. 2019; Hyndman & Athanasopoulos 2021).
+
+Por modelo (dentro de `model_metrics[m]`):
+
+- **`bias_per_horizon`** — vetor de viés (`mean(ŷ_h − y_h)`) por passo do horizonte. Se todos os modelos da tier1 compartilham o mesmo sinal em um horizonte, a combinação vai herdar esse viés sistemático (flag no PatternAnalyst).
+- **`ljung_box_p_residual`** — p-valor do teste de Ljung-Box sobre os resíduos `ŷ − y`. Se p < 0.05, há **autocorrelação de resíduos** — o modelo deixou estrutura sem explorar, e métodos de stacking (Ridge, STL-hierárquico) podem extrair o sinal remanescente mais efetivamente do que médias simples.
+- **`heteroscedasticity_ratio`** — razão entre a variância dos resíduos da 2ª metade e da 1ª metade do horizonte. Valor >1 indica que o erro **cresce** com o passo; <1 indica que **encolhe**. Útil para decidir pesos específicos por horizonte.
+- **`drift.slope_norm`** e **`drift.mono_increase_frac`** — inclinação normalizada do RMSE ao longo das folds e fração de folds com aumento monotônico. Sinalizam **concept drift** (o modelo piora com o tempo).
+- **`rmse_per_fold`** — RMSE cru por fold, base para o teste de Diebold-Mariano na fase de debate.
+
+Séries e cruzamentos (`insights_v2`):
+
+- **`ytrue_spectral_entropy`** ∈ [0, 1] — entropia normalizada do espectro de Fourier do `y_true`. Próximo de 0 indica série altamente periódica/previsível; próximo de 1 indica ruído branco. Se > 0.85 → **`ytrue_unpredictable=True`**: prefira combinadores robustos (median, trimmed_mean); stacking sobre ruído só overfitta.
+- **`ytrue_hurst`** — expoente de Hurst via análise R/S. Em torno de 0.5 indica passeio aleatório; > 0.5 persistência (trend-following); < 0.5 mean-reversion. Serve como pista para o Proposer escolher entre métodos de trend-champion e métodos conservadores.
+- **`rank_stability_kendall`** — τ de Kendall médio do ranking por RMSE entre pares de folds. Se τ < 0.3 → **`rankings_unstable=True`**: o ranking "best_single" é instável entre janelas, então pesos suaves (inverse-RMSE, trimmed) superam seleção dura.
+- **`error_similarity.mean_abs_corr`** — correlação de Pearson média (em módulo) entre resíduos de pares de modelos; `most_redundant_pair` aponta os dois modelos mais redundantes. Se > 0.9 → **`models_redundant=True`**: médias ingênuas desperdiçam diversidade; prefira STL-hierárquico ou Ridge.
+- **`flags`** — bits booleanos consolidados: `any_model_autocorrelated`, `concept_drift_detected`, `ytrue_unpredictable`, `rankings_unstable`, `models_redundant`. O Skeptic, Statistician e Proposer consultam essas flags para disparar estratégias específicas (vide seções 5/7/8).
+- **`autocorrelated_models`**, **`drift_models`** — listas dos modelos que dispararam cada flag individualmente.
+
+Esses diagnósticos alimentam tanto o `PatternAnalyst` (que as coloca em `cot_narrative`) quanto o `Proposer`, `Skeptic` e `Statistician` (que as usam para motivar adições/remoções no conjunto de candidatos).
+
 **3. Raciocina (bloco `<think>...</think>`)**
 
 O LLM usa essas informações para responder perguntas como:
@@ -421,24 +444,40 @@ s2 = ranking[1]["score"]   # segundo melhor
 debate_margin_top2 = s2 - s1
 ```
 
-### As 3 condições que ativam o Debate
+### As 4 condições que ativam o Debate
 
 | Condição | Trigger | Descrição |
 |---|---|---|
 | `debate=True` na chamada do pipeline | `"forced"` | O usuário forçou explicitamente |
 | `force_debate=True` no JSON do Proposer | `"proposer_forced"` | O Proposer detectou instabilidade |
-| `debate_margin_top2 < effective_debate_margin` (padrão `0.02`) | `"auto_margin"` | Os dois melhores estão perigosamente próximos |
+| `tie_break_analysis.statistically_tied == True` | `"auto_statistical_tie"` | **Gatilho primário (Tier A2)** — top-1 e top-2 estatisticamente indistinguíveis |
+| `debate_margin_top2 < effective_debate_margin` (padrão `0.02`) | `"auto_margin"` | **Fallback** — usado quando não há dados suficientes para o teste estatístico |
 
-O `effective_debate_margin` é calculado como:
+### O Teste Estatístico de Empate (Tier A2 — Diebold-Mariano + Paired Bootstrap)
 
-```python
-effective_debate_margin = max(debate_margin_parametro, proposer_debate_margin)
-# ambos limitados ao intervalo [0.0, 0.1]
-```
+Antes de usar o frágil limiar absoluto `0.02` de diferença de score, o pipeline agora realiza um **teste formal de igualdade** entre os dois melhores candidatos, usando os scores e erros por janela que o `evaluator.py` produziu (`per_window_scores`, `residuals_flat`).
 
-**Se o score da 1ª estratégia é `0.2300` e o da 2ª é `0.2312`**, a diferença é `0.0012`, que é menor que o limiar `0.02` → debate é acionado automaticamente (`"auto_margin"`).
+**1. Diebold-Mariano com correção HLN (Harvey-Leybourne-Newbold 1997)**
 
-**Por que acionar o debate nesses casos?** Porque uma diferença tão pequena pode ser ruído de variância, não evidência real de superioridade. O Skeptic e o Statistician têm a chance de revisar a lista e mudar o panorama antes da decisão final.
+Para cada janela $j$, calcula-se a **loss differential** $d_j = L(ŷ^{(1)}_j) - L(ŷ^{(2)}_j)$ entre top-1 e top-2 (com $L$ = composite score por janela). Em seguida:
+
+$$\text{DM} = \frac{\bar{d}}{\sqrt{\widehat{\text{Var}}(\bar{d}) / n}}, \qquad \text{DM}_{\text{HLN}} = \text{DM} \cdot \sqrt{\frac{n + 1 - 2h + h(h-1)/n}{n}}$$
+
+com $h$ = horizonte e $n$ = número de janelas. A estatística corrigida é comparada contra uma distribuição $t_{n-1}$ bilateral — o p-valor resultante é o campo `diebold_mariano.p_value`.
+
+**2. Paired Block Bootstrap**
+
+Como $n$ é tipicamente pequeno (3–6 janelas), o DM/HLN pode ser pouco confiável. O sistema complementa com um **bootstrap pareado em blocos** sobre os vetores $(L^{(1)}_j, L^{(2)}_j)$: reamostra com reposição `B=1000` vezes, calcula a diferença de médias a cada réplica, e reporta `paired_bootstrap.p_value` como a fração de réplicas cuja diferença muda de sinal.
+
+**3. Decisão final**
+
+$$\texttt{statistically\_tied} = (p_{\text{DM}} > 0.10) \wedge (p_{\text{boot}} > 0.10)$$
+
+Usamos $\alpha = 0.10$ (não 0.05) porque é melhor chamar um debate desnecessário do que perder uma oportunidade real de diversificar. Se ambos os testes falham em rejeitar a igualdade, então `auto_statistical_tie` dispara o debate; se por algum motivo os dados são insuficientes para o teste (ex: n_windows < 3), cai-se no `auto_margin` clássico.
+
+**Por que isso é superior ao `0.02` fixo?** Um gap de `0.03` em um ranking com alta variância window-a-window pode ser ruído; um gap de `0.01` em um ranking extremamente estável pode ser real. O teste estatístico respeita a distribuição observada dos scores em vez de usar um limiar absoluto inventado.
+
+O campo `tie_break_analysis` completo é exposto no `debate_packet` para que o Skeptic e o Statistician também possam citar os p-valores em seus `rationale`.
 
 ---
 
@@ -449,6 +488,17 @@ effective_debate_margin = max(debate_margin_parametro, proposer_debate_margin)
 O `Skeptic` é o **guardião da integridade matemática**. Ele não propõe nada — ele *filtra*. Sua função é remover estratégias perigosas e garantir diversidade mínima de tipos no conjunto candidato.
 
 Temperatura: `0.2`.
+
+### Debate de 2 Rodadas (Tier B1 — Du et al. 2023 / Liang et al. 2023)
+
+Desde o Tier B1, tanto o `Skeptic` quanto o `Statistician` rodam em **duas rodadas sequenciais** com visibilidade mútua na segunda rodada, reproduzindo a arquitetura de debate multi-agente de *"Improving Factuality and Reasoning in Language Models through Multiagent Debate"* (Du et al. 2023) e *"Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate"* (Liang et al. 2023).
+
+- **Rodada 1 (cega)** — cada agente responde **independentemente**, apenas com o `debate_packet`. Nem o Skeptic vê a resposta do Statistician nem vice-versa. Isso garante que cada agente formule sua posição inicial sem ancoragem no peer.
+- **Rodada 2 (peer-visible)** — cada agente recebe a Rodada-1 do peer como um bloco extra no prompt (`Statistician_round1_actions` / `Skeptic_round1_actions`), precisa **explicitar** em seu novo `rationale` o que aceitou, o que rejeitou, e por quê. Após essa segunda rodada, as ações da R2 são as que efetivamente se aplicam ao conjunto.
+
+Os artefatos são persistidos separadamente em `llm_artifacts` como `skeptic_r1`, `skeptic_r2`, `statistician_r1`, `statistician_r2`, para auditoria completa do trace de debate. As chaves legadas `skeptic` e `statistician` apontam para a R2 por retrocompatibilidade com o logger CSV em `run_tsf_orchestrator.py`.
+
+**Ordem de aplicação das mudanças**: Skeptic-R2 é aplicado primeiro (remoções/adições defensivas), seguido por Statistician-R2 (robustez e novas adições). Se ambos propõem a mesma ação, ela é aplicada uma única vez.
 
 ### O que ele faz (Passo a Passo)
 
@@ -487,6 +537,8 @@ Essa ferramenta prepara um pacote com:
 - **Homogeneidade**: O conjunto inteiro é só `baseline`? Se sim, adiciona pelo menos 1 candidato de tipo `weighted` ou `selection` do `universe.leaderboards`.
 - **Redundância**: Há 3 variantes quase idênticas de `trimmed_mean`? Remove as mais fracas, mantém apenas 1.
 - **Diversidade mínima**: O conjunto deve ter ao menos 2 tipos distintos.
+- **Tie-break do Tier A2**: Se `tie_break_analysis.statistically_tied=True`, o Skeptic é instruído a **diversificar** o ensemble (adicionar um `type` diferente do top-1) em vez de micro-tunar o vencedor — o gap não é distinguível de ruído a α=0.10.
+- **Peer-review (Rodada 2)**: lê `Statistician_round1_actions`. Se o peer levantou um risco de leakage ou redundância que o Skeptic não viu na Rodada 1, incorpora a correção e declara isso explicitamente no `rationale` da Rodada 2.
 
 **3. Retorna JSON Schema Exato (Output Final)**
 
@@ -511,7 +563,7 @@ O *Skeptic* obrigatoriamente devolve as modificações usando as chaves `add_nam
 
 O `Statistician` é o **especialista em robustez estatística**. Diferente do Skeptic que remove problemas, o Statistician *adiciona* proteções e substitui candidatos fracos por variações mais robustas.
 
-Temperatura: `0.2`.
+Temperatura: `0.2`. Roda também em **2 rodadas (Du et al. 2023 style)** — ver descrição detalhada na seção 7. Na Rodada 2 recebe `Skeptic_round1_actions` para alinhar posições.
 
 ### O que ele faz (Passo a Passo)
 
@@ -529,12 +581,21 @@ Ele usa uma tabela de conhecimento embutida no seu prompt:
 | `RMSE_std/RMSE > 0.3` (instabilidade) | Aumenta `shrinkage`; usa `robust_median` |
 | `n_windows ≥ 6` | `ridge_stacking` torna-se viável — adiciona |
 | Conjunto atual só tem baselines | **OBRIGATÓRIO** adicionar ≥1 weighted ou selection |
+| Série sazonal **e** `insights_v2.flags.models_redundant=True` | Adiciona `stl_hierarchical_stacking_p{period}_sh0.0` (Tier A3) |
+| `tie_break_analysis.statistically_tied=True` | Adiciona candidato de tipo **diferente** do top-1 (diversificação >> micro-tuning) |
+| `insights_v2.flags.concept_drift_detected=True` | Prefere `ade_dynamic_error_*` ou `exp_weighted_average_*` (rolling); evita ridge longo |
+| `insights_v2.flags.ytrue_unpredictable` ou `rankings_unstable` | Prefere robustos (`median`, `trimmed_mean` com `trim=0.2`); evita stacking pesado |
 
 Ele também se baseia em referências acadêmicas:
 - **DBA** (Petitjean et al., 2011): robusto quando modelos têm defasagens de fase.
 - **Inverse-RMSE weights** (Timmermann, 2006): supera pesos uniformes quando a qualidade dos modelos varia.
 - **Ridge stacking** (Gaillard & Goude, 2015): ótimo quando `n_windows ≥ 2 × n_models`.
 - **Top-k mean** (M4 Competition, 2020): reduz variância de modelos outliers; `k = sqrt(n_models)` é um bom default.
+- **ADE / EWA** (Cerqueira et al., 2019): combinadores adaptativos a concept drift.
+- **STL-hierarchical stacking** (Cleveland et al., 1990 + Stock & Watson, 2004): aprende pesos separados para trend / seasonal / residual — supera ridge quando a série é sazonal e os modelos são redundantes.
+- **Diebold-Mariano (1995) com HLN (1997)** + paired bootstrap: base do tie-break estatístico do Tier A2.
+
+**Na Rodada 2** (peer-visible), o Statistician inspeciona `Skeptic_round1_actions`: se o peer também propôs adicionar o mesmo candidato, ele mantém (consensus-preserving). Se o peer apontou leakage que o Statistician não viu, incorpora a remoção. Se houver discordância direta (Skeptic removeu X, Statistician queria manter), ele precisa citar o número (score, p-valor, flag) que justifica a posição mantida.
 
 **3. Retorna JSON Schema Exato (Output Final)**
 
@@ -791,6 +852,48 @@ Imagine que dois modelos previram o mesmo padrão de pico, mas um previu o pico 
 - Implementação: usa `tslearn.barycenters.dtw_barycenter_averaging`.
 
 **Quando usar**: Alta velocidade de divergência entre modelos (`relative_spread_mean ≥ 0.25`) ou quando modelos capturaram o mesmo padrão mas com defasagens de fase diferentes.
+
+---
+
+### Grupo 6: STL-Hierarchical Stacking (Tier A3)
+
+#### `stl_hierarchical_stacking` (parâmetros: `period`, `shrinkage`)
+
+Inspirado em **Cleveland et al. (1990)** (STL decomposition) combinado com **Stock & Watson (2004)** (hierarchical forecast combination). A ideia central: se a série real é decomposta em tendência + sazonalidade + resíduo, então **cada modelo base pode ser melhor em um componente diferente** — um modelo pode capturar tendência bem mas errar sazonalidade, e vice-versa. Em vez de aprender um único vetor de pesos para combinar predições brutas, aprendemos **três vetores de pesos separados**, um por componente.
+
+**Passo 1: Decomposição STL dos preditores**
+
+Para cada janela de treino $j < i$, decompõe-se tanto `y_true` quanto cada predição $\hat{y}_m$ usando STL (com fallback para detrending linear quando `statsmodels` está indisponível ou a série é curta demais):
+
+$$y_j = T^{(y)}_j + S^{(y)}_j + R^{(y)}_j, \qquad \hat{y}_{m,j} = T^{(m)}_j + S^{(m)}_j + R^{(m)}_j$$
+
+**Passo 2: Pesos simplex por componente via inverse-RMSE**
+
+Para cada componente $c \in \{T, S, R\}$ e cada modelo $m$, calcula-se o RMSE no passado:
+
+$$\text{RMSE}^c_m = \sqrt{\frac{1}{(i)(H)} \sum_{j < i} \sum_{h} \left( \hat{C}^{(m)}_{j,h} - C^{(y)}_{j,h} \right)^2}$$
+
+Os pesos brutos são $w^{c,\text{raw}}_m = 1 / (\text{RMSE}^c_m + \epsilon)$, normalizados com shrinkage e **projetados no simplex** (seção 13), resultando em três vetores de pesos separados $w^T, w^S, w^R$.
+
+**Passo 3: Combinação hierárquica**
+
+Para a janela alvo, decompõe-se cada predição e aplica-se os pesos componente-por-componente:
+
+$$\hat{y}_h = \sum_m w^T_m \cdot \hat{T}^{(m)}_h + \sum_m w^S_m \cdot \hat{S}^{(m)}_h + \sum_m w^R_m \cdot \hat{R}^{(m)}_h$$
+
+**Parâmetros**:
+- `period` (clampado no servidor em [2, 24]): período sazonal para o STL. O registro automático de candidatos no `tools.py` gera uma grade com base no horizonte (ex: 4, 7, 12).
+- `shrinkage` ∈ [0, 0.9]: move cada vetor $w^c$ em direção ao uniforme $1/M$, evitando overfit quando $n_{\text{windows}}$ é pequeno.
+
+**Quando este método supera o Ridge stacking?**
+
+Três cenários comprovados empiricamente e justificados matematicamente:
+
+1. **Modelos redundantes** (`insights_v2.error_similarity.mean_abs_corr > 0.9`): Ridge tenta resolver uma regressão quase-singular e aumenta `l2` indiscriminadamente. STL-hierárquico distribui a redundância por componente — modelos redundantes na tendência podem ainda ser diferentes na sazonalidade.
+2. **Sazonalidade forte + campeões divergentes de trend/seasonality**: se o `PatternAnalyst` identifica que o trend-champion ≠ seasonality-champion, o STL-hierárquico atribui naturalmente pesos altos ao modelo certo **em cada componente**.
+3. **Viés sistemático no resíduo**: se `bias_per_horizon` mostra todos os modelos erroneamente positivos em certos horizontes, isolar o resíduo permite pesos assimétricos só naquele componente sem degradar a estimativa de tendência.
+
+O registro automático no `tools.py` (`_candidate_universe_from_summary`) cria variantes nomeadas `stl_hierarchical_stacking_p{period}_sh{shrinkage}` com período calibrado pelo horizonte e shrinkage em {0.0, 0.25, 0.5}.
 
 ---
 

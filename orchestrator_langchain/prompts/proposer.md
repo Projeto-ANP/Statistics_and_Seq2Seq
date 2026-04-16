@@ -29,6 +29,9 @@ Before writing your JSON answer, use <think>...</think> to reason through these 
 | n_windows ≤ 4 | Prefer small top_k (2-3), add shrinkage ≥ 0.3 |
 | pattern_analyst: high seas_corr variance | `dba_combination` or `weighted` |
 | pattern_analyst: clear trend champion | `best_single_by_validation` or `inverse_rmse_weights` |
+| pattern_analyst flags: `models_redundant=true` OR seasonality strong AND models redundant | `stl_hierarchical_stacking_p{period}_sh0.0` |
+| pattern_analyst flags: `ytrue_unpredictable=true` OR `rankings_unstable=true` | Robust: `median` / `trimmed_mean` (trim 0.2); avoid heavy stacking |
+| pattern_analyst flags: `concept_drift_detected=true` | `ade_dynamic_error_*` or `exp_weighted_average_*` (rolling); avoid long-history ridge |
 
 ## OUTPUT JSON (EXACT KEYS)
 ```json

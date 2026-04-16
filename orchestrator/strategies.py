@@ -123,6 +123,56 @@ def _weights_inverse_rmse(
     return _project_simplex(w)
 
 
+def _stl_decompose_components(series: np.ndarray, period: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """STL-decompose a 1-D series into trend, seasonal, residual.
+
+    Falls back to linear detrending when the series is too short for STL
+    (< 2 * period). Both the input and output are aligned on the same index
+    (NaNs are preserved only if the input itself is all-NaN).
+    """
+
+    x = np.asarray(series, dtype=float)
+    n = int(x.size)
+    if n < 2:
+        z = np.zeros_like(x)
+        t = np.full_like(x, np.nanmean(x) if n > 0 else 0.0)
+        return t, z, x - t
+
+    valid = ~np.isnan(x)
+    n_valid = int(np.sum(valid))
+    p = max(2, int(period))
+    if n_valid < 2 * p or n_valid < 4:
+        idx = np.arange(n, dtype=float)
+        if n_valid >= 2:
+            coeffs = np.polyfit(idx[valid], x[valid], 1)
+            trend = np.polyval(coeffs, idx)
+        else:
+            trend = np.full_like(x, np.nanmean(x[valid]) if n_valid > 0 else 0.0)
+        seasonal = np.zeros_like(x)
+        residual = x - trend
+        return trend, seasonal, residual
+
+    try:
+        from statsmodels.tsa.seasonal import STL
+
+        filled = x.copy()
+        if np.any(~valid):
+            filled[~valid] = np.nanmean(x[valid])
+        result = STL(filled, period=p, robust=True).fit()
+        return (
+            np.asarray(result.trend, dtype=float),
+            np.asarray(result.seasonal, dtype=float),
+            np.asarray(result.resid, dtype=float),
+        )
+    except Exception:
+        idx = np.arange(n, dtype=float)
+        coeffs = np.polyfit(idx[valid], x[valid], 1)
+        trend = np.polyval(coeffs, idx)
+        seasonal = np.zeros_like(x)
+        residual = x - trend
+        return trend, seasonal, residual
+
+
 def _ridge_weights(
     y_true_train: np.ndarray,
     y_preds_train: np.ndarray,
@@ -510,6 +560,84 @@ def generate_combined_predictions(
                     last_weights[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
 
         debug["weights_last_window_by_horizon"] = last_weights
+        return combined, debug
+
+    if method == "stl_hierarchical_stacking":
+        # Hierarchical STL stacking: decompose y_true and each model's prediction
+        # into trend / seasonal / residual components on the training slice,
+        # learn per-component inverse-RMSE simplex weights, and at prediction
+        # time decompose each model's forecast, combine per component, and sum.
+        period = int(candidate.params.get("period", max(2, horizon // 2)))
+        shrinkage = float(candidate.params.get("shrinkage", 0.0))
+        eps = float(candidate.params.get("eps", 1e-8))
+        debug.update({"period": period, "shrinkage": shrinkage})
+
+        last_weights: Dict[str, Dict[str, float]] = {}
+
+        for i in range(n_windows):
+            tr = _train_slice(i, rolling_cfg)
+            if tr.stop - tr.start <= 0:
+                combined[i, :] = np.nanmean(y_preds[i, :, :], axis=0)
+                continue
+
+            train_true = y_true[tr, :]
+            train_preds = y_preds[tr, :, :]
+            n_train = train_true.shape[0]
+
+            # Accumulate component features across training windows.
+            yt_T_list, yt_S_list, yt_R_list = [], [], []
+            pr_T_list, pr_S_list, pr_R_list = [], [], []
+
+            for k in range(n_train):
+                yt_T, yt_S, yt_R = _stl_decompose_components(train_true[k, :], period=period)
+                yt_T_list.append(yt_T)
+                yt_S_list.append(yt_S)
+                yt_R_list.append(yt_R)
+
+                preds_mat_k = np.zeros((horizon, n_models), dtype=float)
+                seas_mat_k = np.zeros((horizon, n_models), dtype=float)
+                res_mat_k = np.zeros((horizon, n_models), dtype=float)
+                for j in range(n_models):
+                    pT, pS, pR = _stl_decompose_components(train_preds[k, j, :], period=period)
+                    preds_mat_k[:, j] = pT
+                    seas_mat_k[:, j] = pS
+                    res_mat_k[:, j] = pR
+                pr_T_list.append(preds_mat_k)
+                pr_S_list.append(seas_mat_k)
+                pr_R_list.append(res_mat_k)
+
+            yt_T_all = np.concatenate(yt_T_list)
+            yt_S_all = np.concatenate(yt_S_list)
+            yt_R_all = np.concatenate(yt_R_list)
+            pr_T_all = np.concatenate(pr_T_list, axis=0)
+            pr_S_all = np.concatenate(pr_S_list, axis=0)
+            pr_R_all = np.concatenate(pr_R_list, axis=0)
+
+            w_T = _weights_inverse_rmse(yt_T_all, pr_T_all, eps=eps, shrinkage=shrinkage)
+            w_S = _weights_inverse_rmse(yt_S_all, pr_S_all, eps=eps, shrinkage=shrinkage)
+            w_R = _weights_inverse_rmse(yt_R_all, pr_R_all, eps=eps, shrinkage=shrinkage)
+
+            # Apply to window i
+            pred_T = np.zeros((horizon, n_models), dtype=float)
+            pred_S = np.zeros((horizon, n_models), dtype=float)
+            pred_R = np.zeros((horizon, n_models), dtype=float)
+            for j in range(n_models):
+                pT, pS, pR = _stl_decompose_components(y_preds[i, j, :], period=period)
+                pred_T[:, j] = pT
+                pred_S[:, j] = pS
+                pred_R[:, j] = pR
+
+            trend_c = pred_T @ w_T
+            seas_c = pred_S @ w_S
+            resid_c = pred_R @ w_R
+            combined[i, :] = trend_c + seas_c + resid_c
+
+            if i == n_windows - 1:
+                last_weights["trend"] = {model_names[j]: float(w_T[j]) for j in range(n_models)}
+                last_weights["seasonal"] = {model_names[j]: float(w_S[j]) for j in range(n_models)}
+                last_weights["residual"] = {model_names[j]: float(w_R[j]) for j in range(n_models)}
+
+        debug["weights_last_window_by_component"] = last_weights
         return combined, debug
 
     # Unknown method: fallback
