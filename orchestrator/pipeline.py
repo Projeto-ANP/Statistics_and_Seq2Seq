@@ -1224,7 +1224,7 @@ def run_llm_pipeline(
             "after_proposer": candidates_after_proposer,
             "after_skeptic": candidates_after_skeptic,
             "after_statistician": candidates_after_statistician,
-            "dropped_selected_names": dropped_selected_names,
+            "dropped_selected_names": _truly_dropped,
         },
         "tool_validation": {
             "tools_called": tools_called,
