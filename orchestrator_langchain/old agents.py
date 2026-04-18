@@ -8,15 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
-from orchestrator_langchain.langchain_tools import (
-    build_fold_cot_context,
-    council_brief,
-    debate_packet,
-    diagnostician_brief,
-    evaluate_strategies,
-    judge_brief,
-    proposer_brief,
-)
+from orchestrator_langchain.langchain_tools import debate_packet, evaluate_strategies, proposer_brief, build_fold_cot_context
 
 
 DEFAULT_MODEL_ID = "mychen76/qwen3_cline_roocode:4b"
@@ -159,55 +151,5 @@ def create_orchestrator_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = Fa
         tools=[evaluate_strategies],
         system_prompt=_load_prompt("orchestrator.md"),
         temperature=0.15,
-        force_tool_call=True,
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# HALMOC agents
-# ──────────────────────────────────────────────────────────────────────────
-
-
-def create_diagnostician_agent(
-    model_id: str = DEFAULT_MODEL_ID, debug: bool = False
-) -> LangchainAgent:
-    """Single LLM, rich prompt; merges the old PatternAnalyst + diagnostics."""
-
-    _ = debug
-    return LangchainAgent(
-        model_id=model_id,
-        tools=[diagnostician_brief],
-        system_prompt=_load_prompt("diagnostician.md"),
-        temperature=0.2,
-        force_tool_call=True,
-    )
-
-
-def create_council_member_agent(
-    model_id: str, debug: bool = False, temperature: float = 0.4
-) -> LangchainAgent:
-    """One Council member.  Spawn 3 with *different* model_ids for diversity."""
-
-    _ = debug
-    return LangchainAgent(
-        model_id=model_id,
-        tools=[council_brief],
-        system_prompt=_load_prompt("council_member.md"),
-        temperature=temperature,
-        force_tool_call=True,
-    )
-
-
-def create_judge_agent(
-    model_id: str = DEFAULT_MODEL_ID, debug: bool = False
-) -> LangchainAgent:
-    """Listwise verifier; pick the strongest available model here."""
-
-    _ = debug
-    return LangchainAgent(
-        model_id=model_id,
-        tools=[judge_brief],
-        system_prompt=_load_prompt("judge.md"),
-        temperature=0.0,
         force_tool_call=True,
     )

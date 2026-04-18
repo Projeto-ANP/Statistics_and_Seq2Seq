@@ -3,7 +3,6 @@ from __future__ import annotations
 from langchain_core.tools import tool
 
 from orchestrator import tools as orch_tools
-from orchestrator import halmoc_tools as halmoc_orch_tools
 
 
 @tool("proposer_brief")
@@ -35,24 +34,3 @@ def build_fold_cot_context() -> str:
     """Build chain-of-thought context from validation folds (trend/seasonality decomposition per model)."""
 
     return orch_tools.build_fold_cot_context_tool()
-
-
-@tool("diagnostician_brief")
-def diagnostician_brief() -> str:
-    """HALMOC Diagnostician brief: FFORMA features, diagnostics, loose MCS, memory few-shots."""
-
-    return halmoc_orch_tools.diagnostician_brief_tool()
-
-
-@tool("council_brief")
-def council_brief() -> str:
-    """HALMOC Council brief: Diagnostician output + diagnostic packet + combiner registry."""
-
-    return halmoc_orch_tools.council_brief_tool()
-
-
-@tool("judge_brief")
-def judge_brief() -> str:
-    """HALMOC Judge brief: anonymised council proposals + diagnostics + MCS evidence."""
-
-    return halmoc_orch_tools.judge_brief_tool()

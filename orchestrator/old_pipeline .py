@@ -10,10 +10,7 @@ from orchestrator.evaluator import EvaluationConfig, evaluate_all
 from orchestrator.final_predictor import predict_final_from_context
 from orchestrator.schemas import CandidateStrategy
 from orchestrator.strategies import RollingConfig
-from orchestrator.utils import (
-    extract_json_object,
-    strip_think_blocks as _strip_think_blocks_util,
-)
+from orchestrator.utils import extract_json_object, strip_think_blocks as _strip_think_blocks_util
 from orchestrator.schemas import parse_candidates
 from orchestrator.tools import (
     SCORE_PRESETS,
@@ -44,22 +41,22 @@ def _run_agent_with_retry(
     log_func: Optional[Callable[[str], None]] = None,
 ) -> tuple[str, Dict[str, Any]]:
     """Run an agent with retry logic for JSON parsing failures.
-
+    
     Args:
         agent_func: Callable that returns agent output string
         agent_name: Name of agent (for logging)
         max_retries: Maximum number of retry attempts (default 3)
         log_func: Optional logging function
-
+    
     Returns:
         (raw_output, parsed_json_object)
-
+    
     Raises:
         RuntimeError if all retries fail
     """
     if log_func is None:
         log_func = print
-
+    
     for attempt in range(1, max_retries + 1):
         try:
             log_func(f"{agent_name}: attempt {attempt}/{max_retries}")
@@ -68,24 +65,22 @@ def _run_agent_with_retry(
             elapsed = time.perf_counter() - t0
             log_func(f"{agent_name}: response received in {elapsed:.1f}s")
             log_func(f"{agent_name} raw (first 2000 chars): {str(output)[:2000]}")
-
+            
             cleaned = _strip_think_blocks(str(output))
             parsed_obj = extract_json_object(cleaned)
             if parsed_obj is None or not isinstance(parsed_obj, dict):
                 if attempt < max_retries:
-                    log_func(
-                        f"{agent_name}: invalid JSON (attempt {attempt}, retrying...)"
-                    )
+                    log_func(f"{agent_name}: invalid JSON (attempt {attempt}, retrying...)")
                     continue
                 else:
                     raise RuntimeError(
                         f"{agent_name} did not return valid JSON after {max_retries} attempts (hard-stop). "
                         f"Raw (first 2000 chars): {str(output)[:2000]}"
                     )
-
+            
             log_func(f"{agent_name}: successfully parsed JSON")
             return output, parsed_obj
-
+        
         except Exception as e:
             if attempt < max_retries:
                 log_func(f"{agent_name}: error on attempt {attempt}: {e} (retrying...)")
@@ -94,34 +89,33 @@ def _run_agent_with_retry(
                 raise RuntimeError(
                     f"{agent_name} failed after {max_retries} attempts: {e} (hard-stop)"
                 )
-
+    
     raise RuntimeError(f"{agent_name} exhausted all {max_retries} retry attempts")
 
 
 import re
 import difflib
 
-
 def _resolve_candidate_name(name: str, valid_set: set) -> str:
     """Auto-corrects candidate names by fixing float suffixes or minor typos."""
     if name in valid_set:
         return name
-
+        
     # Strip trailing zeros from decimals to match things like "0.2" with "0.20"
     def strip_trailing_zeros(s: str) -> str:
-        return re.sub(r"(\.\d*?[1-9])0+(?=[^\d]|$)|(\.)0+(?=[^\d]|$)", r"\1", s)
-
+        return re.sub(r'(\.\d*?[1-9])0+(?=[^\d]|$)|(\.)0+(?=[^\d]|$)', r'\1', s)
+        
     normalized_valid_map = {strip_trailing_zeros(v): v for v in valid_set}
     stripped_target = strip_trailing_zeros(name)
-
+    
     if stripped_target in normalized_valid_map:
         return normalized_valid_map[stripped_target]
-
+        
     # Fallback to fuzzy string matching
     matches = difflib.get_close_matches(name, valid_set, n=1, cutoff=0.85)
     if matches:
         return matches[0]
-
+        
     return name
 
 
@@ -188,9 +182,7 @@ def _validate_actions_against_universe(
     if not isinstance(remove_names, list):
         raise RuntimeError(f"{who}.remove_names must be a list (hard-stop)")
     remove_names_norm = [str(x) for x in remove_names if str(x)]
-    remove_names_norm = [
-        _resolve_candidate_name(n, current_set) for n in remove_names_norm
-    ]
+    remove_names_norm = [_resolve_candidate_name(n, current_set) for n in remove_names_norm]
 
     # Disallow removing candidates that are neither currently present nor being added.
     allowed_remove = set(current_set) | set(add_names_norm)
@@ -207,19 +199,13 @@ def _validate_actions_against_universe(
     if not isinstance(overrides_raw, dict):
         raise RuntimeError(f"{who}.params_overrides must be an object/dict (hard-stop)")
 
-    overrides_raw = {
-        _resolve_candidate_name(str(k), valid_set): v for k, v in overrides_raw.items()
-    }
+    overrides_raw = {_resolve_candidate_name(str(k), valid_set): v for k, v in overrides_raw.items()}
 
     allowed_override = set(current_set) | set(add_names_norm)
     override_keys = [str(k) for k in overrides_raw.keys()]
     cand_override_keys = [k for k in override_keys if k in allowed_override]
     knob_override_keys = [k for k in override_keys if k in ALLOWED_PARAM_EDITS]
-    unknown_override_keys = [
-        k
-        for k in override_keys
-        if k not in allowed_override and k not in ALLOWED_PARAM_EDITS
-    ]
+    unknown_override_keys = [k for k in override_keys if k not in allowed_override and k not in ALLOWED_PARAM_EDITS]
 
     # Auto-promote: if an unknown override key is a valid universe candidate, the LLM simply
     # forgot to add it to add_names. Silently promote it instead of hard-stopping.
@@ -228,7 +214,6 @@ def _validate_actions_against_universe(
 
     if auto_promoted:
         import logging as _logging
-
         _logging.getLogger(__name__).warning(
             f"{who}: auto-promoting candidates found in params_overrides but missing from "
             f"add_names: {auto_promoted}. Adding them to add_names automatically."
@@ -239,16 +224,13 @@ def _validate_actions_against_universe(
 
     if still_unknown:
         import logging as _logging
-
         _logging.getLogger(__name__).warning(
             f"{who}: params_overrides references names not found anywhere in the universe "
             f"(likely hallucinated by the LLM): {still_unknown}. "
             f"These overrides will be silently dropped."
         )
         # Drop the unknown keys so they don't pollute the override dict
-        overrides_raw = {
-            k: v for k, v in overrides_raw.items() if str(k) not in still_unknown
-        }
+        overrides_raw = {k: v for k, v in overrides_raw.items() if str(k) not in still_unknown}
         override_keys = [k for k in override_keys if k not in still_unknown]
         cand_override_keys = [k for k in override_keys if k in allowed_override]
 
@@ -262,7 +244,6 @@ def _validate_actions_against_universe(
         ov = overrides_raw.get(cand, {})
         if not isinstance(ov, dict):
             import logging as _logging
-
             _logging.getLogger(__name__).warning(
                 f"{who}.params_overrides['{cand}'] is not a dict (got {type(ov).__name__}: {ov}). "
                 f"Gracefully ignoring this specific override to prevent hard-stop."
@@ -283,21 +264,16 @@ def _validate_actions_against_universe(
     for cand, ov in overrides.items():
         if not isinstance(ov, dict):
             continue
-
-        bad_keys = [
-            k
-            for k in ov.keys()
-            if str(k) not in ALLOWED_PARAM_EDITS and str(k) != "method"
-        ]
+        
+        bad_keys = [k for k in ov.keys() if str(k) not in ALLOWED_PARAM_EDITS and str(k) != "method"]
         if bad_keys:
             import logging as _logging
-
             _logging.getLogger(__name__).warning(
                 f"{who} used unsupported override keys for '{cand}': {bad_keys}. "
                 f"Allowed: {sorted(ALLOWED_PARAM_EDITS)}. Ignoring bad keys instead of hard-stopping."
             )
             ov = {k: v for k, v in ov.items() if k not in bad_keys}
-
+            
         if ov:
             valid_overrides[cand] = ov
 
@@ -341,9 +317,7 @@ def _apply_actions_to_payload(
     if not isinstance(overrides, dict):
         overrides = {}
 
-    def _apply_overrides_to_params(
-        base_params: Dict[str, Any], override_obj: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _apply_overrides_to_params(base_params: Dict[str, Any], override_obj: Dict[str, Any]) -> Dict[str, Any]:
         o = override_obj if isinstance(override_obj, dict) else {}
         if "method" in o:
             o = {k: v for k, v in o.items() if k != "method"}
@@ -387,9 +361,7 @@ def _apply_actions_to_payload(
             continue
 
         base = dict(c)
-        base_params = (
-            base.get("params", {}) if isinstance(base.get("params"), dict) else {}
-        )
+        base_params = base.get("params", {}) if isinstance(base.get("params"), dict) else {}
         o = overrides.get(name, {})
         base["params"] = _apply_overrides_to_params(base_params, o)
         out_candidates.append(base)
@@ -404,9 +376,7 @@ def _apply_actions_to_payload(
         cand = universe_by_name.get(n)
         if isinstance(cand, dict):
             base = dict(cand)
-            base_params = (
-                base.get("params", {}) if isinstance(base.get("params"), dict) else {}
-            )
+            base_params = base.get("params", {}) if isinstance(base.get("params"), dict) else {}
             o = overrides.get(n, {})
             base["params"] = _apply_overrides_to_params(base_params, o)
             out_candidates.append(base)
@@ -465,9 +435,7 @@ def _sanitize_candidate_payload(
             original_by_name[str(c.get("name"))] = c
 
     revised_obj = extract_json_object(str(revised_text))
-    if isinstance(revised_obj, dict) and isinstance(
-        revised_obj.get("candidates"), list
-    ):
+    if isinstance(revised_obj, dict) and isinstance(revised_obj.get("candidates"), list):
         revised_list = revised_obj.get("candidates")
     elif isinstance(revised_obj, list):
         revised_list = revised_obj
@@ -484,19 +452,11 @@ def _sanitize_candidate_payload(
             continue
 
         base = dict(original_by_name[name])
-        base_params = (
-            base.get("params", {}) if isinstance(base.get("params"), dict) else {}
-        )
-        item_params = (
-            item.get("params", {}) if isinstance(item.get("params"), dict) else {}
-        )
+        base_params = base.get("params", {}) if isinstance(base.get("params"), dict) else {}
+        item_params = item.get("params", {}) if isinstance(item.get("params"), dict) else {}
 
         # Do not allow method changes
-        if (
-            "method" in item_params
-            and "method" in base_params
-            and item_params.get("method") != base_params.get("method")
-        ):
+        if "method" in item_params and "method" in base_params and item_params.get("method") != base_params.get("method"):
             item_params = {k: v for k, v in item_params.items() if k != "method"}
 
         new_params = dict(base_params)
@@ -606,11 +566,7 @@ DEFAULT_CANDIDATES: List[CandidateStrategy] = [
         constraints="anti-leakage rolling selection",
         risks=["depends on k"],
         validation_plan="rolling",
-        params={
-            "method": "topk_mean_per_horizon",
-            "top_k": 3,
-            "selection_metric": "rmse",
-        },
+        params={"method": "topk_mean_per_horizon", "top_k": 3, "selection_metric": "rmse"},
     ),
     CandidateStrategy(
         name="inv_rmse_weights_per_horizon_k3_shrink02",
@@ -621,12 +577,7 @@ DEFAULT_CANDIDATES: List[CandidateStrategy] = [
         constraints="w>=0,sum(w)=1; learned from past windows only",
         risks=["weight instability"],
         validation_plan="rolling",
-        params={
-            "method": "inverse_rmse_weights_per_horizon",
-            "top_k": 3,
-            "shrinkage": 0.2,
-            "eps": 1e-8,
-        },
+        params={"method": "inverse_rmse_weights_per_horizon", "top_k": 3, "shrinkage": 0.2, "eps": 1e-8},
     ),
     CandidateStrategy(
         name="ridge_stacking_per_horizon_l2_10",
@@ -724,9 +675,7 @@ def run_llm_pipeline(
         "parsed": {},
     }
 
-    _log(
-        f"Starting LLM pipeline | model_id={model_id} | rolling={rolling_mode} | train_window={train_window}"
-    )
+    _log(f"Starting LLM pipeline | model_id={model_id} | rolling={rolling_mode} | train_window={train_window}")
 
     eval_config = {
         "rolling": {"mode": rolling_mode, "train_window": int(train_window)},
@@ -750,9 +699,7 @@ def run_llm_pipeline(
         set_context("pattern_analyst_insights", pa_obj)
         llm_artifacts["raw"]["pattern_analyst"] = str(pa_out)
         llm_artifacts["parsed"]["pattern_analyst"] = pa_obj
-        _log(
-            f"PatternAnalyst: trend_champion={pa_obj.get('trend_champion')} | seas_champion={pa_obj.get('seasonality_champion')} | hint={pa_obj.get('recommended_method_hint')}"
-        )
+        _log(f"PatternAnalyst: trend_champion={pa_obj.get('trend_champion')} | seas_champion={pa_obj.get('seasonality_champion')} | hint={pa_obj.get('recommended_method_hint')}")
     except Exception as e:
         _log(f"PatternAnalyst: failed (non-fatal, continuing) — {e}")
         set_context("pattern_analyst_insights", {})
@@ -760,16 +707,12 @@ def run_llm_pipeline(
     # Ensure build_fold_cot_context_tool was actually called (writes pattern_analyst_cot_context).
     # If the LLM skipped the tool, invoke it programmatically so the Proposer brief has fold data.
     if not get_context("pattern_analyst_cot_context"):
-        _log(
-            "PatternAnalyst did not call build_fold_cot_context_tool; invoking it automatically..."
-        )
+        _log("PatternAnalyst did not call build_fold_cot_context_tool; invoking it automatically...")
         try:
             _build_fold_cot_context_tool.entrypoint()
             _log("Fallback build_fold_cot_context_tool succeeded.")
         except Exception as _fcot_err:
-            _log(
-                f"Fallback build_fold_cot_context_tool failed (non-fatal): {_fcot_err}"
-            )
+            _log(f"Fallback build_fold_cot_context_tool failed (non-fatal): {_fcot_err}")
 
     set_context("orchestrator_llm_artifacts", llm_artifacts)
     # ─────────────────────────────────────────────────────────────────────────
@@ -794,17 +737,15 @@ def run_llm_pipeline(
         "MUST propose at least 3 candidates including at least 1 non-baseline type. "
         "Return ONLY JSON per instructions. "
         "IMPORTANT: you MUST ONLY reference candidate names that appear in the tool output candidate_library; "
-        "unknown names will hard-stop." + pattern_hint_text
+        "unknown names will hard-stop."
+        + pattern_hint_text
     )
 
     # Tool inputs are provided via context so the LLM doesn't need to pass parameters.
     # proposer_brief_tool expects MAPE config at top-level keys.
-    set_context(
-        "config_json_for_proposer",
-        json.dumps(eval_config.get("metrics", {}), ensure_ascii=False),
-    )
+    set_context("config_json_for_proposer", json.dumps(eval_config.get("metrics", {}), ensure_ascii=False))
     set_context("proposer_max_candidates", 12)
-
+    
     _log("Proposer: waiting for LLM response...")
     pr_out, pr_obj = _run_agent_with_retry(
         lambda: proposer.run(proposer_prompt).content,
@@ -821,9 +762,7 @@ def run_llm_pipeline(
     brief = get_context("orchestrator_proposer_brief")
     if not isinstance(brief, dict):
         # LLM skipped the tool call — invoke it programmatically as a recovery step.
-        _log(
-            "Proposer did not call proposer_brief_tool; invoking it automatically as fallback..."
-        )
+        _log("Proposer did not call proposer_brief_tool; invoking it automatically as fallback...")
         try:
             _proposer_brief_tool.entrypoint()
             brief = get_context("orchestrator_proposer_brief")
@@ -831,24 +770,14 @@ def run_llm_pipeline(
             _log(f"Fallback proposer_brief_tool call failed: {_pbt_err}")
             brief = None
     if not isinstance(brief, dict):
-        raise RuntimeError(
-            "Proposer tool did not populate orchestrator_proposer_brief (hard-stop)"
-        )
+        raise RuntimeError("Proposer tool did not populate orchestrator_proposer_brief (hard-stop)")
 
     library = brief.get("candidate_library")
     if not isinstance(library, dict) or not isinstance(library.get("candidates"), list):
-        raise RuntimeError(
-            "Proposer brief missing candidate_library.candidates (hard-stop)"
-        )
+        raise RuntimeError("Proposer brief missing candidate_library.candidates (hard-stop)")
 
-    summary = (
-        brief.get("validation_summary")
-        if isinstance(brief.get("validation_summary"), dict)
-        else {}
-    )
-    candidates_all: List[Dict[str, Any]] = [
-        c for c in library.get("candidates", []) if isinstance(c, dict)
-    ]
+    summary = brief.get("validation_summary") if isinstance(brief.get("validation_summary"), dict) else {}
+    candidates_all: List[Dict[str, Any]] = [c for c in library.get("candidates", []) if isinstance(c, dict)]
     by_name = {str(c.get("name")): c for c in candidates_all if c.get("name")}
     universe_names = sorted(by_name.keys())
 
@@ -865,11 +794,7 @@ def run_llm_pipeline(
     # and register dynamically into by_name / universe_names so evaluation can
     # proceed.  Only truly unrecognisable names are silently dropped.
     models_available_early = get_context("models_available", [])
-    _nm_early = (
-        len(models_available_early)
-        if isinstance(models_available_early, list) and models_available_early
-        else int(summary.get("n_models", 2) or 2)
-    )
+    _nm_early = len(models_available_early) if isinstance(models_available_early, list) and models_available_early else int(summary.get("n_models", 2) or 2)
     _nw_early = int(summary.get("n_windows", 3) or 3)
     _resolved_names: List[str] = []
     _truly_dropped: List[str] = []
@@ -899,9 +824,7 @@ def run_llm_pipeline(
     # Ensure at least 2 candidates (safety). Do NOT silently inject baseline_mean
     # unless we can't keep a minimal set.
     if len(selected_names) < 2:
-        selected_names = [
-            str(c.get("name")) for c in candidates_all[:4] if c.get("name")
-        ]
+        selected_names = [str(c.get("name")) for c in candidates_all[:4] if c.get("name")]
         selected_names = [n for n in selected_names if n in by_name]
 
     candidates_payload = {
@@ -919,17 +842,9 @@ def run_llm_pipeline(
         ]
 
     models_available = get_context("models_available", [])
-    n_models = (
-        len(models_available)
-        if isinstance(models_available, list) and models_available
-        else int(summary.get("n_models", 1) or 1)
-    )
+    n_models = len(models_available) if isinstance(models_available, list) and models_available else int(summary.get("n_models", 1) or 1)
 
-    proposer_candidate_names = [
-        str(c.get("name"))
-        for c in candidates_payload.get("candidates", [])
-        if isinstance(c, dict) and c.get("name")
-    ]
+    proposer_candidate_names = [str(c.get("name")) for c in candidates_payload.get("candidates", []) if isinstance(c, dict) and c.get("name")]
 
     # Pre-filter params_overrides: try to resolve unknown keys via the same resolver
     # before dropping them.  This lets the LLM say params_overrides: {"trimmed_mean_tr0.2": {...}}
@@ -945,9 +860,7 @@ def run_llm_pipeline(
             if _resolved_ov is not None:
                 _rk = str(_resolved_ov["name"])
                 _remapped_overrides[_rk] = _ov
-                _log(
-                    f"[ORCH|LLM] Proposer params_overrides key '{_ok}' remapped → '{_rk}'"
-                )
+                _log(f"[ORCH|LLM] Proposer params_overrides key '{_ok}' remapped → '{_rk}'")
             else:
                 _dropped_override_keys.append(str(_ok))
     if _dropped_override_keys:
@@ -963,12 +876,7 @@ def run_llm_pipeline(
         current_names=proposer_candidate_names,
         who="Proposer",
     )
-    candidates_payload = _apply_actions_to_payload(
-        candidates_payload,
-        proposer_actions,
-        universe_by_name=by_name,
-        n_models=n_models,
-    )
+    candidates_payload = _apply_actions_to_payload(candidates_payload, proposer_actions, universe_by_name=by_name, n_models=n_models)
     candidates_after_proposer = _candidate_names_from_payload(candidates_payload)
 
     score_preset = str(pr_obj.get("score_preset", "balanced"))
@@ -976,15 +884,11 @@ def run_llm_pipeline(
         score_preset = "balanced"
 
     proposer_force_debate = bool(pr_obj.get("force_debate", False))
-    proposer_debate_margin = _clamp_float(
-        pr_obj.get("debate_margin", debate_margin), 0.0, 0.1
-    )
+    proposer_debate_margin = _clamp_float(pr_obj.get("debate_margin", debate_margin), 0.0, 0.1)
     if proposer_debate_margin is None:
         proposer_debate_margin = float(debate_margin)
     # Do not allow the Proposer to accidentally disable debate_auto by setting 0.0.
-    effective_debate_margin = float(
-        max(float(debate_margin), float(proposer_debate_margin))
-    )
+    effective_debate_margin = float(max(float(debate_margin), float(proposer_debate_margin)))
 
     debate_trace: Dict[str, Any] = {
         "debate_ran": False,
@@ -1025,19 +929,13 @@ def run_llm_pipeline(
                 debate_trace["debate_margin_top2"] = float(s2 - s1)
 
             # A2 — Statistical tie-break (Diebold-Mariano + paired bootstrap).
-            details_pre = (
-                pre_eval.get("details", []) if isinstance(pre_eval, dict) else []
-            )
+            details_pre = pre_eval.get("details", []) if isinstance(pre_eval, dict) else []
             pw_scores: Dict[str, Any] = {}
             pw_errors: Dict[str, Any] = {}
             for d in details_pre:
                 if not isinstance(d, dict):
                     continue
-                cand = (
-                    d.get("candidate", {})
-                    if isinstance(d.get("candidate"), dict)
-                    else {}
-                )
+                cand = d.get("candidate", {}) if isinstance(d.get("candidate"), dict) else {}
                 name = str(cand.get("name", ""))
                 if not name:
                     continue
@@ -1077,26 +975,18 @@ def run_llm_pipeline(
     if not should_debate and debate_auto and statistically_tied:
         should_debate = True
         debate_trace["debate_trigger"] = "auto_statistical_tie"
-        _log(
-            "Debate auto-triggered: statistical tie (DM + paired bootstrap cannot separate top-1 vs top-2)"
-        )
+        _log("Debate auto-triggered: statistical tie (DM + paired bootstrap cannot separate top-1 vs top-2)")
 
     # Fallback: narrow score margin (kept for back-compat when tie-break is unavailable).
     if not should_debate and debate_auto:
         m = debate_trace.get("debate_margin_top2")
-        if (
-            isinstance(m, (int, float))
-            and m == m
-            and m < float(effective_debate_margin)
-        ):
+        if isinstance(m, (int, float)) and m == m and m < float(effective_debate_margin):
             should_debate = True
             debate_trace["debate_trigger"] = "auto_margin"
             _log(f"Debate auto-triggered: small margin top2 ({float(m):.4f})")
 
     if should_debate:
-        _log(
-            "Debate enabled: running 2-round Skeptic↔Statistician (Du et al. 2023 style)"
-        )
+        _log("Debate enabled: running 2-round Skeptic↔Statistician (Du et al. 2023 style)")
         debate_trace["debate_ran"] = True
         debate_trace["debate_rounds"] = 2
         # Provide tool inputs via context so the LLM doesn't need to pass parameters.
@@ -1109,13 +999,7 @@ def run_llm_pipeline(
             ensure_ascii=False,
         )
         candidates_json = json.dumps(candidates_payload, ensure_ascii=False)
-        universe_json = json.dumps(
-            {
-                "candidates": candidates_all,
-                "meta": {"source": "proposer_brief_universe"},
-            },
-            ensure_ascii=False,
-        )
+        universe_json = json.dumps({"candidates": candidates_all, "meta": {"source": "proposer_brief_universe"}}, ensure_ascii=False)
 
         set_context("config_json_for_debate", config_json)
         set_context("candidates_json_for_debate", candidates_json)
@@ -1139,12 +1023,7 @@ def run_llm_pipeline(
         except Exception as _dpt_err:
             _log(f"Pre-invoke debate_packet (R1) failed (non-fatal): {_dpt_err}")
 
-        def _round_prompt(
-            role: str,
-            round_num: int,
-            peer_json: Optional[str],
-            peer_role: Optional[str],
-        ) -> str:
+        def _round_prompt(role: str, round_num: int, peer_json: Optional[str], peer_role: Optional[str]) -> str:
             header = (
                 "Chame build_debate_packet_tool() PRIMEIRO (inputs via context). "
                 "Depois retorne APENAS JSON (sem markdown) com add_names, remove_names, params_overrides, rationale, changes, when_good.\n"
@@ -1168,9 +1047,7 @@ def run_llm_pipeline(
         # ── Round 1 ─────────────────────────────────────────────────────────
         # Both agents respond independently (blind to the peer's output).
         skeptic_prompt_r1 = _round_prompt("Skeptic", 1, peer_json=None, peer_role=None)
-        statistician_prompt_r1 = _round_prompt(
-            "Statistician", 1, peer_json=None, peer_role=None
-        )
+        statistician_prompt_r1 = _round_prompt("Statistician", 1, peer_json=None, peer_role=None)
 
         _log("Round 1 — Skeptic: waiting for LLM response...")
         sk_out_r1, sk_obj_r1 = _run_agent_with_retry(
@@ -1211,12 +1088,8 @@ def run_llm_pipeline(
         peer_stat_r1 = _compact_peer(st_obj_r1)
         peer_sk_r1 = _compact_peer(sk_obj_r1)
 
-        skeptic_prompt_r2 = _round_prompt(
-            "Skeptic", 2, peer_json=peer_stat_r1, peer_role="Statistician"
-        )
-        statistician_prompt_r2 = _round_prompt(
-            "Statistician", 2, peer_json=peer_sk_r1, peer_role="Skeptic"
-        )
+        skeptic_prompt_r2 = _round_prompt("Skeptic", 2, peer_json=peer_stat_r1, peer_role="Statistician")
+        statistician_prompt_r2 = _round_prompt("Statistician", 2, peer_json=peer_sk_r1, peer_role="Skeptic")
 
         _log("Round 2 — Skeptic: revising with peer visibility...")
         sk_out_r2, sk_obj_r2 = _run_agent_with_retry(
@@ -1256,24 +1129,14 @@ def run_llm_pipeline(
             if isinstance(c, dict) and c.get("name")
         ]
         sk_actions = _validate_actions_against_universe(
-            sk_obj_r2,
-            universe_names,
-            current_names=sk_current_names,
-            who="Skeptic",
-            by_name_registry=by_name,
-            n_models=n_models,
-            n_windows=_nw_early,
+            sk_obj_r2, universe_names, current_names=sk_current_names, who="Skeptic",
+            by_name_registry=by_name, n_models=n_models, n_windows=_nw_early,
         )
-        candidates_payload = _apply_actions_to_payload(
-            candidates_payload, sk_actions, universe_by_name=by_name, n_models=n_models
-        )
+        candidates_payload = _apply_actions_to_payload(candidates_payload, sk_actions, universe_by_name=by_name, n_models=n_models)
         candidates_after_skeptic = _candidate_names_from_payload(candidates_payload)
 
         # Refresh tool inputs between agents so Statistician's action is evaluated on the post-Skeptic payload.
-        set_context(
-            "candidates_json_for_debate",
-            json.dumps(candidates_payload, ensure_ascii=False),
-        )
+        set_context("candidates_json_for_debate", json.dumps(candidates_payload, ensure_ascii=False))
 
         st_current_names = [
             str(c.get("name"))
@@ -1281,20 +1144,11 @@ def run_llm_pipeline(
             if isinstance(c, dict) and c.get("name")
         ]
         st_actions = _validate_actions_against_universe(
-            st_obj_r2,
-            universe_names,
-            current_names=st_current_names,
-            who="Statistician",
-            by_name_registry=by_name,
-            n_models=n_models,
-            n_windows=_nw_early,
+            st_obj_r2, universe_names, current_names=st_current_names, who="Statistician",
+            by_name_registry=by_name, n_models=n_models, n_windows=_nw_early,
         )
-        candidates_payload = _apply_actions_to_payload(
-            candidates_payload, st_actions, universe_by_name=by_name, n_models=n_models
-        )
-        candidates_after_statistician = _candidate_names_from_payload(
-            candidates_payload
-        )
+        candidates_payload = _apply_actions_to_payload(candidates_payload, st_actions, universe_by_name=by_name, n_models=n_models)
+        candidates_after_statistician = _candidate_names_from_payload(candidates_payload)
     else:
         _log("Debate disabled: skipping Skeptic + Statistician (lower randomness)")
         candidates_after_skeptic = None
@@ -1303,23 +1157,13 @@ def run_llm_pipeline(
     # Ensure structure is {"candidates": [...]}
     if isinstance(candidates_payload, list):
         candidates_payload = {"candidates": candidates_payload}
-    if (
-        not isinstance(candidates_payload, dict)
-        or "candidates" not in candidates_payload
-    ):
+    if not isinstance(candidates_payload, dict) or "candidates" not in candidates_payload:
         raise RuntimeError("Candidates payload malformed after proposal/debate")
 
-    if (
-        not isinstance(candidates_payload.get("candidates"), list)
-        or len(candidates_payload.get("candidates")) == 0
-    ):
+    if not isinstance(candidates_payload.get("candidates"), list) or len(candidates_payload.get("candidates")) == 0:
         raise RuntimeError("No candidates provided after proposal/debate")
 
-    n_candidates = (
-        len(candidates_payload.get("candidates", []))
-        if isinstance(candidates_payload, dict)
-        else 0
-    )
+    n_candidates = len(candidates_payload.get("candidates", [])) if isinstance(candidates_payload, dict) else 0
     _log(f"Candidates ready: {n_candidates} candidate(s)")
 
     # If debate ran, record the best candidate under the revised set BEFORE evaluation.
@@ -1332,9 +1176,7 @@ def run_llm_pipeline(
                 post_cfg.rolling.mode = rolling_mode
                 post_cfg.rolling.train_window = int(train_window)
                 post_eval = evaluate_all(data, post_candidates, post_cfg)
-                post_best = (
-                    post_eval.get("best") if isinstance(post_eval, dict) else None
-                )
+                post_best = post_eval.get("best") if isinstance(post_eval, dict) else None
                 if isinstance(post_best, dict):
                     debate_trace["best_post_debate"] = post_best.get("candidate")
         except Exception as e:
@@ -1354,13 +1196,9 @@ def run_llm_pipeline(
 
     parsed_candidates = parse_candidates(candidates_payload.get("candidates"))
     if not parsed_candidates:
-        raise RuntimeError(
-            "No valid candidates parsed after proposal/debate (hard-stop)"
-        )
+        raise RuntimeError("No valid candidates parsed after proposal/debate (hard-stop)")
 
-    eval_result: Dict[str, Any] = evaluate_all(
-        load_validation_from_context(), parsed_candidates, eval_cfg
-    )
+    eval_result: Dict[str, Any] = evaluate_all(load_validation_from_context(), parsed_candidates, eval_cfg)
     set_context("orchestrator_last_eval", eval_result)
     tools_called = get_context("tools_called", [])
     if not isinstance(tools_called, list):
@@ -1369,18 +1207,14 @@ def run_llm_pipeline(
     set_context("tools_called", tools_called)
 
     if not isinstance(eval_result, dict) or not eval_result.get("best"):
-        raise RuntimeError(
-            "Deterministic evaluation produced no best candidate (hard-stop)"
-        )
+        raise RuntimeError("Deterministic evaluation produced no best candidate (hard-stop)")
 
     _log("Evaluation result ready")
 
     best = eval_result["best"]
     best_candidate = CandidateStrategy(**best["candidate"])  # reconstruct
     _log(f"Best strategy: {best_candidate.name}")
-    pred = predict_final_from_context(
-        best_candidate, RollingConfig(mode=rolling_mode, train_window=int(train_window))
-    )
+    pred = predict_final_from_context(best_candidate, RollingConfig(mode=rolling_mode, train_window=int(train_window)))
 
     _log("Final prediction generated from context['predictions']")
 
@@ -1415,16 +1249,8 @@ def run_llm_pipeline(
         "predict_debug": pred.get("debug", {}),
         "llm": {
             "proposer": llm_artifacts.get("parsed", {}).get("proposer"),
-            "skeptic": (
-                llm_artifacts.get("parsed", {}).get("skeptic")
-                if debate_trace.get("debate_ran")
-                else None
-            ),
-            "statistician": (
-                llm_artifacts.get("parsed", {}).get("statistician")
-                if debate_trace.get("debate_ran")
-                else None
-            ),
+            "skeptic": llm_artifacts.get("parsed", {}).get("skeptic") if debate_trace.get("debate_ran") else None,
+            "statistician": llm_artifacts.get("parsed", {}).get("statistician") if debate_trace.get("debate_ran") else None,
         },
     }
 
@@ -1435,16 +1261,8 @@ def run_llm_pipeline(
 
     # Human-friendly short explanations for CSV.
     explanations: Dict[str, Any] = {
-        "before": (
-            debate_trace.get("best_pre_debate", {}).get("name")
-            if isinstance(debate_trace.get("best_pre_debate"), dict)
-            else None
-        ),
-        "after": (
-            debate_trace.get("best_post_debate", {}).get("name")
-            if isinstance(debate_trace.get("best_post_debate"), dict)
-            else None
-        ),
+        "before": debate_trace.get("best_pre_debate", {}).get("name") if isinstance(debate_trace.get("best_pre_debate"), dict) else None,
+        "after": debate_trace.get("best_post_debate", {}).get("name") if isinstance(debate_trace.get("best_post_debate"), dict) else None,
         "debate_trigger": debate_trace.get("debate_trigger"),
         "debate_margin_top2": debate_trace.get("debate_margin_top2"),
         "skeptic_rationale": None,
