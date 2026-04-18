@@ -664,7 +664,7 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
-    dataset = "US_BIRTHS_DATASET"
+    dataset = "ETTH1"
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
