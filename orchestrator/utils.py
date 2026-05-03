@@ -4,6 +4,12 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from dataclasses import dataclass
+
+@dataclass
+class ModelConfig:
+    model: str
+    temperature: float
 
 def strip_think_blocks(text: str) -> str:
     """Remove <think>...</think> blocks and orphaned </think> tags."""

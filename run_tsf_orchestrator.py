@@ -128,15 +128,15 @@ def get_predictions_models(models, dataset_index, final_test, dataset="ANP_MONTH
 
     return final_test_predictions, final_test_data
 
-
+import orchestrator.utils as _utils
 def exec_dataset_orchestrator(
     models,
     dataset,
     use_llm: bool = False,
-    proposer_model: dict = {"model": "qwen3:14b", "temperature": 0.7},
-    skeptic_model: dict = {"model": "qwen3:14b", "temperature": 0.3},
-    statistician_model: dict = {"model": "qwen3:14b", "temperature": 0.2},
-    pattern_analyst_model: dict = {"model": "qwen3:14b", "temperature": 0.2},
+    proposer_model: _utils.ModelConfig = None,
+    skeptic_model: _utils.ModelConfig = None,
+    statistician_model: _utils.ModelConfig = None,
+    pattern_analyst_model: _utils.ModelConfig = None,
     debug: bool = False,
     rolling: str = "expanding",
     train_window: int = 3,
@@ -639,18 +639,18 @@ def exec_dataset_orchestrator(
         if hard_stop:
             raise RuntimeError(f"LLM run failed at dataset_index={i}. See CSV row description for details.")
 
-
+import orchestrator.utils as _utils
 if __name__ == "__main__":
     models = [
         "ARIMA",
         "ETS",
         "THETA",
-        "ridge",
+        #"ridge",
         "rf",
         "catboost",
-        "CWT_ridge",
-        "DWT_ridge",
-        "FT_ridge",
+        #"CWT_ridge",
+        #"DWT_ridge",
+        #"FT_ridge",
         "CWT_rf",
         "DWT_rf",
         "FT_rf",
@@ -659,13 +659,13 @@ if __name__ == "__main__":
         "FT_catboost",
         "ONLY_CWT_catboost",
         "ONLY_CWT_rf",
-        "ONLY_CWT_ridge",
+        #"ONLY_CWT_ridge",
         "ONLY_DWT_catboost",
         "ONLY_DWT_rf",
-        "ONLY_DWT_ridge",
+        #"ONLY_DWT_ridge",
         "ONLY_FT_catboost",
         "ONLY_FT_rf",
-        "ONLY_FT_ridge",
+        #"ONLY_FT_ridge",
         "NaiveSeasonal",
         "NaiveMovingAverage",
     ]
@@ -675,10 +675,10 @@ if __name__ == "__main__":
         models,
         dataset=dataset,
         use_llm=True,
-        proposer_model={"model": "gemma4:26b", "temperature": 0.7},
-        skeptic_model={"model": "gpt-oss:20b", "temperature": 0.3},
-        statistician_model={"model": "qwen3:14b", "temperature": 0.2},
-        pattern_analyst_model={"model": "qwen3.5:27b-q4_K_M", "temperature": 0.2},
+        proposer_model=_utils.ModelConfig(model="gemma4:26b", temperature=0.7),
+        skeptic_model=_utils.ModelConfig(model="gpt-oss:20b", temperature=0.3),
+        statistician_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.2),
+        pattern_analyst_model=_utils.ModelConfig(model="qwen3.5:27b-q4_K_M", temperature=0.2),
         debug=False,
         rolling="expanding",
         train_window=3,

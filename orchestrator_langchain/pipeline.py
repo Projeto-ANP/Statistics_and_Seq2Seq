@@ -4,13 +4,13 @@ from typing import Any, Dict
 
 import orchestrator.pipeline as _base
 from orchestrator_langchain import agents as lc_agents
-
+import orchestrator.utils as _utils
 
 def run_langchain_pipeline(
-    proposer_model: dict,
-    skeptic_model: dict,
-    statistician_model: dict,
-    pattern_analyst_model: dict,
+    proposer_model: _utils.ModelConfig,
+    skeptic_model: _utils.ModelConfig,
+    statistician_model: _utils.ModelConfig,
+    pattern_analyst_model: _utils.ModelConfig,
     debug: bool = False,
     rolling_mode: str = "expanding",
     train_window: int = 5,

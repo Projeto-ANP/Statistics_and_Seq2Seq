@@ -638,13 +638,13 @@ def run_deterministic_pipeline(
     set_context("orchestrator_last_pipeline", out)
     return out
 
-
+import orchestrator.utils as _utils
 def run_llm_pipeline(
     # model_id: str = "qwen3:14b",
-    proposer_model: dict,
-    skeptic_model: dict,
-    statistician_model: dict,
-    pattern_analyst_model: dict,
+    proposer_model: _utils.ModelConfig,
+    skeptic_model: _utils.ModelConfig,
+    statistician_model: _utils.ModelConfig,
+    pattern_analyst_model: _utils.ModelConfig,
     debug: bool = False,
     rolling_mode: str = "expanding",
     train_window: int = 5,
