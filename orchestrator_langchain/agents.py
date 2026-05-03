@@ -39,7 +39,7 @@ class LangchainAgent:
         self._system_prompt = system_prompt
         self._force_tool_call = force_tool_call
         self._max_tool_rounds = max_tool_rounds
-        self._llm = ChatOllama(model=model_id, temperature=temperature)
+        self._llm = ChatOllama(model=model_id, temperature=temperature,base_url="http://127.0.0.1:11501")
         self._bound_llm = self._bind_tools(self._llm, tools)
         self._tool_map = {t.name: t for t in tools}
 
