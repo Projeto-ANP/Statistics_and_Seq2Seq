@@ -7,7 +7,10 @@ from orchestrator_langchain import agents as lc_agents
 
 
 def run_langchain_pipeline(
-    model_id: str = "qwen3:14b",
+    proposer_model: dict,
+    skeptic_model: dict,
+    statistician_model: dict,
+    pattern_analyst_model: dict,
     debug: bool = False,
     rolling_mode: str = "expanding",
     train_window: int = 5,
@@ -24,7 +27,10 @@ def run_langchain_pipeline(
     _base.create_statistician_agent = lc_agents.create_statistician_agent
 
     return _base.run_llm_pipeline(
-        model_id=model_id,
+        proposer_model,
+        statistician_model,
+        skeptic_model,
+        pattern_analyst_model,
         debug=debug,
         rolling_mode=rolling_mode,
         train_window=train_window,
