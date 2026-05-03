@@ -640,7 +640,11 @@ def run_deterministic_pipeline(
 
 
 def run_llm_pipeline(
-    model_id: str = "qwen3:14b",
+    # model_id: str = "qwen3:14b",
+    proposer_model: dict,
+    skeptic_model: dict,
+    statistician_model: dict,
+    pattern_analyst_model: dict,
     debug: bool = False,
     rolling_mode: str = "expanding",
     train_window: int = 5,
@@ -663,19 +667,22 @@ def run_llm_pipeline(
         if llm_logs:
             print(f"[ORCH|LLM] {msg}", flush=True)
 
-    proposer = create_proposer_agent(model_id, debug=debug)
-    skeptic = create_skeptic_agent(model_id, debug=debug)
-    statistician = create_statistician_agent(model_id, debug=debug)
-    pattern_analyst = create_pattern_analyst_agent(model_id, debug=debug)
+    proposer = create_proposer_agent(proposer_model.model, debug=debug)
+    skeptic = create_skeptic_agent(skeptic_model.model, debug=debug)
+    statistician = create_statistician_agent(statistician_model.model, debug=debug)
+    pattern_analyst = create_pattern_analyst_agent(pattern_analyst_model.model, debug=debug)
 
     llm_artifacts: Dict[str, Any] = {
-        "model_id": model_id,
+        "proposer": f"{proposer_model.model} + {proposer_model.temperature}",
+        "skeptic": f"{skeptic_model.model} + {skeptic_model.temperature}",
+        "statistician": f"{statistician_model.model} + {statistician_model.temperature}",
+        "pattern_analyst": f"{pattern_analyst_model.model} + {pattern_analyst_model.temperature}",
         "prompts": {},
         "raw": {},
         "parsed": {},
     }
 
-    _log(f"Starting LLM pipeline | model_id={model_id} | rolling={rolling_mode} | train_window={train_window}")
+    _log(f"Starting LLM pipeline | proposer={proposer_model.model} | skeptic={skeptic_model.model} | statistician={statistician_model.model} | pattern_analyst={pattern_analyst_model.model} | rolling={rolling_mode} | train_window={train_window}")
 
     eval_config = {
         "rolling": {"mode": rolling_mode, "train_window": int(train_window)},
