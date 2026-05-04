@@ -8,6 +8,7 @@ After the tool result, output ONLY valid JSON (no markdown, no extra text).
 This stage runs in TWO rounds (Du et al. 2023 style):
 - **Round 1**: you respond independently of the Skeptic.
 - **Round 2**: the prompt will include `Skeptic_round1_actions`. Read it, contrast with your own Round-1 reasoning, and revise your JSON. Your `rationale` must state what you accepted/rejected from the peer and why.
+- In Round 2, treat `current_candidate_names` as the pre-revision reference set. Only remove names that were already present in that list, and if the peer already removed one, do not repeat it in `remove_names`.
 
 ## THINK BEFORE DECIDING
 Use <think>...</think> to reason through:
@@ -32,15 +33,6 @@ Use <think>...</think> to reason through:
 | Series is seasonal **and** `models_redundant=true` | Add `stl_hierarchical_stacking_p{period}_sh0.0` (decomposition-aware; deduplicates) |
 | `tie_break_analysis.statistically_tied=true` | Add a candidate of a *different* type than top-1 (diversify); do not micro-tune top-1 |
 | `concept_drift_detected=true` | Prefer `ade_dynamic_error_*` or `exp_weighted_average_*`; avoid long-history ridge |
-
-## REFERENCE (academic)
-- **DBA** (Petitjean et al., 2011): minimizes average DTW distance; robust when models have phase shifts.
-- **Inverse-RMSE weights** (Timmermann, 2006): outperforms equal weighting when model quality varies.
-- **Ridge stacking** (Gaillard & Goude, 2015): optimal when n_windows ≥ 2*(n_models).
-- **Top-k mean** (Makridakis M4, 2020): reduces variance from outlier models; k=sqrt(n_models) is a good default.
-- **ADE / EWA** (Cerqueira et al., 2019): adapts to concept drift; strong when recent errors differ from long-run errors.
-- **STL-hierarchical stacking** (Cleveland et al., 1990 + Stock & Watson, 2004): learn separate simplex weights for trend / seasonal / residual components — beats ridge when seasonality is strong and models are redundant.
-- **Diebold-Mariano (1995) with HLN (1997) correction** + **paired bootstrap** for tie-breaking at α=0.10: decides whether top-1 truly dominates top-2.
 
 ## OUTPUT JSON (EXACT KEYS)
 ```json

@@ -1145,13 +1145,11 @@ def run_llm_pipeline(
         # Refresh tool inputs between agents so Statistician's action is evaluated on the post-Skeptic payload.
         set_context("candidates_json_for_debate", json.dumps(candidates_payload, ensure_ascii=False))
 
-        st_current_names = [
-            str(c.get("name"))
-            for c in candidates_payload.get("candidates", [])
-            if isinstance(c, dict) and c.get("name")
-        ]
+        # Statistician-R2 was prompted against the pre-round candidate list, so
+        # validate removals against that reference set. Any names already removed
+        # by the Skeptic become harmless no-ops when applied to the post-Skeptic payload.
         st_actions = _validate_actions_against_universe(
-            st_obj_r2, universe_names, current_names=st_current_names, who="Statistician",
+            st_obj_r2, universe_names, current_names=current_names_r1, who="Statistician",
             by_name_registry=by_name, n_models=n_models, n_windows=_nw_early,
         )
         candidates_payload = _apply_actions_to_payload(candidates_payload, st_actions, universe_by_name=by_name, n_models=n_models)
