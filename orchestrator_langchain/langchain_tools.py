@@ -34,3 +34,12 @@ def build_fold_cot_context() -> str:
     """Build chain-of-thought context from validation folds (trend/seasonality decomposition per model)."""
 
     return orch_tools.build_fold_cot_context_tool()
+
+
+# ── V2 pipeline tools ────────────────────────────────────────────────────────
+
+@tool("strategy_brief")
+def strategy_brief() -> str:
+    """V2: Strategy brief for StrategySelector — includes SeriesProfile + candidate library + strategy guide."""
+
+    return orch_tools.strategy_brief_tool()

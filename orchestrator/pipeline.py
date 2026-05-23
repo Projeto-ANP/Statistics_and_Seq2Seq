@@ -24,6 +24,8 @@ from orchestrator.agents import (
     create_proposer_agent,
     create_skeptic_agent,
     create_statistician_agent,
+    create_series_annotator_agent,
+    create_strategy_selector_agent,
 )
 
 
@@ -1307,3 +1309,397 @@ def run_llm_pipeline(
 
 # Local import to avoid circular import at module import time
 from orchestrator.data_contract import load_validation_from_context  # noqa: E402
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V2 Pipeline: SeriesAnnotator → StrategySelector → Deterministic eval + Oracle
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_llm_pipeline_v2(
+    series_annotator_model: _utils.ModelConfig,
+    strategy_selector_model: _utils.ModelConfig,
+    debug: bool = False,
+    rolling_mode: str = "expanding",
+    train_window: int = 3,
+    require_tool_call: bool = True,
+    llm_logs: bool = True,
+) -> Dict[str, Any]:
+    """V2 pipeline: structured annotation → strategy selection → deterministic eval + oracle.
+
+    Key design decisions:
+    - temperature=0 on both agents for full reproducibility.
+    - Oracle (all candidates from the universe) always runs for comparison.
+    - Both oracle and LLM-guided eval use the 'balanced' preset for fair delta measurement.
+    - No debate: LLM annotates and selects; deterministic evaluator decides.
+    """
+
+    def _log(msg: str) -> None:
+        if llm_logs:
+            print(f"[ORCH|V2] {msg}", flush=True)
+
+    _log(
+        f"Starting V2 pipeline | annotator={series_annotator_model.model} "
+        f"| selector={strategy_selector_model.model} | rolling={rolling_mode} | train_window={train_window}"
+    )
+
+    series_annotator = create_series_annotator_agent(series_annotator_model.model, debug=debug)
+    strategy_selector = create_strategy_selector_agent(strategy_selector_model.model, debug=debug)
+
+    llm_artifacts: Dict[str, Any] = {
+        "series_annotator": series_annotator_model.model,
+        "strategy_selector": strategy_selector_model.model,
+        "prompts": {},
+        "raw": {},
+        "parsed": {},
+    }
+
+    # Balanced preset used consistently for both LLM-guided and oracle evals.
+    _BALANCED = {"a_rmse": 0.3, "b_smape": 0.3, "c_mape": 0.2, "d_pocid": 0.2}
+
+    eval_cfg = EvaluationConfig()
+    eval_cfg.rolling.mode = rolling_mode
+    eval_cfg.rolling.train_window = int(train_window)
+    eval_cfg.metrics.mape_zero = "skip"
+    eval_cfg.metrics.mape_epsilon = 1e-8
+    eval_cfg.score.a_rmse = _BALANCED["a_rmse"]
+    eval_cfg.score.b_smape = _BALANCED["b_smape"]
+    eval_cfg.score.c_mape = _BALANCED["c_mape"]
+    eval_cfg.score.d_pocid = _BALANCED["d_pocid"]
+
+    set_context("config_json_for_proposer", json.dumps({"mape_zero": "skip", "mape_epsilon": 1e-8}))
+    set_context("proposer_max_candidates", 12)
+
+    # ── Step 0: Pre-build fold CoT context (shared by both agents) ───────────
+    if not get_context("pattern_analyst_cot_context"):
+        try:
+            _build_fold_cot_context_tool()
+            _log("build_fold_cot_context_tool: pre-built successfully.")
+        except Exception as _e:
+            _log(f"build_fold_cot_context_tool pre-build failed (non-fatal): {_e}")
+
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+    # ── Step 1: SeriesAnnotator → SeriesProfile ───────────────────────────────
+    _log("SeriesAnnotator: analyzing series patterns...")
+    sa_prompt = (
+        "Call build_fold_cot_context() FIRST to analyze the validation folds. "
+        "Then return ONLY JSON with the SeriesProfile per the output schema in your instructions. "
+        "No markdown, no explanation — only the JSON object."
+    )
+    llm_artifacts["prompts"]["series_annotator"] = sa_prompt
+
+    series_profile: Dict[str, Any] = {}
+    try:
+        sa_out, sa_obj = _run_agent_with_retry(
+            lambda: series_annotator.run(sa_prompt).content,
+            "SeriesAnnotator",
+            max_retries=2,
+            log_func=_log,
+        )
+        series_profile = sa_obj if isinstance(sa_obj, dict) else {}
+        set_context("series_profile", series_profile)
+        llm_artifacts["raw"]["series_annotator"] = str(sa_out)
+        llm_artifacts["parsed"]["series_annotator"] = series_profile
+        _log(
+            f"SeriesAnnotator: strategy_type={series_profile.get('combination_recommendation', {}).get('strategy_type')} "
+            f"| confidence={series_profile.get('confidence')}"
+        )
+    except Exception as _e:
+        _log(f"SeriesAnnotator failed (non-fatal, continuing without profile): {_e}")
+        set_context("series_profile", {})
+
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+    # ── Step 2: StrategySelector → selected candidates ───────────────────────
+    ss_prompt = (
+        "Call strategy_brief() FIRST — it contains the SeriesProfile and the full candidate library. "
+        "Use series_profile fields to justify every selection. "
+        "Return ONLY JSON per the output schema. No markdown, no explanation."
+    )
+    llm_artifacts["prompts"]["strategy_selector"] = ss_prompt
+
+    _log("StrategySelector: selecting candidates from library...")
+    ss_out, ss_obj = _run_agent_with_retry(
+        lambda: strategy_selector.run(ss_prompt).content,
+        "StrategySelector",
+        max_retries=3,
+        log_func=_log,
+    )
+    llm_artifacts["raw"]["strategy_selector"] = str(ss_out)
+    llm_artifacts["parsed"]["strategy_selector"] = ss_obj
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+    # ── Step 3: Resolve candidate library from context ────────────────────────
+    brief = get_context("orchestrator_strategy_brief")
+    if not isinstance(brief, dict):
+        _log("StrategySelector did not call strategy_brief_tool; invoking fallback...")
+        try:
+            from orchestrator.tools import strategy_brief_tool as _sbt
+            _sbt()
+            brief = get_context("orchestrator_strategy_brief")
+        except Exception as _e:
+            raise RuntimeError(f"strategy_brief_tool fallback failed: {_e} (hard-stop)")
+    if not isinstance(brief, dict):
+        raise RuntimeError("strategy_brief_tool did not populate orchestrator_strategy_brief (hard-stop)")
+
+    library = brief.get("candidate_library")
+    if not isinstance(library, dict) or not isinstance(library.get("candidates"), list):
+        raise RuntimeError("strategy_brief missing candidate_library.candidates (hard-stop)")
+
+    summary = brief.get("validation_summary", {})
+    candidates_all: List[Dict[str, Any]] = [c for c in library.get("candidates", []) if isinstance(c, dict)]
+    by_name: Dict[str, Dict[str, Any]] = {str(c.get("name")): c for c in candidates_all if c.get("name")}
+    universe_names: List[str] = sorted(by_name.keys())
+
+    models_available = get_context("models_available", [])
+    n_models = len(models_available) if isinstance(models_available, list) and models_available else int(summary.get("n_models", 2) or 2)
+    n_windows = int(summary.get("n_windows", train_window) or train_window)
+
+    # ── Step 4: Parse + validate StrategySelector output ─────────────────────
+    raw_selected = ss_obj.get("selected_names", [])
+    if isinstance(raw_selected, str):
+        raw_selected = [raw_selected]
+    if not isinstance(raw_selected, list):
+        raw_selected = []
+    selected_names: List[str] = [str(x) for x in raw_selected if str(x)]
+
+    # Resolve unknown names via pattern parser
+    resolved_names: List[str] = []
+    dropped_names: List[str] = []
+    for name in selected_names:
+        if name in by_name:
+            resolved_names.append(name)
+            continue
+        resolved = _resolve_unknown_candidate(name, n_models, n_windows)
+        if resolved is not None:
+            rn = str(resolved["name"])
+            if rn not in by_name:
+                by_name[rn] = resolved
+                candidates_all.append(resolved)
+                if rn not in universe_names:
+                    universe_names.append(rn)
+            _log(f"Resolved unknown name '{name}' → '{rn}'")
+            resolved_names.append(rn)
+        else:
+            dropped_names.append(name)
+            _log(f"Dropped unknown name '{name}'")
+    selected_names = resolved_names
+
+    if dropped_names:
+        _log(f"StrategySelector dropped {len(dropped_names)} unknown names: {dropped_names}")
+
+    # Safety: at least 2 candidates
+    if len(selected_names) < 2:
+        fallback = [str(c.get("name")) for c in candidates_all[:4] if c.get("name")]
+        selected_names = [n for n in fallback if n in by_name][:4]
+        _log(f"Safety fallback: using top-4 from library: {selected_names}")
+
+    # Confidence-gated safety: when the series is hard to predict (confidence=low),
+    # force-include robust fallback candidates so the evaluator always has a safe option
+    # even if the LLM made a poor selection on noisy validation data.
+    _sp_confidence = series_profile.get("confidence", "medium") if isinstance(series_profile, dict) else "medium"
+    if _sp_confidence == "low":
+        _force_names = ["baseline_mean", "inv_rmse_weights_per_horizon_k3_shrink02"]
+        for _fn in _force_names:
+            if _fn in by_name and _fn not in selected_names:
+                selected_names.append(_fn)
+                _log(f"confidence=low: force-adding '{_fn}' to candidate set")
+
+    # Apply any params_overrides
+    params_overrides = ss_obj.get("params_overrides") or {}
+    candidates_payload: Dict[str, Any] = {
+        "candidates": [dict(by_name[n]) for n in selected_names if n in by_name]
+    }
+    try:
+        validated_actions = _validate_actions_against_universe(
+            {"add_names": [], "remove_names": [], "params_overrides": params_overrides},
+            universe_names,
+            current_names=selected_names,
+            who="StrategySelector",
+            by_name_registry=by_name,
+            n_models=n_models,
+            n_windows=n_windows,
+        )
+        candidates_payload = _apply_actions_to_payload(
+            candidates_payload, validated_actions, universe_by_name=by_name, n_models=n_models
+        )
+    except Exception as _e:
+        _log(f"params_overrides validation failed (non-fatal, using unmodified candidates): {_e}")
+
+    # ── Step 5: LLM-guided deterministic evaluation ───────────────────────────
+    data = load_validation_from_context()
+    llm_candidates = parse_candidates(candidates_payload.get("candidates", []))
+    if not llm_candidates:
+        raise RuntimeError("No valid candidates after StrategySelector processing (hard-stop)")
+
+    _log(f"Evaluating {len(llm_candidates)} LLM-selected candidates...")
+    llm_eval = evaluate_all(data, llm_candidates, eval_cfg)
+    if not isinstance(llm_eval, dict) or not llm_eval.get("best"):
+        raise RuntimeError("LLM-guided evaluation produced no best candidate (hard-stop)")
+
+    set_context("orchestrator_last_eval", llm_eval)
+
+    # ── Step 6: Oracle evaluation (ALL candidates from universe) ─────────────
+    oracle_info: Dict[str, Any] = {
+        "best_name": "",
+        "best_score": float("nan"),
+        "best_method": "",
+        "n_candidates": len(candidates_all),
+        "llm_selected_in_oracle_top5": False,
+    }
+    try:
+        oracle_candidates = parse_candidates(candidates_all)
+        _log(f"Oracle: evaluating {len(oracle_candidates)} candidates from full universe...")
+        oracle_eval = evaluate_all(data, oracle_candidates, eval_cfg)
+        ob = oracle_eval.get("best") if isinstance(oracle_eval, dict) else None
+        if isinstance(ob, dict):
+            oracle_info["best_name"] = str(ob.get("candidate", {}).get("name", ""))
+            oracle_info["best_score"] = float(ob.get("score", float("nan")))
+            oracle_info["best_method"] = str(ob.get("candidate", {}).get("params", {}).get("method", ""))
+            # Check if any of the LLM-selected candidates appear in oracle top-5
+            oracle_top5 = [r.get("name") for r in (oracle_eval.get("ranking") or [])[:5]]
+            oracle_info["llm_selected_in_oracle_top5"] = any(n in oracle_top5 for n in selected_names)
+            _log(
+                f"Oracle best: {oracle_info['best_name']} (score={oracle_info['best_score']:.4f}) "
+                f"| LLM in oracle top-5: {oracle_info['llm_selected_in_oracle_top5']}"
+            )
+    except Exception as _oe:
+        _log(f"Oracle eval failed (non-fatal): {_oe}")
+
+    # ── Step 6.5: Fixed baselines — always deterministic, independent of LLM ────
+    # These are the publication baselines: any LLM-guided combination that fails to
+    # beat equal_weights is not adding value. References: Stock & Watson (2004),
+    # Timmermann (2006) — the 'forecast combination puzzle'.
+    baselines_info: Dict[str, Any] = {
+        "equal_weights_score": float("nan"),
+        "best_single_score": float("nan"),
+        "best_single_model": "",
+        "llm_vs_equal_weights_delta": float("nan"),
+        "llm_vs_best_single_delta": float("nan"),
+    }
+    try:
+        _ew_cand = CandidateStrategy(
+            name="equal_weights",
+            type="baseline",
+            description="Simple equal-weights average of all models (canonical baseline).",
+            formula="y_hat(h)=mean_m pred_m(h)",
+            learns_weights=False,
+            constraints="none",
+            risks=["sensitive to outlier models"],
+            validation_plan="rolling",
+            params={"method": "mean"},
+        )
+        _bs_cand = CandidateStrategy(
+            name="best_single_rolling",
+            type="selection",
+            description="Best single model by past-window RMSE (anti-leakage).",
+            formula="m*=argmin_m RMSE_past(m)",
+            learns_weights=False,
+            constraints="anti-leakage rolling",
+            risks=["unstable with few windows"],
+            validation_plan="rolling",
+            params={"method": "best_single", "selection_metric": "rmse"},
+        )
+        _log("Fixed baselines: evaluating equal_weights + best_single_rolling...")
+        _ew_eval = evaluate_all(data, [_ew_cand], eval_cfg)
+        _bs_eval = evaluate_all(data, [_bs_cand], eval_cfg)
+        _ew_best = _ew_eval.get("best") if isinstance(_ew_eval, dict) else None
+        _bs_best = _bs_eval.get("best") if isinstance(_bs_eval, dict) else None
+        if _ew_best:
+            baselines_info["equal_weights_score"] = float(_ew_best.get("score", float("nan")))
+        if _bs_best:
+            baselines_info["best_single_score"] = float(_bs_best.get("score", float("nan")))
+            _bs_debug = _bs_best.get("predict_debug") or {}
+            baselines_info["best_single_model"] = str(_bs_debug.get("chosen_model", ""))
+        _log(
+            f"Baselines: equal_weights={baselines_info['equal_weights_score']:.4f} "
+            f"| best_single={baselines_info['best_single_score']:.4f} "
+            f"({baselines_info['best_single_model']})"
+        )
+    except Exception as _be:
+        _log(f"Fixed baselines eval failed (non-fatal): {_be}")
+
+    # ── Step 7: Final prediction using LLM-selected best ─────────────────────
+    best = llm_eval["best"]
+    best_candidate = CandidateStrategy(**best["candidate"])
+    _log(f"LLM-selected best: {best_candidate.name} (score={best['score']:.4f})")
+
+    pred = predict_final_from_context(
+        best_candidate, RollingConfig(mode=rolling_mode, train_window=int(train_window))
+    )
+
+    llm_score = float(best.get("score", float("nan")))
+    oracle_score_val = oracle_info["best_score"]
+    import math
+
+    def _safe_delta(a: float, b: float) -> float:
+        return a - b if (math.isfinite(a) and math.isfinite(b)) else float("nan")
+
+    llm_vs_oracle_delta = _safe_delta(llm_score, oracle_score_val)
+
+    # Baseline deltas: negative means LLM beats the baseline (lower score = better)
+    _ew_score = baselines_info["equal_weights_score"]
+    _bs_score = baselines_info["best_single_score"]
+    baselines_info["llm_vs_equal_weights_delta"] = _safe_delta(llm_score, _ew_score)
+    baselines_info["llm_vs_best_single_delta"] = _safe_delta(llm_score, _bs_score)
+
+    # ── Step 8: Tool call traceability ───────────────────────────────────────
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("evaluate_strategies_v2")
+    set_context("tools_called", tools_called)
+
+    description = {
+        "mode": "llm_v2",
+        "agents": {
+            "series_annotator": series_annotator_model.model,
+            "strategy_selector": strategy_selector_model.model,
+        },
+        "candidates_trace": {
+            "llm_selected": selected_names,
+            "n_llm_selected": len(llm_candidates),
+            "dropped_names": dropped_names,
+            "n_oracle": oracle_info["n_candidates"],
+        },
+        "tool_validation": {
+            "tools_called": tools_called,
+            "require_tool_call": bool(require_tool_call),
+            "tool_missing": bool(
+                require_tool_call
+                and "build_fold_cot_context_tool" not in tools_called
+                and "strategy_brief_tool" not in tools_called
+            ),
+        },
+        "score_preset": "balanced",
+        "best": best_candidate.to_dict(),
+        "score": best.get("score"),
+        "aggregate": best.get("aggregate"),
+        "stability": best.get("stability"),
+        "predict_debug": pred.get("debug", {}),
+        "oracle": oracle_info,
+        "llm_vs_oracle_delta": llm_vs_oracle_delta,
+        "baselines": baselines_info,
+        "series_profile": series_profile,
+        "strategy_reasoning": ss_obj.get("reasoning", {}),
+    }
+
+    out = {
+        "success": True,
+        "best": best_candidate.to_dict(),
+        "ranking": llm_eval.get("ranking", []),
+        "description": json.dumps(description, ensure_ascii=False),
+        "result": [float(x) for x in pred["result"]],
+        "eval": llm_eval,
+        "oracle": oracle_info,
+        "llm_vs_oracle_delta": llm_vs_oracle_delta,
+        "baselines": baselines_info,
+        "llm_artifacts": llm_artifacts,
+        "series_profile": series_profile,
+        "strategy_reasoning": ss_obj.get("reasoning", {}),
+    }
+
+    set_context("orchestrator_last_pipeline", out)
+    set_context("orchestrator_last_candidates", candidates_payload)
+    _log("V2 pipeline completed.")
+    return out

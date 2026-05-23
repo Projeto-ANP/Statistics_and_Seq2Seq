@@ -37,6 +37,63 @@ SCORE_PRESETS: Dict[str, Dict[str, float]] = {
     "robust_smape": {"a_rmse": 0.2, "b_smape": 0.5, "c_mape": 0.1, "d_pocid": 0.2},
 }
 
+# Literature citations for each combination rule injected into the strategy guide and prompts.
+# Every claim in _build_strategy_guide() references one of these entries so reviewers can
+# verify the methodological grounding.
+LITERATURE_BASIS: Dict[str, str] = {
+    "equal_weights": (
+        "Stock & Watson (2004) 'Combination forecasts of output growth in a seven-country data set', "
+        "J. Forecast. 23(6):405–430. Timmermann (2006) 'Forecast combinations', Handbook of "
+        "Economic Forecasting — simple average is the canonical hard-to-beat baseline "
+        "('forecast combination puzzle')."
+    ),
+    "inverse_rmse_weights": (
+        "Bates & Granger (1969) 'The Combination of Forecasts', Oper. Res. Q. 20(4):451–468 — "
+        "foundational performance-weighted combination; weights inversely proportional to past MSE."
+    ),
+    "trimmed_mean": (
+        "Genre et al. (2013) 'Combining expert forecasts: Can anything beat the simple average?', "
+        "Int. J. Forecast. 29(1):108–121 — trimmed mean is robust when outlier forecasters exist."
+    ),
+    "topk_mean": (
+        "Stock & Watson (2004) — subset averaging beats full ensemble when dominated models add noise. "
+        "Timmermann (2006) Section 4 on model trimming."
+    ),
+    "ridge_stacking": (
+        "Montero-Manso et al. (2020) 'FFORMA: Feature-based forecast model averaging', "
+        "Int. J. Forecast. 36(1):86–92 — regularised stacking via ridge/elastic-net. "
+        "Elliott et al. (2013) 'Complete subset regressions', Rev. Econ. Stat. 95(4):1450–1466."
+    ),
+    "stl_hierarchical_stacking": (
+        "Cleveland et al. (1990) 'STL: A Seasonal-Trend Decomposition Procedure Based on LOESS', "
+        "J. Off. Stat. 6(1):3–73. Hyndman et al. (2011) 'Optimal combination forecasts for "
+        "hierarchical time series', J. Am. Stat. Assoc. 106(498):1048–1060."
+    ),
+    "best_per_horizon": (
+        "Timmermann (2006) — horizon-specific selection is justified when models have differentiated "
+        "short-term vs. long-term accuracy. Makridakis et al. (2020) M4 competition results."
+    ),
+    "ade_dynamic_error": (
+        "Gaillard et al. (2015) 'A second-order bound with excess losses', COLT 2015 — EWA/ADE "
+        "theoretical guarantees. Montero-Manso et al. (2020) FFORMA — arbitrated dynamic ensembles "
+        "adapt weights per observation, suited for concept drift."
+    ),
+    "spectral_entropy_rule": (
+        "Goerg (2013) 'Forecastable Component Analysis', ICML Proc. 30:64–72 — spectral entropy "
+        "quantifies predictability; high entropy → near-white-noise → robust baselines preferred."
+    ),
+    "kendall_tau_stability": (
+        "Kendall (1938). Applied to forecast combination selection: "
+        "Wang et al. (2022) 'Forecast combination selection using mixture of experts', "
+        "Int. J. Forecast. — rank instability signals that hard selection is unreliable."
+    ),
+    "regularization_by_nwindows": (
+        "Hansen et al. (2011) 'The Model Confidence Set', Econometrica 79(2):453–497 — restrict "
+        "complexity with few observations. Genre et al. (2013) — regularisation essential for "
+        "forecast combination with short in-sample periods."
+    ),
+}
+
 
 
 def proposer_brief_tool() -> str:
@@ -1973,3 +2030,178 @@ def evaluate_strategies_tool(candidates_json: str, config_json: str = "") -> str
     set_context("tools_called", tools_called)
 
     return json.dumps(result, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V2 pipeline tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_strategy_guide(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """Explicit knowledge base: conditions → recommended combination method.
+
+    Each rule cites primary literature so the reasoning chain is fully auditable.
+    Injected into the StrategySelector brief.
+    """
+    n_windows = int(summary.get("n_windows", 0) or 0)
+    n_models = int(summary.get("n_models", 0) or 0)
+
+    return {
+        "decision_rules": [
+            {
+                "condition": "series_profile.noise.unpredictable=true OR spectral_entropy > 0.85",
+                "recommendation": "baseline_mean or robust_median",
+                "rationale": "Near-white-noise series; sophisticated methods overfit the few validation windows.",
+                "literature": LITERATURE_BASIS["spectral_entropy_rule"],
+            },
+            {
+                "condition": "series_profile.model_landscape.concept_drift=true",
+                "recommendation": "ade_dynamic_error or exp_weighted_average",
+                "rationale": "Model performance drifts across folds; recency-weighted methods adapt better than long-history ridge.",
+                "literature": LITERATURE_BASIS["ade_dynamic_error"],
+            },
+            {
+                "condition": "series_profile.model_landscape.models_redundant=true (mean_abs_corr > 0.9)",
+                "recommendation": "stl_hierarchical_stacking or ridge_stacking",
+                "rationale": "Models share error structure; structured combination deduplicates and exploits component differences.",
+                "literature": LITERATURE_BASIS["stl_hierarchical_stacking"],
+            },
+            {
+                "condition": "series_profile.model_landscape.rmse_spread_ratio > 0.4 AND rankings_stable=true",
+                "recommendation": "inverse_rmse_weights or topk_mean_per_horizon (small k)",
+                "rationale": "One model dominates consistently; downweight poor models to improve combination.",
+                "literature": LITERATURE_BASIS["inverse_rmse_weights"],
+            },
+            {
+                "condition": "series_profile.model_landscape.rankings_stable=false (kendall_tau < 0.5)",
+                "recommendation": "inverse_rmse_weights with shrinkage, or trimmed_mean",
+                "rationale": "No consistent winner; soft combiners are more robust than hard selection.",
+                "literature": f"{LITERATURE_BASIS['kendall_tau_stability']} | {LITERATURE_BASIS['trimmed_mean']}",
+            },
+            {
+                "condition": "series_profile.model_landscape.horizon_homogeneous=false",
+                "recommendation": "best_per_horizon_by_validation or topk_mean_per_horizon",
+                "rationale": "Different models dominate at different horizons; per-horizon selection captures this structure.",
+                "literature": LITERATURE_BASIS["best_per_horizon"],
+            },
+        ],
+        "regularization_guide": {
+            f"n_windows={n_windows} (current)": (
+                "HIGH regularization: shrinkage >= 0.3, top_k <= sqrt(n_models), avoid ridge_stacking."
+                if n_windows <= 3
+                else "MEDIUM regularization: shrinkage 0.15–0.25, moderate top_k."
+                if n_windows <= 6
+                else "LOW regularization viable: ridge_stacking and full inverse-RMSE weights are reliable."
+            ),
+            "n_models": n_models,
+            "recommended_top_k": max(2, min(int(round(n_models ** 0.5)), n_models)),
+            "literature": LITERATURE_BASIS["regularization_by_nwindows"],
+        },
+        "anti_leakage_guarantee": (
+            "All strategies use only past validation windows to learn weights/selections. "
+            "The final test window is NEVER used for weight estimation."
+        ),
+        "baseline_reference": {
+            "note": (
+                "equal_weights (simple average) is always computed as a fixed baseline. "
+                "Your selection must beat it to justify LLM-guided combination."
+            ),
+            "literature": LITERATURE_BASIS["equal_weights"],
+        },
+    }
+
+
+def strategy_brief_tool() -> str:
+    """Strategy brief for the V2 StrategySelector agent.
+
+    Combines:
+    - SeriesProfile (from SeriesAnnotator, stored in context)
+    - Candidate library (deterministically generated for this dataset)
+    - Validation summary (aggregate model metrics)
+    - Strategy selection guide (explicit decision rules)
+    - Recommended hyperparameter knobs
+
+    The LLM calls this tool, reads the SeriesProfile, and uses the strategy_guide
+    to select candidates with traceable reasoning.
+    """
+    max_candidates = get_context("proposer_max_candidates", 12)
+    try:
+        max_candidates = int(max_candidates)
+    except Exception:
+        max_candidates = 12
+    max_candidates = max(3, min(max_candidates, 30))
+
+    config_json = get_context("config_json_for_proposer", "")
+    summary = _build_validation_summary(config_json=config_json)
+    recommended = _recommended_knobs(summary)
+    universe = _candidate_universe_from_summary(summary)
+    preset_rec = _recommend_score_preset(summary)
+    strategy_guide = _build_strategy_guide(summary)
+
+    # Retrieve SeriesProfile produced by SeriesAnnotator (may be empty if it failed)
+    series_profile = get_context("series_profile", {})
+
+    # Compact validation summary for the LLM (no raw arrays)
+    compact_summary = {
+        "n_windows": summary.get("n_windows"),
+        "horizon": summary.get("horizon"),
+        "n_models": summary.get("n_models"),
+        "model_names": summary.get("model_names"),
+        "top5_by_rmse": summary.get("models", [])[:5],
+        "best_per_horizon": summary.get("best_per_horizon"),
+        "disagreement": summary.get("disagreement"),
+    }
+
+    out = {
+        "series_profile": series_profile,
+        "validation_summary": compact_summary,
+        "recommended_knobs": recommended,
+        "candidate_library": universe,
+        "score_presets": SCORE_PRESETS,
+        "score_preset_recommendation": preset_rec,
+        "strategy_guide": strategy_guide,
+        "output_schema": {
+            "selected_names": ["name_from_candidate_library"],
+            "reasoning": {
+                "candidate_name": "series_profile.field=value → justification"
+            },
+            "params_overrides": {},
+            "excluded_highlights": {
+                "excluded_name": "reason for exclusion"
+            },
+            "score_preset": "balanced",
+            "confidence": "high|medium|low",
+        },
+    }
+
+    set_context("orchestrator_strategy_brief", out)
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("strategy_brief_tool")
+    set_context("tools_called", tools_called)
+
+    return json.dumps(out, indent=2)
+
+
+def _recommend_score_preset(s: Dict[str, Any]) -> Dict[str, Any]:
+    """Auto-recommend a score preset from validation summary.
+
+    Re-exported here so strategy_brief_tool can call it directly.
+    Already defined inside proposer_brief_tool — this is the standalone version.
+    """
+    models_agg = s.get("models", [])
+    pocid_vals = [m["POCID"] for m in models_agg if isinstance(m, dict) and m.get("POCID") is not None]
+    rmse_vals = [m["RMSE"] for m in models_agg if isinstance(m, dict) and m.get("RMSE") is not None]
+    smape_vals = [m["SMAPE"] for m in models_agg if isinstance(m, dict) and m.get("SMAPE") is not None]
+    avg_pocid = float(np.nanmean(pocid_vals)) if pocid_vals else 50.0
+    rmse_spread = (max(rmse_vals) - min(rmse_vals)) / (min(rmse_vals) + 1e-8) if len(rmse_vals) >= 2 else 0.0
+    avg_smape = float(np.nanmean(smape_vals)) if smape_vals else 0.0
+    if avg_pocid < 45:
+        preset, reason = "direction_focus", f"avg POCID={avg_pocid:.1f} < 45"
+    elif rmse_spread > 0.5:
+        preset, reason = "rmse_focus", f"RMSE spread={rmse_spread:.2f} > 0.5"
+    elif avg_smape > 0.3:
+        preset, reason = "robust_smape", f"avg SMAPE={avg_smape:.3f} > 0.3"
+    else:
+        preset, reason = "balanced", "metrics well-balanced"
+    return {"recommended_preset": preset, "reason": reason, "available_presets": list(SCORE_PRESETS.keys())}

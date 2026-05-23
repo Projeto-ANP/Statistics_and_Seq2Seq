@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
-from orchestrator_langchain.langchain_tools import debate_packet, evaluate_strategies, proposer_brief, build_fold_cot_context
+from orchestrator_langchain.langchain_tools import debate_packet, evaluate_strategies, proposer_brief, build_fold_cot_context, strategy_brief
 
 
 DEFAULT_MODEL_ID = "mychen76/qwen3_cline_roocode:4b"
@@ -152,4 +152,32 @@ def create_orchestrator_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = Fa
         system_prompt=_load_prompt("orchestrator.md"),
         temperature=0.15,
         force_tool_call=True,
+    )
+
+
+# ── V2 pipeline agents ────────────────────────────────────────────────────────
+
+def create_series_annotator_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    """V2: Produces a structured SeriesProfile via STL + diagnostics (temperature=0 for reproducibility)."""
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[build_fold_cot_context],
+        system_prompt=_load_prompt("series_annotator.md"),
+        temperature=0.0,
+        force_tool_call=True,
+        max_tool_rounds=3,
+    )
+
+
+def create_strategy_selector_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    """V2: Selects combination candidates using SeriesProfile + candidate library (temperature=0)."""
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[strategy_brief],
+        system_prompt=_load_prompt("strategy_selector.md"),
+        temperature=0.0,
+        force_tool_call=True,
+        max_tool_rounds=3,
     )

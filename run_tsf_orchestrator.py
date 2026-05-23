@@ -89,6 +89,27 @@ COLS_SERIE = [
     "pattern_analyst_seas_champion",
     "pattern_analyst_method_hint",
     "pattern_analyst_narrative",
+
+    # V2: Oracle comparison (always deterministic, full candidate universe)
+    "oracle_best_name",
+    "oracle_best_score",
+    "oracle_best_method",
+    "oracle_n_candidates",
+    "llm_vs_oracle_delta",
+    "llm_in_oracle_top5",
+
+    # V2: Fixed baselines (publication evidence — LLM must beat these)
+    "baseline_equal_weights_score",
+    "baseline_best_single_score",
+    "baseline_best_single_model",
+    "llm_vs_equal_weights_delta",
+    "llm_vs_best_single_delta",
+
+    # V2: Structured annotations
+    "series_profile",
+    "strategy_reasoning",
+    "series_annotator_think",
+    "strategy_selector_think",
 ]
 
 
@@ -137,6 +158,9 @@ def exec_dataset_orchestrator(
     skeptic_model: _utils.ModelConfig = None,
     statistician_model: _utils.ModelConfig = None,
     pattern_analyst_model: _utils.ModelConfig = None,
+    # V2 models
+    series_annotator_model: _utils.ModelConfig = None,
+    strategy_selector_model: _utils.ModelConfig = None,
     debug: bool = False,
     rolling: str = "expanding",
     train_window: int = 3,
@@ -175,7 +199,7 @@ def exec_dataset_orchestrator(
 
     from orchestrator_langchain.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
     from orchestrator.pipeline import run_deterministic_pipeline, run_llm_pipeline
-    from orchestrator_langchain.pipeline import run_langchain_pipeline
+    from orchestrator_langchain.pipeline import run_langchain_pipeline, run_langchain_pipeline_v2
 
     # Ensure CSV schema is up-to-date (add missing columns if file already exists).
     if not os.path.exists(path_csv):
@@ -200,25 +224,29 @@ def exec_dataset_orchestrator(
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:
-                # result = run_llm_pipeline(
-                #     model_id=ollama_model,
-                #     debug=debug,
-                #     rolling_mode=rolling,
-                #     train_window=train_window,
-                #     require_tool_call=True,
-                #     llm_logs=llm_logs,
-                # )
-                result = run_langchain_pipeline(
-                    proposer_model,
-                    skeptic_model,
-                    statistician_model,
-                    pattern_analyst_model,
-                    debug=debug,
-                    rolling_mode=rolling,
-                    train_window=train_window,
-                    require_tool_call=True,
-                    llm_logs=llm_logs,
-                )
+                _is_v2 = version.startswith("v2")
+                if _is_v2:
+                    result = run_langchain_pipeline_v2(
+                        series_annotator_model=series_annotator_model,
+                        strategy_selector_model=strategy_selector_model,
+                        debug=debug,
+                        rolling_mode=rolling,
+                        train_window=train_window,
+                        require_tool_call=True,
+                        llm_logs=llm_logs,
+                    )
+                else:
+                    result = run_langchain_pipeline(
+                        proposer_model,
+                        skeptic_model,
+                        statistician_model,
+                        pattern_analyst_model,
+                        debug=debug,
+                        rolling_mode=rolling,
+                        train_window=train_window,
+                        require_tool_call=True,
+                        llm_logs=llm_logs,
+                    )
             except Exception as e:
                 tools_called = None
                 try:
@@ -317,6 +345,25 @@ def exec_dataset_orchestrator(
         predict_debug_csv = ""
         selected_base_models = ""
         weights_by_horizon = ""
+
+        # V2 oracle + annotation fields
+        oracle_best_name = ""
+        oracle_best_score = np.nan
+        oracle_best_method = ""
+        oracle_n_candidates = np.nan
+        llm_vs_oracle_delta = np.nan
+        llm_in_oracle_top5 = np.nan
+        series_profile_csv = ""
+        strategy_reasoning_csv = ""
+        series_annotator_think = ""
+        strategy_selector_think = ""
+
+        # V2 fixed baselines
+        baseline_equal_weights_score = np.nan
+        baseline_best_single_score = np.nan
+        baseline_best_single_model = ""
+        llm_vs_equal_weights_delta = np.nan
+        llm_vs_best_single_delta = np.nan
 
         debate_ran = np.nan
         debate_trigger = np.nan
@@ -533,6 +580,69 @@ def exec_dataset_orchestrator(
             except Exception:
                 pass
 
+            # V2: Oracle comparison fields
+            try:
+                oracle_info = result.get("oracle") if isinstance(result, dict) else None
+                if isinstance(oracle_info, dict):
+                    oracle_best_name = str(oracle_info.get("best_name") or "")
+                    _obs = oracle_info.get("best_score")
+                    oracle_best_score = float(_obs) if _obs is not None else np.nan
+                    oracle_best_method = str(oracle_info.get("best_method") or "")
+                    _onc = oracle_info.get("n_candidates")
+                    oracle_n_candidates = int(_onc) if _onc is not None else np.nan
+                    _lit = oracle_info.get("llm_selected_in_oracle_top5")
+                    llm_in_oracle_top5 = bool(_lit) if _lit is not None else np.nan
+            except Exception:
+                pass
+
+            try:
+                _delta = result.get("llm_vs_oracle_delta") if isinstance(result, dict) else None
+                if _delta is not None:
+                    llm_vs_oracle_delta = float(_delta)
+            except Exception:
+                pass
+
+            # V2: Fixed baselines (equal_weights, best_single)
+            try:
+                _bl = result.get("baselines") if isinstance(result, dict) else None
+                if isinstance(_bl, dict):
+                    _ews = _bl.get("equal_weights_score")
+                    baseline_equal_weights_score = float(_ews) if _ews is not None else np.nan
+                    _bss = _bl.get("best_single_score")
+                    baseline_best_single_score = float(_bss) if _bss is not None else np.nan
+                    baseline_best_single_model = str(_bl.get("best_single_model") or "")
+                    _lew = _bl.get("llm_vs_equal_weights_delta")
+                    llm_vs_equal_weights_delta = float(_lew) if _lew is not None else np.nan
+                    _lbs = _bl.get("llm_vs_best_single_delta")
+                    llm_vs_best_single_delta = float(_lbs) if _lbs is not None else np.nan
+            except Exception:
+                pass
+
+            # V2: SeriesProfile + StrategyReasoning
+            try:
+                _sp = result.get("series_profile") if isinstance(result, dict) else None
+                if isinstance(_sp, dict) and _sp:
+                    series_profile_csv = json.dumps(_sp, ensure_ascii=False)
+            except Exception:
+                pass
+
+            try:
+                _sr = result.get("strategy_reasoning") if isinstance(result, dict) else None
+                if isinstance(_sr, dict) and _sr:
+                    strategy_reasoning_csv = json.dumps(_sr, ensure_ascii=False)
+            except Exception:
+                pass
+
+            # V2: think blocks from v2 agents
+            try:
+                _arts = result.get("llm_artifacts") if isinstance(result, dict) else None
+                if isinstance(_arts, dict):
+                    raw = _arts.get("raw", {}) or {}
+                    series_annotator_think = _extract_think_blocks(str(raw.get("series_annotator", "")))
+                    strategy_selector_think = _extract_think_blocks(str(raw.get("strategy_selector", "")))
+            except Exception:
+                pass
+
         print("Description: ", description)
         print("Predictions: ", preds_real)
 
@@ -630,6 +740,27 @@ def exec_dataset_orchestrator(
             "pattern_analyst_seas_champion": pattern_analyst_seas_champion,
             "pattern_analyst_method_hint": pattern_analyst_method_hint,
             "pattern_analyst_narrative": pattern_analyst_narrative,
+
+            # V2: Oracle comparison
+            "oracle_best_name": oracle_best_name,
+            "oracle_best_score": oracle_best_score,
+            "oracle_best_method": oracle_best_method,
+            "oracle_n_candidates": oracle_n_candidates,
+            "llm_vs_oracle_delta": llm_vs_oracle_delta,
+            "llm_in_oracle_top5": llm_in_oracle_top5,
+
+            # V2: Fixed baselines (publication evidence — must beat equal_weights)
+            "baseline_equal_weights_score": baseline_equal_weights_score,
+            "baseline_best_single_score": baseline_best_single_score,
+            "baseline_best_single_model": baseline_best_single_model,
+            "llm_vs_equal_weights_delta": llm_vs_equal_weights_delta,
+            "llm_vs_best_single_delta": llm_vs_best_single_delta,
+
+            # V2: Structured annotations
+            "series_profile": series_profile_csv,
+            "strategy_reasoning": strategy_reasoning_csv,
+            "series_annotator_think": series_annotator_think,
+            "strategy_selector_think": strategy_selector_think,
         }
 
         df_new = pd.DataFrame(data_serie)
@@ -671,18 +802,33 @@ if __name__ == "__main__":
     ]
 
     dataset = "ETTH1"
+
+    # ── V2: SeriesAnnotator → StrategySelector (temperature=0, reproducible) ──
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
         use_llm=True,
-        proposer_model=_utils.ModelConfig(model="gemma4:26b", temperature=0.7),
-        skeptic_model=_utils.ModelConfig(model="gpt-oss:20b", temperature=0.3),
-        statistician_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.2),
-        pattern_analyst_model=_utils.ModelConfig(model="qwen3.5:27b-q4_K_M", temperature=0.2),
+        series_annotator_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+        strategy_selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
         debug=False,
         rolling="expanding",
         train_window=3,
         llm_logs=True,
-        # start_index=0,
-        # end_index=182,
+        version="v2_annotations",
     )
+
+    # ── V1 (legacy): PatternAnalyst + Proposer + Skeptic + Statistician ──────
+    # exec_dataset_orchestrator(
+    #     models,
+    #     dataset=dataset,
+    #     use_llm=True,
+    #     proposer_model=_utils.ModelConfig(model="gemma4:26b", temperature=0.7),
+    #     skeptic_model=_utils.ModelConfig(model="gpt-oss:20b", temperature=0.3),
+    #     statistician_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.2),
+    #     pattern_analyst_model=_utils.ModelConfig(model="qwen3.5:27b-q4_K_M", temperature=0.2),
+    #     debug=False,
+    #     rolling="expanding",
+    #     train_window=3,
+    #     llm_logs=True,
+    #     version="v1_pattern",
+    # )

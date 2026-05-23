@@ -9,5 +9,7 @@ from orchestrator_langchain.agents import (
     create_proposer_agent,
     create_skeptic_agent,
     create_statistician_agent,
-    create_orchestrator_agent
+    create_orchestrator_agent,
+    create_series_annotator_agent,
+    create_strategy_selector_agent,
 )
