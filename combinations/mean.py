@@ -19,12 +19,12 @@ if __name__ == "__main__":
         "ARIMA",
         "ETS",
         "THETA",
-        "svr",
+        #"ridge",
         "rf",
         "catboost",
-        "CWT_svr",
-        "DWT_svr",
-        "FT_svr",
+        #"CWT_ridge",
+        #"DWT_ridge",
+        #"FT_ridge",
         "CWT_rf",
         "DWT_rf",
         "FT_rf",
@@ -33,18 +33,18 @@ if __name__ == "__main__":
         "FT_catboost",
         "ONLY_CWT_catboost",
         "ONLY_CWT_rf",
-        "ONLY_CWT_svr",
+        #"ONLY_CWT_ridge",
         "ONLY_DWT_catboost",
         "ONLY_DWT_rf",
-        "ONLY_DWT_svr",
+        #"ONLY_DWT_ridge",
         "ONLY_FT_catboost",
         "ONLY_FT_rf",
-        "ONLY_FT_svr",
+        #"ONLY_FT_ridge",
         "NaiveSeasonal",
         "NaiveMovingAverage",
     ]
     
-    dataset_name = "ETTH1"
+    dataset_name = "ETTM2"
     
     len_datasets = aux.get_dataset_size(models[0], dataset_name=dataset_name)
     for dataset_index in range(len_datasets):
