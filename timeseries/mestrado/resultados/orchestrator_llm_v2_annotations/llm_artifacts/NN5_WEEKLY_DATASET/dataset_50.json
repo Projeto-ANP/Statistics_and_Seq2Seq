@@ -1,0 +1,88 @@
+{
+  "dataset_index": 50,
+  "artifacts": {
+    "series_annotator": "qwen3:14b",
+    "strategy_selector": "qwen3:14b",
+    "prompts": {
+      "series_annotator": "Call build_fold_cot_context() FIRST to analyze the validation folds. Then return ONLY JSON with the SeriesProfile per the output schema in your instructions. No markdown, no explanation — only the JSON object.",
+      "strategy_selector": "Call strategy_brief() FIRST — it contains the SeriesProfile and the full candidate library. Use series_profile fields to justify every selection. Return ONLY JSON per the output schema. No markdown, no explanation."
+    },
+    "raw": {
+      "series_annotator": "{\n  \"trend\": {\n    \"direction\": \"mixed\",\n    \"strength\": \"weak\",\n    \"consistent_across_folds\": false\n  },\n  \"seasonality\": {\n    \"present\": true,\n    \"strength\": \"weak\",\n    \"seasonality_champion\": \"ONLY_CWT_catboost\"\n  },\n  \"noise\": {\n    \"level\": \"high\",\n    \"spectral_entropy\": 0.887,\n    \"hurst\": 0.0419,\n    \"unpredictable\": true\n  },\n  \"model_landscape\": {\n    \"consensus\": \"high\",\n    \"rmse_spread_ratio\": 0.4819,\n    \"rankings_stable\": false,\n    \"kendall_tau\": 0.3099,\n    \"models_redundant\": true,\n    \"concept_drift\": true,\n    \"trend_champion\": \"ARIMA\",\n    \"seasonality_champion\": \"ONLY_CWT_catboost\",\n    \"overall_champion\": \"ETS\",\n    \"horizon_homogeneous\": false\n  },\n  \"combination_recommendation\": {\n    \"strategy_type\": \"baseline\",\n    \"method_hint\": \"robust_median\",\n    \"top_k\": 4,\n    \"regularization\": \"high\",\n    \"avoid\": [\"ridge_stacking\", \"stl_hierarchical_stacking\"]\n  },\n  \"evidence\": [\n    \"ytrue_spectral_entropy=0.887 → high unpredictability\",\n    \"error_similarity.mean_abs_corr=0.9315 → high model consensus\",\n    \"rank_stability_kendall=0.3099 → unstable rankings\"\n  ],\n  \"confidence\": \"low\",\n  \"narrative\": \"The series exhibits mixed trend direction and weak seasonality, with high noise and unpredictable behavior (spectral entropy > 0.85). Due to high model consensus but unstable rankings, a robust baseline approach (e.g., median) is recommended to avoid overfitting to noisy patterns.\"\n}",
+      "strategy_selector": "{\n  \"selected_names\": [\n    \"robust_median\",\n    \"inverse_rmse_weights_k4_sh0.35\",\n    \"best_per_horizon_by_validation\"\n  ],\n  \"reasoning\": {\n    \"robust_median\": \"series_profile.noise.unpredictable=true AND spectral_entropy=0.887 → robust_median is recommended for high-noise, near-white-noise series (Goerg 2013)\",\n    \"inverse_rmse_weights_k4_sh0.35\": \"series_profile.model_landscape.rankings_stable=false (kendall_tau=0.3099) → inverse_rmse_weights with shrinkage=0.35 is recommended for unstable rankings (Genre et al. 2013)\",\n    \"best_per_horizon_by_validation\": \"series_profile.model_landscape.horizon_homogeneous=false → per-horizon selection is appropriate when different models dominate at different horizons (Timmermann 2006)\"\n  },\n  \"params_overrides\": {\n    \"inverse_rmse_weights_k4_sh0.35\": {\n      \"shrinkage\": 0.35,\n      \"top_k\": 4\n    }\n  },\n  \"excluded_highlights\": {\n    \"stl_hierarchical_stacking_p2_sh0.0\": \"series_profile.combination_recommendation.avoid contains 'stl_hierarchical_stacking' due to high noise and unpredictable behavior\",\n    \"ridge_stacking_l250_topk3\": \"series_profile.combination_recommendation.avoid contains 'ridge_stacking' due to high noise and unpredictable behavior\"\n  },\n  \"score_preset\": \"balanced\",\n  \"confidence\": \"medium\"\n}"
+    },
+    "parsed": {
+      "series_annotator": {
+        "trend": {
+          "direction": "mixed",
+          "strength": "weak",
+          "consistent_across_folds": false
+        },
+        "seasonality": {
+          "present": true,
+          "strength": "weak",
+          "seasonality_champion": "ONLY_CWT_catboost"
+        },
+        "noise": {
+          "level": "high",
+          "spectral_entropy": 0.887,
+          "hurst": 0.0419,
+          "unpredictable": true
+        },
+        "model_landscape": {
+          "consensus": "high",
+          "rmse_spread_ratio": 0.4819,
+          "rankings_stable": false,
+          "kendall_tau": 0.3099,
+          "models_redundant": true,
+          "concept_drift": true,
+          "trend_champion": "ARIMA",
+          "seasonality_champion": "ONLY_CWT_catboost",
+          "overall_champion": "ETS",
+          "horizon_homogeneous": false
+        },
+        "combination_recommendation": {
+          "strategy_type": "baseline",
+          "method_hint": "robust_median",
+          "top_k": 4,
+          "regularization": "high",
+          "avoid": [
+            "ridge_stacking",
+            "stl_hierarchical_stacking"
+          ]
+        },
+        "evidence": [
+          "ytrue_spectral_entropy=0.887 → high unpredictability",
+          "error_similarity.mean_abs_corr=0.9315 → high model consensus",
+          "rank_stability_kendall=0.3099 → unstable rankings"
+        ],
+        "confidence": "low",
+        "narrative": "The series exhibits mixed trend direction and weak seasonality, with high noise and unpredictable behavior (spectral entropy > 0.85). Due to high model consensus but unstable rankings, a robust baseline approach (e.g., median) is recommended to avoid overfitting to noisy patterns."
+      },
+      "strategy_selector": {
+        "selected_names": [
+          "robust_median",
+          "inverse_rmse_weights_k4_sh0.35",
+          "best_per_horizon_by_validation"
+        ],
+        "reasoning": {
+          "robust_median": "series_profile.noise.unpredictable=true AND spectral_entropy=0.887 → robust_median is recommended for high-noise, near-white-noise series (Goerg 2013)",
+          "inverse_rmse_weights_k4_sh0.35": "series_profile.model_landscape.rankings_stable=false (kendall_tau=0.3099) → inverse_rmse_weights with shrinkage=0.35 is recommended for unstable rankings (Genre et al. 2013)",
+          "best_per_horizon_by_validation": "series_profile.model_landscape.horizon_homogeneous=false → per-horizon selection is appropriate when different models dominate at different horizons (Timmermann 2006)"
+        },
+        "params_overrides": {
+          "inverse_rmse_weights_k4_sh0.35": {
+            "shrinkage": 0.35,
+            "top_k": 4
+          }
+        },
+        "excluded_highlights": {
+          "stl_hierarchical_stacking_p2_sh0.0": "series_profile.combination_recommendation.avoid contains 'stl_hierarchical_stacking' due to high noise and unpredictable behavior",
+          "ridge_stacking_l250_topk3": "series_profile.combination_recommendation.avoid contains 'ridge_stacking' due to high noise and unpredictable behavior"
+        },
+        "score_preset": "balanced",
+        "confidence": "medium"
+      }
+    }
+  }
+}

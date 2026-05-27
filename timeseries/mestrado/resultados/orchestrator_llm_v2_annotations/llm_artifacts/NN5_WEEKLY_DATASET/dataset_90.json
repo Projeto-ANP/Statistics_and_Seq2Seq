@@ -1,0 +1,93 @@
+{
+  "dataset_index": 90,
+  "artifacts": {
+    "series_annotator": "qwen3:14b",
+    "strategy_selector": "qwen3:14b",
+    "prompts": {
+      "series_annotator": "Call build_fold_cot_context() FIRST to analyze the validation folds. Then return ONLY JSON with the SeriesProfile per the output schema in your instructions. No markdown, no explanation — only the JSON object.",
+      "strategy_selector": "Call strategy_brief() FIRST — it contains the SeriesProfile and the full candidate library. Use series_profile fields to justify every selection. Return ONLY JSON per the output schema. No markdown, no explanation."
+    },
+    "raw": {
+      "series_annotator": "{\n  \"trend\": {\n    \"direction\": \"mixed\",\n    \"strength\": \"moderate\",\n    \"consistent_across_folds\": false\n  },\n  \"seasonality\": {\n    \"present\": true,\n    \"strength\": \"moderate\",\n    \"seasonality_champion\": \"rf\"\n  },\n  \"noise\": {\n    \"level\": \"high\",\n    \"spectral_entropy\": 0.8868,\n    \"hurst\": -0.0327,\n    \"unpredictable\": true\n  },\n  \"model_landscape\": {\n    \"consensus\": \"high\",\n    \"rmse_spread_ratio\": 0.9669,\n    \"rankings_stable\": false,\n    \"kendall_tau\": 0.4854,\n    \"models_redundant\": true,\n    \"concept_drift\": false,\n    \"trend_champion\": \"ARIMA\",\n    \"seasonality_champion\": \"rf\",\n    \"overall_champion\": \"FT_catboost\",\n    \"horizon_homogeneous\": false\n  },\n  \"combination_recommendation\": {\n    \"strategy_type\": \"baseline\",\n    \"method_hint\": \"robust_median\",\n    \"top_k\": 4,\n    \"regularization\": \"high\",\n    \"avoid\": [\n      \"ridge_stacking\",\n      \"stl_hierarchical_stacking\"\n    ]\n  },\n  \"evidence\": [\n    \"ytrue_spectral_entropy=0.8868 → high entropy indicates unpredictable series\",\n    \"model_landscape.rmse_spread_ratio=0.9669 → large RMSE spread suggests model performance varies significantly\",\n    \"insights_v2.flags.models_redundant=true → redundant models present, suggesting potential for ensemble improvement\"\n  ],\n  \"confidence\": \"low\",\n  \"narrative\": \"The series exhibits high spectral entropy, indicating unpredictability. Despite some models showing moderate seasonality, the high RMSE spread and model redundancy suggest a baseline approach with robust aggregation is appropriate to handle the variability and avoid overfitting to any single model's errors.\"\n}",
+      "strategy_selector": "{\n  \"selected_names\": [\n    \"robust_median\",\n    \"trimmed_mean_r0.10\",\n    \"inverse_rmse_weights_k4_sh0.35\",\n    \"topk_mean_per_horizon_k4\"\n  ],\n  \"reasoning\": {\n    \"robust_median\": \"series_profile.noise.unpredictable=true → robust_median is recommended for high-entropy series with unpredictable noise\",\n    \"trimmed_mean_r0.10\": \"series_profile.model_landscape.rmse_spread_ratio=0.9669 AND noise.unpredictable=true → trimmed mean with 10% trim ratio mitigates outlier influence in high-variability models\",\n    \"inverse_rmse_weights_k4_sh0.35\": \"series_profile.model_landscape.rankings_stable=false (kendall_tau=0.4854) AND recommended_knobs.shrinkage=0.35 → soft weighting with shrinkage balances unstable rankings and regularization\",\n    \"topk_mean_per_horizon_k4\": \"series_profile.model_landscape.models_redundant=true → top-4 mean per horizon exploits redundancy while avoiding overfitting to any single model\"\n  },\n  \"params_overrides\": {\n    \"trimmed_mean_r0.10\": {\"trim_ratio\": 0.1},\n    \"inverse_rmse_weights_k4_sh0.35\": {\"top_k\": 4, \"shrinkage\": 0.35}\n  },\n  \"excluded_highlights\": {\n    \"ridge_stacking_l250_topk3\": \"series_profile.combination_recommendation.avoid contains ridge_stacking\",\n    \"stl_hierarchical_stacking_p6_sh0.0\": \"series_profile.combination_recommendation.avoid contains stl_hierarchical_stacking\"\n  },\n  \"score_preset\": \"rmse_focus\",\n  \"confidence\": \"medium\"\n}"
+    },
+    "parsed": {
+      "series_annotator": {
+        "trend": {
+          "direction": "mixed",
+          "strength": "moderate",
+          "consistent_across_folds": false
+        },
+        "seasonality": {
+          "present": true,
+          "strength": "moderate",
+          "seasonality_champion": "rf"
+        },
+        "noise": {
+          "level": "high",
+          "spectral_entropy": 0.8868,
+          "hurst": -0.0327,
+          "unpredictable": true
+        },
+        "model_landscape": {
+          "consensus": "high",
+          "rmse_spread_ratio": 0.9669,
+          "rankings_stable": false,
+          "kendall_tau": 0.4854,
+          "models_redundant": true,
+          "concept_drift": false,
+          "trend_champion": "ARIMA",
+          "seasonality_champion": "rf",
+          "overall_champion": "FT_catboost",
+          "horizon_homogeneous": false
+        },
+        "combination_recommendation": {
+          "strategy_type": "baseline",
+          "method_hint": "robust_median",
+          "top_k": 4,
+          "regularization": "high",
+          "avoid": [
+            "ridge_stacking",
+            "stl_hierarchical_stacking"
+          ]
+        },
+        "evidence": [
+          "ytrue_spectral_entropy=0.8868 → high entropy indicates unpredictable series",
+          "model_landscape.rmse_spread_ratio=0.9669 → large RMSE spread suggests model performance varies significantly",
+          "insights_v2.flags.models_redundant=true → redundant models present, suggesting potential for ensemble improvement"
+        ],
+        "confidence": "low",
+        "narrative": "The series exhibits high spectral entropy, indicating unpredictability. Despite some models showing moderate seasonality, the high RMSE spread and model redundancy suggest a baseline approach with robust aggregation is appropriate to handle the variability and avoid overfitting to any single model's errors."
+      },
+      "strategy_selector": {
+        "selected_names": [
+          "robust_median",
+          "trimmed_mean_r0.10",
+          "inverse_rmse_weights_k4_sh0.35",
+          "topk_mean_per_horizon_k4"
+        ],
+        "reasoning": {
+          "robust_median": "series_profile.noise.unpredictable=true → robust_median is recommended for high-entropy series with unpredictable noise",
+          "trimmed_mean_r0.10": "series_profile.model_landscape.rmse_spread_ratio=0.9669 AND noise.unpredictable=true → trimmed mean with 10% trim ratio mitigates outlier influence in high-variability models",
+          "inverse_rmse_weights_k4_sh0.35": "series_profile.model_landscape.rankings_stable=false (kendall_tau=0.4854) AND recommended_knobs.shrinkage=0.35 → soft weighting with shrinkage balances unstable rankings and regularization",
+          "topk_mean_per_horizon_k4": "series_profile.model_landscape.models_redundant=true → top-4 mean per horizon exploits redundancy while avoiding overfitting to any single model"
+        },
+        "params_overrides": {
+          "trimmed_mean_r0.10": {
+            "trim_ratio": 0.1
+          },
+          "inverse_rmse_weights_k4_sh0.35": {
+            "top_k": 4,
+            "shrinkage": 0.35
+          }
+        },
+        "excluded_highlights": {
+          "ridge_stacking_l250_topk3": "series_profile.combination_recommendation.avoid contains ridge_stacking",
+          "stl_hierarchical_stacking_p6_sh0.0": "series_profile.combination_recommendation.avoid contains stl_hierarchical_stacking"
+        },
+        "score_preset": "rmse_focus",
+        "confidence": "medium"
+      }
+    }
+  }
+}
