@@ -1,30 +1,7 @@
 """
-Combinação de previsões via FFORMA (Feature-based Forecast Model Averaging).
-
-Referência: Montero-Manso et al. (2020) — https://robjhyndman.com/publications/fforma/
-
-Segue a mesma estrutura de chamada de mean.py, dba.py e ade.py:
-configure `models`, `dataset_name`, `seasonality` e `horizon`, e o script
-gera resultados/<exp_name>/<DATASET>.csv com as previsões combinadas.
-
-Fluxo implementado:
-  1. Para cada série, calcula o erro (SMAPE) de cada modelo nas janelas de
-     VALIDAÇÃO (todas exceto a última = teste).
-  2. Extrai tsfeatures das janelas de validação como meta-features.
-  3. Treina um meta-learner LightGBM que prevê qual modelo tem menor erro
-     dado as features da série (objetivo multiclasse softmax).
-  4. Usa os raw scores do LightGBM via softmax como pesos e aplica sobre
-     as previsões de teste de cada modelo.
-
-  O dado de TESTE nunca entra no treinamento. Os valores reais do
-  horizonte de teste são usados apenas para calcular métricas finais.
-
-  Nota: com poucas séries (<20), o meta-learner tem pouca capacidade de
-  generalizar; o script avisa e oferece fallback para softmax direto dos erros.
-
-Para rodar:
-    cd Statistics_and_Seq2Seq
-    conda run -n agno python -m combinations.fforma
+conda activate fforma
+cd Statistics_and_Seq2Seq
+python -m combinations.fforma
 """
 
 from __future__ import annotations

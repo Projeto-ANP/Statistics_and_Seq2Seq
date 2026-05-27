@@ -1,13 +1,8 @@
 """
-Gera Multi-Comparison Matrix para os métodos de combinação de previsões.
-
-Uso rápido:
-    conda run -n agno python multi_comparison_matrix.py
-
-Para personalizar, edite METHODS e DATASETS abaixo, ou importe as funções:
-    from multi_comparison_matrix import run, run_combined
+conda activate metrics
+cd Statistics_and_Seq2Seq
+python -m combinations.multi_comparison_matrix
 """
-
 import os
 import warnings
 
@@ -24,15 +19,16 @@ METHODS = {
     "dba":          f"{BASE}/dba",
     "mean":         f"{BASE}/mean",
     "median":       f"{BASE}/median",
-    "orchestrator": f"{BASE}/orchestrator_llm_v1_pattern",
+    "orchestrator_v1": f"{BASE}/orchestrator_llm_v1_pattern",
+    "orchestrator_v2": f"{BASE}/orchestrator_llm_v2_annotations",
     "FFORMA":       f"{BASE}/FFORMA",
     "ADE":        f"{BASE}/ADE",
     
 }
 
-DATASETS = ["ETTH1", "ETTH2", "ETTM2", "NN5_WEEKLY_DATASET"]
+DATASETS = ["NN5_WEEKLY_DATASET"]
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output_v2")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
