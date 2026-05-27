@@ -6,18 +6,24 @@ from typing import Any, Callable, Dict, List, Optional
 
 from orchestrator_langchain.context import get_context, set_context
 
-from orchestrator.evaluator import EvaluationConfig, evaluate_all
+from orchestrator.evaluator import EvaluationConfig, evaluate_all, evaluate_candidate
 from orchestrator.final_predictor import predict_final_from_context
 from orchestrator.schemas import CandidateStrategy
 from orchestrator.strategies import RollingConfig
 from orchestrator.utils import extract_json_object, strip_think_blocks as _strip_think_blocks_util
 from orchestrator.schemas import parse_candidates
+from orchestrator.diagnostics import diebold_mariano
+from orchestrator.data_contract import load_validation_from_context
 from orchestrator.tools import (
     SCORE_PRESETS,
     proposer_brief_tool as _proposer_brief_tool,
     build_fold_cot_context_tool as _build_fold_cot_context_tool,
     build_debate_packet_tool as _build_debate_packet_tool,
     resolve_unknown_candidate as _resolve_unknown_candidate,
+    series_analysis_brief_tool as _series_analysis_brief_tool,
+    model_critic_brief_tool as _model_critic_brief_tool,
+    combination_architect_brief_tool as _combination_architect_brief_tool,
+    _per_model_diagnostics,
 )
 from orchestrator.agents import (
     create_pattern_analyst_agent,
@@ -26,6 +32,9 @@ from orchestrator.agents import (
     create_statistician_agent,
     create_series_annotator_agent,
     create_strategy_selector_agent,
+    create_series_analyst_agent,
+    create_model_critic_agent,
+    create_combination_architect_agent,
 )
 
 
@@ -1702,4 +1711,432 @@ def run_llm_pipeline_v2(
     set_context("orchestrator_last_pipeline", out)
     set_context("orchestrator_last_candidates", candidates_payload)
     _log("V2 pipeline completed.")
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V3 PIPELINE — SeriesAnalyst → ModelCritic (prune) → CombinationArchitect → robust core
+# ══════════════════════════════════════════════════════════════════════════════
+
+_V3_REGIME_METHODS = {
+    "robust": "double_shrinkage_per_horizon",
+    "adaptive": "ade_dynamic_error_per_horizon",
+    "structured": "stl_hierarchical_stacking",
+    "selection": "topk_mean_per_horizon",
+}
+
+
+def _v3_apply_pruning_floor(
+    prune_models: List[str],
+    model_names: List[str],
+    diag: Dict[str, Any],
+    min_keep: int,
+) -> Dict[str, Any]:
+    """Enforce the statistical floor over the agent's prune decision.
+
+    - Never prune a model in the MCS superior set unless it is the worse member of a
+      redundant pair (corr > 0.95).
+    - Always keep at least `min_keep` models (best by rmse_mean).
+    Returns {survivors, pruned, blocked_by_mcs}.
+    """
+
+    import numpy as _np
+
+    superior = set(diag.get("model_confidence_set", {}).get("superior_set", []) or [])
+    redundant_worse = {
+        str(p.get("worse_model")) for p in diag.get("redundant_pairs", []) if isinstance(p, dict)
+    }
+    per_model = diag.get("per_model", {})
+
+    requested = {str(m) for m in (prune_models or []) if str(m) in set(model_names)}
+
+    # Floor 1: protect MCS-superior models unless redundant.
+    blocked_by_mcs = sorted([m for m in requested if m in superior and m not in redundant_worse])
+    effective_prune = requested - set(blocked_by_mcs)
+
+    survivors = [m for m in model_names if m not in effective_prune]
+
+    # Floor 2: keep at least min_keep, restoring the best pruned models if needed.
+    if len(survivors) < min_keep:
+        pruned_sorted = sorted(
+            effective_prune,
+            key=lambda m: float(per_model.get(m, {}).get("rmse_mean", _np.inf)),
+        )
+        for m in pruned_sorted:
+            if len(survivors) >= min_keep:
+                break
+            survivors.append(m)
+            effective_prune.discard(m)
+        survivors = [m for m in model_names if m in set(survivors)]
+
+    return {
+        "survivors": survivors,
+        "pruned": sorted(effective_prune),
+        "blocked_by_mcs": blocked_by_mcs,
+    }
+
+
+def run_llm_pipeline_v3(
+    series_analyst_model: _utils.ModelConfig,
+    model_critic_model: _utils.ModelConfig,
+    combination_architect_model: _utils.ModelConfig,
+    debug: bool = False,
+    rolling_mode: str = "expanding",
+    train_window: int = 3,
+    require_tool_call: bool = True,
+    llm_logs: bool = True,
+    gate_alpha: float = 0.10,
+) -> Dict[str, Any]:
+    """V3 pipeline: structured analysis → model pruning → robust combination with a DM gate.
+
+    Design (see ARCHITECTURE_V3_PROPOSAL.md):
+    - The LLM makes the STRUCTURAL decisions (prune which models, which regime, how strongly to
+      shrink); weights come from low-variance robust estimators.
+    - The final combiner is ANCHORED to pruned-equal-weights. The chosen regime is only used if it
+      beats pruned-equal-weights with a statistically significant Diebold-Mariano margin, else we
+      fall back to pruned-equal-weights. This guarantees consistency (cannot do much worse than the
+      robust anchor, which itself tends to beat full-pool mean and FFORMA/ADE on short samples).
+    - temperature=0 on all three agents → reproducible.
+    """
+
+    import math
+    import numpy as np
+
+    def _log(msg: str) -> None:
+        if llm_logs:
+            print(f"[ORCH|V3] {msg}", flush=True)
+
+    _log(
+        f"Starting V3 | analyst={series_analyst_model.model} | critic={model_critic_model.model} "
+        f"| architect={combination_architect_model.model} | rolling={rolling_mode} | train_window={train_window}"
+    )
+
+    analyst = create_series_analyst_agent(series_analyst_model.model, debug=debug)
+    critic = create_model_critic_agent(model_critic_model.model, debug=debug)
+    architect = create_combination_architect_agent(combination_architect_model.model, debug=debug)
+
+    llm_artifacts: Dict[str, Any] = {
+        "series_analyst": series_analyst_model.model,
+        "model_critic": model_critic_model.model,
+        "combination_architect": combination_architect_model.model,
+        "prompts": {},
+        "raw": {},
+        "parsed": {},
+    }
+
+    _BALANCED = {"a_rmse": 0.3, "b_smape": 0.3, "c_mape": 0.2, "d_pocid": 0.2}
+    eval_cfg = EvaluationConfig()
+    eval_cfg.rolling.mode = rolling_mode
+    eval_cfg.rolling.train_window = int(train_window)
+    eval_cfg.metrics.mape_zero = "skip"
+    eval_cfg.metrics.mape_epsilon = 1e-8
+    eval_cfg.score.a_rmse = _BALANCED["a_rmse"]
+    eval_cfg.score.b_smape = _BALANCED["b_smape"]
+    eval_cfg.score.c_mape = _BALANCED["c_mape"]
+    eval_cfg.score.d_pocid = _BALANCED["d_pocid"]
+
+    set_context("config_json_for_proposer", json.dumps({"mape_zero": "skip", "mape_epsilon": 1e-8}))
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+    data = load_validation_from_context()
+    model_names = list(data.model_names)
+    n_models = len(model_names)
+
+    # ── Step 1: SeriesAnalyst → SeriesProfile ─────────────────────────────────
+    sa_prompt = (
+        "Call series_analysis_brief() FIRST, then return ONLY the SeriesProfile JSON per your schema. "
+        "No markdown, no explanation."
+    )
+    llm_artifacts["prompts"]["series_analyst"] = sa_prompt
+    series_profile: Dict[str, Any] = {}
+    try:
+        sa_out, sa_obj = _run_agent_with_retry(
+            lambda: analyst.run(sa_prompt).content, "SeriesAnalyst", max_retries=2, log_func=_log
+        )
+        series_profile = sa_obj if isinstance(sa_obj, dict) else {}
+        llm_artifacts["raw"]["series_analyst"] = str(sa_out)
+        llm_artifacts["parsed"]["series_analyst"] = series_profile
+    except Exception as _e:
+        _log(f"SeriesAnalyst failed (non-fatal, continuing): {_e}")
+        series_profile = {}
+    set_context("series_profile", series_profile)
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+    _log(
+        f"SeriesProfile: strategy_type={series_profile.get('combination_recommendation', {}).get('strategy_type')} "
+        f"| confidence={series_profile.get('confidence')}"
+    )
+
+    # ── Step 2: ModelCritic → prune (with statistical floor) ──────────────────
+    mc_prompt = (
+        "Call model_critic_brief() FIRST, then return ONLY the pruning JSON per your schema "
+        "(prune_models, reasoning, confidence). No markdown."
+    )
+    llm_artifacts["prompts"]["model_critic"] = mc_prompt
+    prune_models: List[str] = []
+    mc_obj: Dict[str, Any] = {}
+    try:
+        mc_out, mc_obj = _run_agent_with_retry(
+            lambda: critic.run(mc_prompt).content, "ModelCritic", max_retries=2, log_func=_log
+        )
+        raw_prune = mc_obj.get("prune_models", []) if isinstance(mc_obj, dict) else []
+        if isinstance(raw_prune, str):
+            raw_prune = [raw_prune]
+        prune_models = [str(m) for m in raw_prune if str(m)]
+        llm_artifacts["raw"]["model_critic"] = str(mc_out)
+        llm_artifacts["parsed"]["model_critic"] = mc_obj
+    except Exception as _e:
+        _log(f"ModelCritic failed (non-fatal, no pruning): {_e}")
+        prune_models = []
+
+    diag = _per_model_diagnostics(data)
+    min_keep = min(max(3, int(round(np.sqrt(max(n_models, 1))))), n_models)
+    floor = _v3_apply_pruning_floor(prune_models, model_names, diag, min_keep)
+    survivors = floor["survivors"]
+    set_context("survivors", survivors)
+    _log(
+        f"Pruning: requested={prune_models} | blocked_by_MCS={floor['blocked_by_mcs']} "
+        f"| pruned={floor['pruned']} | survivors={len(survivors)}/{n_models}"
+    )
+
+    # ── Step 3: CombinationArchitect → regime + shrinkage ─────────────────────
+    ca_prompt = (
+        "Call combination_architect_brief() FIRST, then return ONLY the regime JSON per your schema "
+        "(regime, shrinkage_lambda, score_preset, reasoning, confidence). No markdown."
+    )
+    llm_artifacts["prompts"]["combination_architect"] = ca_prompt
+    regime = "robust"
+    shrinkage_lambda = 0.7 if data.n_windows <= 3 else (0.5 if data.n_windows <= 6 else 0.3)
+    ca_obj: Dict[str, Any] = {}
+    try:
+        ca_out, ca_obj = _run_agent_with_retry(
+            lambda: architect.run(ca_prompt).content, "CombinationArchitect", max_retries=2, log_func=_log
+        )
+        if isinstance(ca_obj, dict):
+            r = str(ca_obj.get("regime", "robust")).strip().lower()
+            if r in _V3_REGIME_METHODS:
+                regime = r
+            try:
+                shrinkage_lambda = float(ca_obj.get("shrinkage_lambda", shrinkage_lambda))
+            except Exception:
+                pass
+            shrinkage_lambda = min(max(shrinkage_lambda, 0.0), 1.0)
+        llm_artifacts["raw"]["combination_architect"] = str(ca_out)
+        llm_artifacts["parsed"]["combination_architect"] = ca_obj
+    except Exception as _e:
+        _log(f"CombinationArchitect failed (non-fatal, using robust default): {_e}")
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+    _log(f"Architect: regime={regime} | shrinkage_lambda={shrinkage_lambda}")
+
+    # ── Step 4: Build candidates (regime, anchor, full baselines) ─────────────
+    brief = get_context("orchestrator_architect_brief", {})
+    regime_knobs: Dict[str, Any] = {}
+    if isinstance(brief, dict):
+        regimes = brief.get("regimes", {})
+        if isinstance(regimes, dict) and regime in regimes:
+            regime_knobs = dict(regimes[regime].get("knobs", {}) or {})
+    rec_top_k = regime_knobs.get("top_k") or max(2, min(int(round(np.sqrt(max(len(survivors), 1)))), len(survivors)))
+    rec_l2 = float(regime_knobs.get("l2", 50.0))
+    rec_period = int(regime_knobs.get("period", max(2, data.horizon // 2)))
+
+    def _mk(name: str, method: str, extra: Dict[str, Any], use_survivors: bool) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"method": method}
+        params.update(extra)
+        if use_survivors:
+            params["survivors"] = survivors
+        return {
+            "name": name,
+            "type": "weighted",
+            "description": name,
+            "formula": "",
+            "learns_weights": method not in {"mean", "median"},
+            "constraints": "anti-leakage rolling",
+            "risks": [],
+            "validation_plan": "rolling",
+            "params": params,
+        }
+
+    regime_method = _V3_REGIME_METHODS[regime]
+    if regime_method == "double_shrinkage_per_horizon":
+        regime_extra = {"shrinkage": shrinkage_lambda, "l2": rec_l2, "top_k": int(rec_top_k)}
+    elif regime_method == "ade_dynamic_error_per_horizon":
+        regime_extra = {"beta": 0.5, "eta": 1.0, "trim_ratio": 1.0}
+    elif regime_method == "stl_hierarchical_stacking":
+        regime_extra = {"period": rec_period, "shrinkage": shrinkage_lambda}
+    else:  # topk_mean_per_horizon
+        regime_extra = {"top_k": int(rec_top_k)}
+
+    regime_cand = _mk("llm_regime", regime_method, regime_extra, use_survivors=True)
+    anchor_cand = _mk("pruned_equal_weights", "mean", {}, use_survivors=True)
+    full_mean_cand = _mk("full_mean", "mean", {}, use_survivors=False)
+    full_median_cand = _mk("full_median", "median", {}, use_survivors=False)
+
+    eval_list = [regime_cand, anchor_cand, full_mean_cand, full_median_cand]
+    # Oracle-over-regimes: evaluate the other regimes on survivors to report whether the
+    # LLM picked the best regime (paper ablation), reusing the same eval call.
+    for rname, rmethod in _V3_REGIME_METHODS.items():
+        if rname == regime:
+            continue
+        if rmethod == "double_shrinkage_per_horizon":
+            ex = {"shrinkage": shrinkage_lambda, "l2": rec_l2, "top_k": int(rec_top_k)}
+        elif rmethod == "ade_dynamic_error_per_horizon":
+            ex = {"beta": 0.5, "eta": 1.0, "trim_ratio": 1.0}
+        elif rmethod == "stl_hierarchical_stacking":
+            ex = {"period": rec_period, "shrinkage": shrinkage_lambda}
+        else:
+            ex = {"top_k": int(rec_top_k)}
+        eval_list.append(_mk(f"regime_{rname}", rmethod, ex, use_survivors=True))
+
+    # ── Step 5: Evaluate everything on the validation windows ─────────────────
+    ev = evaluate_all(data, parse_candidates(eval_list), eval_cfg)
+    details_by_name: Dict[str, Dict[str, Any]] = {}
+    for d in ev.get("details", []) or []:
+        nm = str(d.get("candidate", {}).get("name", ""))
+        details_by_name[nm] = d
+
+    def _score(name: str) -> float:
+        d = details_by_name.get(name)
+        return float(d.get("score", float("nan"))) if isinstance(d, dict) else float("nan")
+
+    def _resid(name: str) -> np.ndarray:
+        d = details_by_name.get(name)
+        if not isinstance(d, dict):
+            return np.array([])
+        return np.asarray(d.get("residuals_flat", []), dtype=float)
+
+    regime_score = _score("llm_regime")
+    anchor_score = _score("pruned_equal_weights")
+
+    # ── Step 6: Diebold-Mariano significance gate vs pruned-equal-weights ─────
+    dm = diebold_mariano(_resid("llm_regime"), _resid("pruned_equal_weights"), loss="squared", h=1)
+    p_val = dm.get("p_value")
+    dm_stat = dm.get("dm_stat")
+    regime_better = bool(math.isfinite(regime_score) and math.isfinite(anchor_score) and regime_score < anchor_score)
+    significant = bool(
+        p_val is not None and math.isfinite(p_val) and p_val < float(gate_alpha)
+        and dm_stat is not None and math.isfinite(dm_stat) and dm_stat < 0
+    )
+    if regime_better and significant:
+        chosen_name, chosen_cand, fellback = "llm_regime", regime_cand, False
+        gate_reason = f"regime beats anchor (DM p={p_val:.3f} < {gate_alpha}, stat={dm_stat:.2f})"
+    elif regime_better and (p_val is None or not math.isfinite(p_val)):
+        rel = (anchor_score - regime_score) / (abs(anchor_score) + 1e-9)
+        if rel > 0.02:
+            chosen_name, chosen_cand, fellback = "llm_regime", regime_cand, False
+            gate_reason = f"DM unavailable; regime beats anchor by {rel:.1%} > 2% margin"
+        else:
+            chosen_name, chosen_cand, fellback = "pruned_equal_weights", anchor_cand, True
+            gate_reason = f"DM unavailable; regime margin {rel:.1%} <= 2% → fallback to anchor"
+    else:
+        chosen_name, chosen_cand, fellback = "pruned_equal_weights", anchor_cand, True
+        gate_reason = (
+            f"regime not significantly better (score {regime_score:.4f} vs anchor {anchor_score:.4f}, "
+            f"DM p={p_val}) → fallback to pruned-equal-weights"
+        )
+    _log(f"Gate: chosen={chosen_name} | fellback={fellback} | {gate_reason}")
+
+    # ── Step 7: Final prediction with the chosen candidate ────────────────────
+    best_candidate = CandidateStrategy(**chosen_cand)
+    pred = predict_final_from_context(
+        best_candidate, RollingConfig(mode=rolling_mode, train_window=int(train_window))
+    )
+
+    # ── Step 8: Baselines + deltas (publication evidence) ─────────────────────
+    full_mean_score = _score("full_mean")
+    full_median_score = _score("full_median")
+    chosen_score = _score(chosen_name)
+
+    def _delta(a: float, b: float) -> float:
+        return a - b if (math.isfinite(a) and math.isfinite(b)) else float("nan")
+
+    # Oracle-over-regimes: best regime by validation score (for "did LLM pick best regime").
+    regime_scores = {"robust": None, "adaptive": None, "structured": None, "selection": None}
+    for rname in regime_scores:
+        nm = "llm_regime" if rname == regime else f"regime_{rname}"
+        regime_scores[rname] = _score(nm) if nm in details_by_name else float("nan")
+    oracle_regime = min(
+        (r for r in regime_scores if math.isfinite(regime_scores[r])),
+        key=lambda r: regime_scores[r],
+        default=regime,
+    )
+
+    baselines_info = {
+        "full_mean_score": full_mean_score,
+        "full_median_score": full_median_score,
+        "pruned_equal_weights_score": anchor_score,
+        "llm_regime_score": regime_score,
+        "chosen_score": chosen_score,
+        "delta_chosen_vs_full_mean": _delta(chosen_score, full_mean_score),
+        "delta_chosen_vs_full_median": _delta(chosen_score, full_median_score),
+        "delta_chosen_vs_pruned_mean": _delta(chosen_score, anchor_score),
+        "delta_pruned_mean_vs_full_mean": _delta(anchor_score, full_mean_score),
+        "regime_scores": regime_scores,
+        "oracle_regime": oracle_regime,
+        "llm_picked_best_regime": bool(oracle_regime == regime),
+    }
+
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("evaluate_strategies_v3")
+    set_context("tools_called", tools_called)
+
+    prune_report = {
+        "requested_by_llm": prune_models,
+        "blocked_by_mcs": floor["blocked_by_mcs"],
+        "pruned": floor["pruned"],
+        "survivors": survivors,
+        "min_keep": min_keep,
+        "mcs_superior_set": diag.get("model_confidence_set", {}).get("superior_set", []),
+        "reasoning": mc_obj.get("reasoning", {}) if isinstance(mc_obj, dict) else {},
+    }
+
+    description = {
+        "mode": "llm_v3",
+        "agents": {
+            "series_analyst": series_analyst_model.model,
+            "model_critic": model_critic_model.model,
+            "combination_architect": combination_architect_model.model,
+        },
+        "tool_validation": {
+            "tools_called": tools_called,
+            "require_tool_call": bool(require_tool_call),
+            "tool_missing": bool(
+                require_tool_call and "series_analysis_brief_tool" not in tools_called
+            ),
+        },
+        "score_preset": "balanced",
+        "best": best_candidate.to_dict(),
+        "score": chosen_score,
+        "chosen_name": chosen_name,
+        "fellback_to_pruned_mean": fellback,
+        "gate": {"alpha": gate_alpha, "dm": dm, "reason": gate_reason},
+        "regime": regime,
+        "shrinkage_lambda": shrinkage_lambda,
+        "survivors": survivors,
+        "prune_report": prune_report,
+        "predict_debug": pred.get("debug", {}),
+        "baselines": baselines_info,
+        "series_profile": series_profile,
+        "architect_reasoning": ca_obj.get("reasoning", "") if isinstance(ca_obj, dict) else "",
+    }
+
+    out = {
+        "success": True,
+        "best": best_candidate.to_dict(),
+        "ranking": ev.get("ranking", []),
+        "description": json.dumps(description, ensure_ascii=False),
+        "result": [float(x) for x in pred["result"]],
+        "eval": ev,
+        "baselines": baselines_info,
+        "prune_report": prune_report,
+        "survivors": survivors,
+        "regime": regime,
+        "shrinkage_lambda": shrinkage_lambda,
+        "fellback_to_pruned_mean": fellback,
+        "series_profile": series_profile,
+        "llm_artifacts": llm_artifacts,
+    }
+
+    set_context("orchestrator_last_pipeline", out)
+    _log("V3 pipeline completed.")
     return out

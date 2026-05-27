@@ -101,3 +101,20 @@ def load_validation_from_context() -> ValidationData:
             y_preds[i, j, :] = arr
 
     return ValidationData(y_true=y_true, y_preds=y_preds, model_names=model_names)
+
+
+def load_history_from_context() -> np.ndarray:
+    """Returns the recent observed history (1-D) built by generate_all_validations_context.
+
+    This is the concatenation of the validation windows' ground-truth (`test`) values,
+    which are contiguous and non-overlapping, forming a leakage-safe recent history
+    segment (train_window * horizon points). Falls back to a flattened y_true if the
+    explicit history key is absent.
+    """
+
+    hist = get_context("series_history")
+    if isinstance(hist, list) and hist:
+        return np.asarray(hist, dtype=float)
+    # Fallback: reconstruct from validation windows in row-major (window, horizon) order.
+    data = load_validation_from_context()
+    return np.asarray(data.y_true, dtype=float).reshape(-1)

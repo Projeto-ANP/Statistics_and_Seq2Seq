@@ -43,3 +43,26 @@ def strategy_brief() -> str:
     """V2: Strategy brief for StrategySelector — includes SeriesProfile + candidate library + strategy guide."""
 
     return orch_tools.strategy_brief_tool()
+
+
+# ── V3 pipeline tools ────────────────────────────────────────────────────────
+
+@tool("series_analysis_brief")
+def series_analysis_brief() -> str:
+    """V3: Series features (forecastability, trend/seasonal strength, stationarity) + validation summary for the SeriesAnalyst."""
+
+    return orch_tools.series_analysis_brief_tool()
+
+
+@tool("model_critic_brief")
+def model_critic_brief() -> str:
+    """V3: Per-model diagnostics + Model Confidence Set + redundancy pairs for the ModelCritic to decide which models to prune."""
+
+    return orch_tools.model_critic_brief_tool()
+
+
+@tool("combination_architect_brief")
+def combination_architect_brief() -> str:
+    """V3: Robust combination regimes over the surviving pool + recommended shrinkage for the CombinationArchitect."""
+
+    return orch_tools.combination_architect_brief_tool()

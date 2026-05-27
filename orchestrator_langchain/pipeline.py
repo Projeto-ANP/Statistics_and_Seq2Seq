@@ -76,3 +76,37 @@ def run_langchain_pipeline_v2(
         require_tool_call=require_tool_call,
         llm_logs=llm_logs,
     )
+
+
+def run_langchain_pipeline_v3(
+    series_analyst_model: _utils.ModelConfig,
+    model_critic_model: _utils.ModelConfig,
+    combination_architect_model: _utils.ModelConfig,
+    debug: bool = False,
+    rolling_mode: str = "expanding",
+    train_window: int = 3,
+    require_tool_call: bool = True,
+    llm_logs: bool = True,
+    gate_alpha: float = 0.10,
+) -> Dict[str, Any]:
+    """V3: SeriesAnalyst → ModelCritic (prune) → CombinationArchitect → robust core (DM gate).
+
+    Pruning of bad/redundant base models (Kourentzes et al. 2019; Wang et al. 2023) + double
+    shrinkage toward equal weights (Liu 2024) anchored by a Diebold-Mariano significance gate.
+    All three agents run at temperature=0 for reproducibility.
+    """
+    _base.create_series_analyst_agent = lc_agents.create_series_analyst_agent
+    _base.create_model_critic_agent = lc_agents.create_model_critic_agent
+    _base.create_combination_architect_agent = lc_agents.create_combination_architect_agent
+
+    return _base.run_llm_pipeline_v3(
+        series_analyst_model=series_analyst_model,
+        model_critic_model=model_critic_model,
+        combination_architect_model=combination_architect_model,
+        debug=debug,
+        rolling_mode=rolling_mode,
+        train_window=train_window,
+        require_tool_call=require_tool_call,
+        llm_logs=llm_logs,
+        gate_alpha=gate_alpha,
+    )

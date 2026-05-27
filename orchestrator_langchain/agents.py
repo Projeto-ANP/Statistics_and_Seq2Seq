@@ -8,7 +8,16 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 
-from orchestrator_langchain.langchain_tools import debate_packet, evaluate_strategies, proposer_brief, build_fold_cot_context, strategy_brief
+from orchestrator_langchain.langchain_tools import (
+    debate_packet,
+    evaluate_strategies,
+    proposer_brief,
+    build_fold_cot_context,
+    strategy_brief,
+    series_analysis_brief,
+    model_critic_brief,
+    combination_architect_brief,
+)
 
 
 DEFAULT_MODEL_ID = "mychen76/qwen3_cline_roocode:4b"
@@ -177,6 +186,47 @@ def create_strategy_selector_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool
         model_id=model_id,
         tools=[strategy_brief],
         system_prompt=_load_prompt("strategy_selector.md"),
+        temperature=0.0,
+        force_tool_call=True,
+        max_tool_rounds=3,
+    )
+
+
+# ── V3 pipeline agents (SeriesAnalyst → ModelCritic → CombinationArchitect) ────
+
+def create_series_analyst_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    """V3: Produces a SeriesProfile from deterministic features over the recent history (temperature=0)."""
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[series_analysis_brief],
+        system_prompt=_load_prompt("series_analyst.md"),
+        temperature=0.0,
+        force_tool_call=True,
+        max_tool_rounds=3,
+    )
+
+
+def create_model_critic_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    """V3: Decides which base models to prune using per-model diagnostics + MCS (temperature=0)."""
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[model_critic_brief],
+        system_prompt=_load_prompt("model_critic.md"),
+        temperature=0.0,
+        force_tool_call=True,
+        max_tool_rounds=3,
+    )
+
+
+def create_combination_architect_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    """V3: Selects the combination regime + shrinkage over the surviving pool (temperature=0)."""
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[combination_architect_brief],
+        system_prompt=_load_prompt("combination_architect.md"),
         temperature=0.0,
         force_tool_call=True,
         max_tool_rounds=3,

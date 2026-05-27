@@ -30,7 +30,8 @@ def extract_values(list_str):
 #     return df
 
 
-COLS_SERIE = [
+# Columns common to every pipeline version (metrics + final-combination traceability).
+COLS_BASE = [
     "dataset_index",
     "horizon",
     "regressor",
@@ -45,6 +46,26 @@ COLS_SERIE = [
     "start_test",
     "final_test",
     "description",
+    "llm_artifacts_path",
+    "score_preset",
+    "tool_missing",
+    "tools_called",
+    "final_candidate_names",
+    "final_candidate_count",
+    # Traceability of the final combination applied on final_test
+    "best_strategy_name",
+    "best_strategy_method",
+    "best_strategy_params",
+    "predict_debug",
+    "selected_base_models",
+    "weights_by_horizon",
+]
+
+# Legacy columns: V1 (PatternAnalyst + Proposer/Skeptic/Statistician + debate) and
+# V2 (SeriesAnnotator + StrategySelector + oracle/fixed baselines). Only written when
+# running those versions — V3 does not populate them, so they are excluded from V3 output.
+COLS_LEGACY = [
+    # V1: debate + role outputs
     "debate_ran",
     "debate_trigger",
     "approach_pre_debate",
@@ -53,64 +74,78 @@ COLS_SERIE = [
     "selection_explanation",
     "when_good",
     "decision_report",
-    "llm_artifacts_path",
-    "score_preset",
-    "tool_missing",
-    "tools_called",
     "proposer_selected_names",
     "proposer_params_overrides",
     "proposer_force_debate",
     "proposer_debate_margin",
-    "final_candidate_names",
-    "final_candidate_count",
     "skeptic_remove_names",
     "skeptic_add_names",
     "skeptic_params_overrides",
     "statistician_remove_names",
     "statistician_add_names",
     "statistician_params_overrides",
-
-    # Traceability of the final combination applied on final_test
-    "best_strategy_name",
-    "best_strategy_method",
-    "best_strategy_params",
-    "predict_debug",
-    "selected_base_models",
-    "weights_by_horizon",
-
-    # LLM raw think blocks (if present)
     "proposer_think",
     "skeptic_think",
     "statistician_think",
-
-    # PatternAnalyst outputs
     "pattern_analyst_think",
     "pattern_analyst_trend_champion",
     "pattern_analyst_seas_champion",
     "pattern_analyst_method_hint",
     "pattern_analyst_narrative",
-
-    # V2: Oracle comparison (always deterministic, full candidate universe)
+    # V2: oracle comparison
     "oracle_best_name",
     "oracle_best_score",
     "oracle_best_method",
     "oracle_n_candidates",
     "llm_vs_oracle_delta",
     "llm_in_oracle_top5",
-
-    # V2: Fixed baselines (publication evidence — LLM must beat these)
+    # V2: fixed baselines
     "baseline_equal_weights_score",
     "baseline_best_single_score",
     "baseline_best_single_model",
     "llm_vs_equal_weights_delta",
     "llm_vs_best_single_delta",
-
-    # V2: Structured annotations
+    # V2: structured annotations
     "series_profile",
     "strategy_reasoning",
     "series_annotator_think",
     "strategy_selector_think",
 ]
+
+# V3 columns: SeriesAnalyst → ModelCritic (prune) → CombinationArchitect + DM gate.
+COLS_V3 = [
+    "series_profile",
+    "survivors",
+    "pruned_models",
+    "prune_blocked_by_mcs",
+    "mcs_superior_set",
+    "regime",
+    "shrinkage_lambda",
+    "fellback_to_pruned_mean",
+    "oracle_regime",
+    "llm_picked_best_regime",
+    # V3 baseline scores + deltas (publication evidence: negative delta = better than baseline)
+    "full_mean_score",
+    "full_median_score",
+    "pruned_equal_weights_score",
+    "llm_regime_score",
+    "chosen_score",
+    "delta_chosen_vs_full_mean",
+    "delta_chosen_vs_full_median",
+    "delta_chosen_vs_pruned_mean",
+    "delta_pruned_mean_vs_full_mean",
+    # V3 think blocks
+    "series_analyst_think",
+    "model_critic_think",
+    "combination_architect_think",
+]
+
+
+def cols_for_version(version: str):
+    """Active CSV schema for a pipeline version: base + (V3 | legacy V1/V2)."""
+    if str(version).startswith("v3"):
+        return COLS_BASE + COLS_V3
+    return COLS_BASE + COLS_LEGACY
 
 
 def _extract_think_blocks(text: str) -> str:
@@ -136,7 +171,7 @@ def get_predictions_models(models, dataset_index, final_test, dataset="ANP_MONTH
     final_test_predictions = {}
     final_test_data = None
 
-    final_test_date = pd.to_datetime(final_test, errors="coerce", infer_datetime_format=True)
+    final_test_date = pd.to_datetime(final_test, errors="coerce")
 
     for model in models:
         df = read_model_preds(model, dataset_index, dataset=dataset)
@@ -161,6 +196,10 @@ def exec_dataset_orchestrator(
     # V2 models
     series_annotator_model: _utils.ModelConfig = None,
     strategy_selector_model: _utils.ModelConfig = None,
+    # V3 models
+    series_analyst_model: _utils.ModelConfig = None,
+    model_critic_model: _utils.ModelConfig = None,
+    combination_architect_model: _utils.ModelConfig = None,
     debug: bool = False,
     rolling: str = "expanding",
     train_window: int = 3,
@@ -168,6 +207,11 @@ def exec_dataset_orchestrator(
     # start_index: int = 0,
     # end_index: int = 182,
     version: str = "v1_pattern",
+    # Explicit path to the original .tsf (preferred). The full leakage-safe history
+    # (series[:-horizon]) is read from here for the SeriesAnalyst features. If None, it is
+    # resolved case-insensitively from the dataset name; if still not found, the pipeline
+    # falls back to the validation-window proxy.
+    original_tsf_path: str = None,
 ):
     # dataset = "ANP_MONTHLY"
     # dataset = "ETTH1"
@@ -178,7 +222,6 @@ def exec_dataset_orchestrator(
     df_dt["final_test"] = pd.to_datetime(
         df_dt["final_test"],
         errors="coerce",          # transforma inválidos em NaT
-        infer_datetime_format=True
     )
     
     if df_dt["final_test"].isna().sum() > 0:
@@ -199,19 +242,22 @@ def exec_dataset_orchestrator(
 
     from orchestrator_langchain.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
     from orchestrator.pipeline import run_deterministic_pipeline, run_llm_pipeline
-    from orchestrator_langchain.pipeline import run_langchain_pipeline, run_langchain_pipeline_v2
+    from orchestrator_langchain.pipeline import run_langchain_pipeline, run_langchain_pipeline_v2, run_langchain_pipeline_v3
+
+    # Active CSV schema for this version (V3 drops the legacy V1/V2 columns).
+    cols_serie = cols_for_version(version)
 
     # Ensure CSV schema is up-to-date (add missing columns if file already exists).
     if not os.path.exists(path_csv):
-        pd.DataFrame(columns=COLS_SERIE).to_csv(path_csv, sep=";", index=False)
+        pd.DataFrame(columns=cols_serie).to_csv(path_csv, sep=";", index=False)
     else:
         try:
             df_existing = pd.read_csv(path_csv, sep=";")
-            missing = [c for c in COLS_SERIE if c not in df_existing.columns]
+            missing = [c for c in cols_serie if c not in df_existing.columns]
             if missing:
                 for c in missing:
                     df_existing[c] = np.nan
-                df_existing = df_existing.reindex(columns=COLS_SERIE)
+                df_existing = df_existing.reindex(columns=cols_serie)
                 df_existing.to_csv(path_csv, sep=";", index=False)
         except Exception:
             # If the existing file is malformed, keep running; new rows will still append.
@@ -220,12 +266,24 @@ def exec_dataset_orchestrator(
     for i in range(num_series):
         init_context()
         CONTEXT_MEMORY["models_available"] = models
-        generate_all_validations_context(models, i, train_window=train_window, dataset=dataset)
+        generate_all_validations_context(models, i, train_window=train_window, dataset=dataset, tsf_path=original_tsf_path)
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:
+                _is_v3 = version.startswith("v3")
                 _is_v2 = version.startswith("v2")
-                if _is_v2:
+                if _is_v3:
+                    result = run_langchain_pipeline_v3(
+                        series_analyst_model=series_analyst_model,
+                        model_critic_model=model_critic_model,
+                        combination_architect_model=combination_architect_model,
+                        debug=debug,
+                        rolling_mode=rolling,
+                        train_window=train_window,
+                        require_tool_call=True,
+                        llm_logs=llm_logs,
+                    )
+                elif _is_v2:
                     result = run_langchain_pipeline_v2(
                         series_annotator_model=series_annotator_model,
                         strategy_selector_model=strategy_selector_model,
@@ -364,6 +422,29 @@ def exec_dataset_orchestrator(
         baseline_best_single_model = ""
         llm_vs_equal_weights_delta = np.nan
         llm_vs_best_single_delta = np.nan
+
+        # V3 pruning + robust combination
+        survivors_csv = ""
+        pruned_models_csv = ""
+        prune_blocked_by_mcs_csv = ""
+        mcs_superior_set_csv = ""
+        regime_v3 = ""
+        shrinkage_lambda_v3 = np.nan
+        fellback_to_pruned_mean = np.nan
+        oracle_regime_v3 = ""
+        llm_picked_best_regime = np.nan
+        full_mean_score = np.nan
+        full_median_score = np.nan
+        pruned_equal_weights_score = np.nan
+        llm_regime_score = np.nan
+        chosen_score_v3 = np.nan
+        delta_chosen_vs_full_mean = np.nan
+        delta_chosen_vs_full_median = np.nan
+        delta_chosen_vs_pruned_mean = np.nan
+        delta_pruned_mean_vs_full_mean = np.nan
+        series_analyst_think = ""
+        model_critic_think = ""
+        combination_architect_think = ""
 
         debate_ran = np.nan
         debate_trigger = np.nan
@@ -643,6 +724,57 @@ def exec_dataset_orchestrator(
             except Exception:
                 pass
 
+            # V3: pruning + robust combination fields
+            try:
+                _sv = result.get("survivors") if isinstance(result, dict) else None
+                if isinstance(_sv, list):
+                    survivors_csv = json.dumps(_sv, ensure_ascii=False)
+                regime_v3 = str(result.get("regime") or "")
+                _sl = result.get("shrinkage_lambda")
+                shrinkage_lambda_v3 = float(_sl) if _sl is not None else np.nan
+                _fb = result.get("fellback_to_pruned_mean")
+                fellback_to_pruned_mean = bool(_fb) if _fb is not None else np.nan
+
+                _pr = result.get("prune_report") if isinstance(result, dict) else None
+                if isinstance(_pr, dict):
+                    pruned_models_csv = json.dumps(_pr.get("pruned", []), ensure_ascii=False)
+                    prune_blocked_by_mcs_csv = json.dumps(_pr.get("blocked_by_mcs", []), ensure_ascii=False)
+                    mcs_superior_set_csv = json.dumps(_pr.get("mcs_superior_set", []), ensure_ascii=False)
+
+                _bl3 = result.get("baselines") if isinstance(result, dict) else None
+                if isinstance(_bl3, dict):
+                    def _f(key):
+                        v = _bl3.get(key)
+                        try:
+                            return float(v) if v is not None else np.nan
+                        except Exception:
+                            return np.nan
+                    full_mean_score = _f("full_mean_score")
+                    full_median_score = _f("full_median_score")
+                    pruned_equal_weights_score = _f("pruned_equal_weights_score")
+                    llm_regime_score = _f("llm_regime_score")
+                    chosen_score_v3 = _f("chosen_score")
+                    delta_chosen_vs_full_mean = _f("delta_chosen_vs_full_mean")
+                    delta_chosen_vs_full_median = _f("delta_chosen_vs_full_median")
+                    delta_chosen_vs_pruned_mean = _f("delta_chosen_vs_pruned_mean")
+                    delta_pruned_mean_vs_full_mean = _f("delta_pruned_mean_vs_full_mean")
+                    oracle_regime_v3 = str(_bl3.get("oracle_regime") or "")
+                    _lpb = _bl3.get("llm_picked_best_regime")
+                    llm_picked_best_regime = bool(_lpb) if _lpb is not None else np.nan
+            except Exception:
+                pass
+
+            # V3: think blocks from v3 agents
+            try:
+                _arts3 = result.get("llm_artifacts") if isinstance(result, dict) else None
+                if isinstance(_arts3, dict):
+                    raw3 = _arts3.get("raw", {}) or {}
+                    series_analyst_think = _extract_think_blocks(str(raw3.get("series_analyst", "")))
+                    model_critic_think = _extract_think_blocks(str(raw3.get("model_critic", "")))
+                    combination_architect_think = _extract_think_blocks(str(raw3.get("combination_architect", "")))
+            except Exception:
+                pass
+
         print("Description: ", description)
         print("Predictions: ", preds_real)
 
@@ -761,10 +893,33 @@ def exec_dataset_orchestrator(
             "strategy_reasoning": strategy_reasoning_csv,
             "series_annotator_think": series_annotator_think,
             "strategy_selector_think": strategy_selector_think,
+
+            # V3: Pruning + robust combination
+            "survivors": survivors_csv,
+            "pruned_models": pruned_models_csv,
+            "prune_blocked_by_mcs": prune_blocked_by_mcs_csv,
+            "mcs_superior_set": mcs_superior_set_csv,
+            "regime": regime_v3,
+            "shrinkage_lambda": shrinkage_lambda_v3,
+            "fellback_to_pruned_mean": fellback_to_pruned_mean,
+            "oracle_regime": oracle_regime_v3,
+            "llm_picked_best_regime": llm_picked_best_regime,
+            "full_mean_score": full_mean_score,
+            "full_median_score": full_median_score,
+            "pruned_equal_weights_score": pruned_equal_weights_score,
+            "llm_regime_score": llm_regime_score,
+            "chosen_score": chosen_score_v3,
+            "delta_chosen_vs_full_mean": delta_chosen_vs_full_mean,
+            "delta_chosen_vs_full_median": delta_chosen_vs_full_median,
+            "delta_chosen_vs_pruned_mean": delta_chosen_vs_pruned_mean,
+            "delta_pruned_mean_vs_full_mean": delta_pruned_mean_vs_full_mean,
+            "series_analyst_think": series_analyst_think,
+            "model_critic_think": model_critic_think,
+            "combination_architect_think": combination_architect_think,
         }
 
         df_new = pd.DataFrame(data_serie)
-        df_new = df_new.reindex(columns=COLS_SERIE)
+        df_new = df_new.reindex(columns=cols_serie)
         df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
 
         if hard_stop:
@@ -801,21 +956,42 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
-    dataset = "ETTH1"
+    dataset = "NN5_WEEKLY_DATASET"
+    # Original .tsf for the leakage-safe full history (series[:-horizon]) used by the
+    # SeriesAnalyst. The .tsf filenames do NOT follow the uppercased result-folder naming
+    # (e.g. results "NN5_WEEKLY_DATASET" ↔ source "nn5_weekly_dataset.tsf"; "ETTH1" ↔
+    # "ETTH1.tsf"), so pass the path explicitly to avoid any mapping ambiguity.
+    original_tsf_path = "../forecasting_datasets/nn5_weekly_dataset.tsf"
 
-    # ── V2: SeriesAnnotator → StrategySelector (temperature=0, reproducible) ──
+    # ── V3: SeriesAnalyst → ModelCritic (prune) → CombinationArchitect (robust + DM gate) ──
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
         use_llm=True,
-        series_annotator_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
-        strategy_selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+        series_analyst_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+        model_critic_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+        combination_architect_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
         debug=False,
         rolling="expanding",
         train_window=3,
         llm_logs=True,
-        version="v2_annotations",
+        version="v3_pruning",
+        original_tsf_path=original_tsf_path,
     )
+
+    # ── V2 (legacy): SeriesAnnotator → StrategySelector ──
+    # exec_dataset_orchestrator(
+    #     models,
+    #     dataset=dataset,
+    #     use_llm=True,
+    #     series_annotator_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     strategy_selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     debug=False,
+    #     rolling="expanding",
+    #     train_window=3,
+    #     llm_logs=True,
+    #     version="v2_annotations",
+    # )
 
     # ── V1 (legacy): PatternAnalyst + Proposer + Skeptic + Statistician ──────
     # exec_dataset_orchestrator(

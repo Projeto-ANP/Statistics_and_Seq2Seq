@@ -132,9 +132,25 @@ def predict_final_from_context(
         arr = np.asarray(final_preds[m], dtype=float)
         final_matrix[j, : min(horizon, len(arr))] = arr[:horizon]
 
+    # Pruning (V3): restrict to the surviving subset so the final prediction uses the
+    # exact same pool the strategy was validated on. Mirrors strategies.generate_combined_predictions.
+    survivors = candidate.params.get("survivors")
+    pruned_models: List[str] = []
+    keep_idx = list(range(len(model_names)))
+    if isinstance(survivors, (list, tuple)) and survivors:
+        sel = [j for j, m in enumerate(model_names) if m in set(survivors)]
+        if len(sel) >= 1:
+            keep_idx = sel
+            pruned_models = [m for j, m in enumerate(model_names) if j not in set(sel)]
+            model_names = [model_names[j] for j in keep_idx]
+            final_matrix = final_matrix[keep_idx, :]
+
     method = str(candidate.params.get("method", "mean")).strip().lower()
 
     debug: Dict[str, Any] = {"method": method}
+    if pruned_models:
+        debug["survivors"] = list(model_names)
+        debug["pruned_models"] = pruned_models
 
     if method == "mean":
         out = np.nanmean(final_matrix, axis=0)
@@ -164,7 +180,7 @@ def predict_final_from_context(
 
     # Learners trained on ALL validation windows (no leakage; final test has no y_true)
     y_true = data.y_true
-    y_preds = data.y_preds
+    y_preds = data.y_preds[:, keep_idx, :] if pruned_models else data.y_preds
     n_windows, n_models, _ = y_preds.shape
 
     if method == "best_single":
@@ -433,6 +449,31 @@ def predict_final_from_context(
             for h in range(horizon)
         }
         debug["weights_by_horizon"] = weights_by_h
+        return {"result": out.tolist(), "debug": debug}
+
+    if method == "double_shrinkage_per_horizon":
+        l2 = float(candidate.params.get("l2", 50.0))
+        lambda_eq = float(candidate.params.get("shrinkage", 0.5))
+        lambda_eq = min(max(lambda_eq, 0.0), 1.0)
+        top_k = int(candidate.params.get("top_k", n_models))
+        top_k = max(1, min(top_k, n_models))
+
+        out = np.full(horizon, np.nan, dtype=float)
+        weights_by_h: Dict[str, Dict[str, float]] = {}
+        uniform = np.ones(n_models, dtype=float) / float(n_models)
+
+        for h in range(horizon):
+            rmse = np.sqrt(np.nanmean((y_preds[:, :, h] - y_true[:, h][:, None]) ** 2, axis=0))
+            order = np.argsort(rmse)
+            keep = order[:top_k]
+            w_ridge_small = _ridge_weights(y_true[:, h], y_preds[:, keep, h], l2=l2)
+            w_ridge = np.zeros(n_models, dtype=float)
+            w_ridge[keep] = w_ridge_small
+            w = (1.0 - lambda_eq) * w_ridge + lambda_eq * uniform
+            out[h] = float(np.nansum(w * final_matrix[:, h]))
+            weights_by_h[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
+
+        debug.update({"l2": l2, "lambda_eq": lambda_eq, "top_k": top_k, "weights_by_horizon": weights_by_h})
         return {"result": out.tolist(), "debug": debug}
 
     # fallback

@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from orchestrator_langchain.context import get_context, set_context
 
-from orchestrator.data_contract import load_validation_from_context
+from orchestrator.data_contract import load_validation_from_context, load_history_from_context
 from orchestrator.diagnostics import (
     bias_per_horizon,
     drift_signal,
@@ -19,10 +19,12 @@ from orchestrator.diagnostics import (
     heteroscedasticity_ratio,
     hurst_rs,
     ljung_box_pvalue,
+    model_confidence_set,
     rank_stability_kendall,
     spectral_entropy,
     tie_break_analysis,
 )
+from orchestrator.features import compute_series_features
 from orchestrator.evaluator import EvaluationConfig, evaluate_all
 from orchestrator.metrics import MetricConfig, mape_safe, pocid_within_sequence, rmse_safe, smape_safe
 from orchestrator.schemas import parse_candidates
@@ -2205,3 +2207,299 @@ def _recommend_score_preset(s: Dict[str, Any]) -> Dict[str, Any]:
     else:
         preset, reason = "balanced", "metrics well-balanced"
     return {"recommended_preset": preset, "reason": reason, "available_presets": list(SCORE_PRESETS.keys())}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V3 PIPELINE TOOLS — SeriesAnalyst → ModelCritic (pruning) → CombinationArchitect
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _infer_seasonal_period(dataset_name: str, horizon: int) -> int:
+    """Guess the seasonal period from the dataset name (falls back to horizon-based)."""
+
+    name = str(dataset_name or "").upper()
+    if "WEEKLY" in name:
+        return 52
+    if "MONTHLY" in name or "MENSAL" in name:
+        return 12
+    if "HOURLY" in name:
+        return 24
+    if "DAILY" in name:
+        return 7
+    if "ETTH" in name:
+        return 24
+    if "ETTM" in name:
+        return 96
+    return max(2, int(horizon))
+
+
+def series_analysis_brief_tool() -> str:
+    """V3 tool for the SeriesAnalyst.
+
+    Bundles (a) deterministic series features computed on the recent observed history
+    (concatenated validation windows, leakage-safe) and (b) a compact per-model
+    validation summary. The agent reads this to produce a structured SeriesProfile.
+    """
+
+    config_json = get_context("config_json_for_proposer", "")
+    summary = _build_validation_summary(config_json=config_json)
+    dataset_name = get_context("dataset_name", "")
+    period = _infer_seasonal_period(dataset_name, int(summary.get("horizon", 0) or 0))
+
+    history = load_history_from_context()
+    features = compute_series_features(history, period=period)
+
+    compact_summary = {
+        "n_windows": summary.get("n_windows"),
+        "horizon": summary.get("horizon"),
+        "n_models": summary.get("n_models"),
+        "top5_by_rmse": summary.get("models", [])[:5],
+        "best_per_horizon": summary.get("best_per_horizon"),
+        "disagreement": summary.get("disagreement"),
+    }
+
+    out = {
+        "dataset_name": dataset_name,
+        "series_features": features,
+        "validation_summary": compact_summary,
+        "feature_glossary": {
+            "forecastability": "1 - spectral_entropy; >0.6 predictable, <0.4 near-noise (Goerg 2013)",
+            "trend_strength": "STL trend strength in [0,1] (tsfeatures; Montero-Manso et al. 2020)",
+            "seasonal_strength": "STL seasonal strength in [0,1]",
+            "hurst": ">0.5 persistent/trending, ~0.5 random walk, <0.5 mean-reverting",
+            "adf_pvalue": "<0.05 stationary",
+            "variance_ratio_halves": ">>1 or <<1 => non-stationary variance / possible regime change",
+        },
+        "output_schema": {
+            "trend": {"direction": "up|down|flat", "strength": "strong|moderate|weak"},
+            "seasonality": {"present": True, "strength": "strong|moderate|weak|none"},
+            "noise": {"level": "low|medium|high", "forecastability": 0.0, "unpredictable": False},
+            "regime": {"stationary": True, "structural_break_suspected": False},
+            "combination_recommendation": {
+                "strategy_type": "baseline|selection|weighted|stacking",
+                "regularization": "low|medium|high",
+            },
+            "evidence": ["feature=value → interpretation"],
+            "confidence": "high|medium|low",
+            "narrative": "2-3 sentences",
+        },
+    }
+
+    set_context("orchestrator_series_analysis", out)
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("series_analysis_brief_tool")
+    set_context("tools_called", tools_called)
+    return json.dumps(out, indent=2, default=str)
+
+
+def _per_model_diagnostics(data) -> Dict[str, Any]:
+    """Per-model diagnostics for the ModelCritic: per-window RMSE, drift, bias,
+    error-correlation matrix, and Model Confidence Set membership."""
+
+    y_true = np.asarray(data.y_true, dtype=float)
+    y_preds = np.asarray(data.y_preds, dtype=float)
+    n_windows, n_models, horizon = y_preds.shape
+    names = list(data.model_names)
+
+    per_model: Dict[str, Any] = {}
+    losses_by_model: Dict[str, np.ndarray] = {}
+    resid_by_model: Dict[str, np.ndarray] = {}
+
+    for j, name in enumerate(names):
+        rmse_per_window: List[float] = []
+        for w in range(n_windows):
+            err = y_preds[w, j, :] - y_true[w, :]
+            rmse_per_window.append(float(np.sqrt(np.nanmean(err ** 2))))
+        resid = (y_preds[:, j, :] - y_true).reshape(-1)
+        resid_by_model[name] = resid
+        losses_by_model[name] = resid ** 2
+        drift = drift_signal(rmse_per_window)
+        per_model[name] = {
+            "rmse_mean": float(np.nanmean(rmse_per_window)),
+            "rmse_per_window": [round(x, 4) for x in rmse_per_window],
+            "rmse_std": float(np.nanstd(rmse_per_window)),
+            "bias_mean": float(np.nanmean(y_preds[:, j, :] - y_true)),
+            "drift_slope": float(drift.get("slope", float("nan"))) if isinstance(drift, dict) else float("nan"),
+        }
+
+    # Error-correlation matrix (redundancy detection): high pairwise corr => redundant models.
+    resid_mat = np.column_stack([resid_by_model[n] for n in names])
+    try:
+        corr = error_similarity_matrix(resid_mat)
+        if isinstance(corr, dict):
+            corr_matrix = corr
+        else:
+            corr_matrix = {"matrix": np.asarray(corr).tolist()}
+    except Exception:
+        corr_matrix = {}
+
+    # Highly-correlated pairs (|rho| > 0.95) for redundancy pruning hints.
+    redundant_pairs: List[Dict[str, Any]] = []
+    try:
+        cm = np.corrcoef(resid_mat, rowvar=False)
+        for a in range(n_models):
+            for b in range(a + 1, n_models):
+                rho = float(cm[a, b])
+                if np.isfinite(rho) and abs(rho) > 0.95:
+                    worse = names[a] if per_model[names[a]]["rmse_mean"] >= per_model[names[b]]["rmse_mean"] else names[b]
+                    redundant_pairs.append({"pair": [names[a], names[b]], "corr": round(rho, 3), "worse_model": worse})
+    except Exception:
+        pass
+
+    mcs = model_confidence_set(losses_by_model, alpha=0.10)
+
+    return {
+        "per_model": per_model,
+        "model_confidence_set": {
+            "superior_set": mcs.get("superior_set", names),
+            "eliminated_order": mcs.get("eliminated_order", []),
+            "best_model": mcs.get("best_model", ""),
+            "available": mcs.get("available", False),
+        },
+        "redundant_pairs": redundant_pairs,
+        "error_correlation": corr_matrix,
+    }
+
+
+def model_critic_brief_tool() -> str:
+    """V3 tool for the ModelCritic. Provides per-model diagnostics + Model Confidence Set
+    (Hansen et al. 2011) + redundancy pairs so the agent can decide which base models to PRUNE.
+
+    The pipeline enforces a statistical floor on top of the agent's decision: never prune a
+    model in the MCS superior set unless it is redundant, and keep >= min_keep models.
+    """
+
+    data = load_validation_from_context()
+    diag = _per_model_diagnostics(data)
+    n_models = int(data.n_models)
+    min_keep = max(3, int(round(np.sqrt(max(n_models, 1)))))
+    min_keep = min(min_keep, n_models)
+
+    series_profile = get_context("series_profile", {})
+
+    out = {
+        "n_models": n_models,
+        "n_windows": int(data.n_windows),
+        "diagnostics": diag,
+        "series_profile": series_profile,
+        "pruning_rules": {
+            "min_keep": min_keep,
+            "floor": (
+                "NEVER prune a model in diagnostics.model_confidence_set.superior_set unless it appears "
+                "as worse_model in redundant_pairs. Keep at least min_keep models. The pipeline enforces "
+                "this floor regardless of your output."
+            ),
+            "prune_if": (
+                "Prune models with high rmse_mean AND high rmse_std (bad and unstable), or models flagged "
+                "as worse_model in redundant_pairs (correlated duplicates)."
+            ),
+            "literature": (
+                "Kourentzes et al. (2019) Treating and Pruning; Wang et al. (2023) forecast trimming; "
+                "Samuels & Sekkel (2017) MCS + forecast combination."
+            ),
+        },
+        "output_schema": {
+            "prune_models": ["model_name_to_remove"],
+            "reasoning": {"model_name": "why pruned (cite rmse_mean/rmse_std/redundant_pairs)"},
+            "confidence": "high|medium|low",
+        },
+    }
+
+    set_context("orchestrator_model_critic_brief", out)
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("model_critic_brief_tool")
+    set_context("tools_called", tools_called)
+    return json.dumps(out, indent=2, default=str)
+
+
+def combination_architect_brief_tool() -> str:
+    """V3 tool for the CombinationArchitect. Operates over the SURVIVING pool (after pruning)
+    and offers a small set of robust combination regimes with a recommended shrinkage intensity.
+
+    The default regime is `robust` (double_shrinkage toward equal weights), which the pipeline
+    anchors against pruned-equal-weights via a DM significance gate.
+    """
+
+    config_json = get_context("config_json_for_proposer", "")
+    summary = _build_validation_summary(config_json=config_json)
+    recommended = _recommended_knobs(summary)
+    preset_rec = _recommend_score_preset(summary)
+    series_profile = get_context("series_profile", {})
+    survivors = get_context("survivors", [])
+    n_windows = int(summary.get("n_windows", 0) or 0)
+
+    # With very few windows, push lambda_eq high (toward equal weights) — the puzzle remedy.
+    if n_windows <= 3:
+        lambda_default = 0.7
+    elif n_windows <= 6:
+        lambda_default = 0.5
+    else:
+        lambda_default = 0.3
+
+    regimes = {
+        "robust": {
+            "method": "double_shrinkage_per_horizon",
+            "description": "Ridge (toward zero) + convex shrinkage toward equal weights over survivors. DEFAULT.",
+            "knobs": {"shrinkage": lambda_default, "l2": recommended.get("l2", 50.0), "top_k": recommended.get("top_k")},
+            "literature": "Liu (2024) double shrinkage; Claeskens et al. (2016) puzzle.",
+        },
+        "adaptive": {
+            "method": "ade_dynamic_error_per_horizon",
+            "description": "Recency-weighted dynamic errors. Use ONLY if concept_drift suspected.",
+            "knobs": {"beta": 0.5, "eta": 1.0, "trim_ratio": 1.0},
+            "literature": "Cerqueira et al. (2017) ADE; Gaillard et al. (2015).",
+        },
+        "structured": {
+            "method": "stl_hierarchical_stacking",
+            "description": "STL component-wise stacking. Use ONLY if models_redundant AND seasonality present.",
+            "knobs": {"period": _infer_seasonal_period(get_context("dataset_name", ""), int(summary.get("horizon", 0) or 0)), "shrinkage": recommended.get("shrinkage", 0.3)},
+            "literature": "Cleveland et al. (1990) STL; Hyndman et al. (2011).",
+        },
+        "selection": {
+            "method": "topk_mean_per_horizon",
+            "description": "Top-k equal mean per horizon. Use if horizon-heterogeneous winners.",
+            "knobs": {"top_k": recommended.get("top_k")},
+            "literature": "Timmermann (2006); Stock & Watson (2004).",
+        },
+    }
+
+    out = {
+        "survivors": survivors,
+        "n_survivors": len(survivors) if isinstance(survivors, list) else None,
+        "series_profile": series_profile,
+        "validation_summary": {
+            "n_windows": summary.get("n_windows"),
+            "horizon": summary.get("horizon"),
+            "disagreement": summary.get("disagreement"),
+        },
+        "regimes": regimes,
+        "recommended_regime": "robust",
+        "recommended_lambda_eq": lambda_default,
+        "score_presets": SCORE_PRESETS,
+        "score_preset_recommendation": preset_rec,
+        "gate_note": (
+            "Whatever regime you pick, the pipeline compares it against pruned_equal_weights using a "
+            "Diebold-Mariano test. If your regime does not significantly beat pruned-equal-weights on "
+            "the validation windows, the pipeline falls back to pruned_equal_weights. So only escalate "
+            "beyond 'robust' when the SeriesProfile gives a concrete reason."
+        ),
+        "output_schema": {
+            "regime": "robust|adaptive|structured|selection",
+            "shrinkage_lambda": lambda_default,
+            "score_preset": preset_rec["recommended_preset"],
+            "reasoning": "cite series_profile fields + survivors that justify this regime",
+            "confidence": "high|medium|low",
+        },
+    }
+
+    set_context("orchestrator_architect_brief", out)
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("combination_architect_brief_tool")
+    set_context("tools_called", tools_called)
+    return json.dumps(out, indent=2, default=str)

@@ -437,3 +437,120 @@ def tie_break_analysis(
         "diebold_mariano": dm,
         "statistically_tied": bool(statistically_tied),
     }
+
+
+def model_confidence_set(
+    losses_by_model: Dict[str, np.ndarray],
+    alpha: float = 0.10,
+    n_boot: int = 1000,
+    seed: int = 0,
+) -> Dict[str, Any]:
+    """Model Confidence Set (Hansen, Lunde & Nason 2011, Econometrica 79(2):453-497).
+
+    Iteratively eliminates the worst model until the equal-predictive-ability (EPA)
+    null cannot be rejected for the surviving set, using the range statistic
+        T_R = max_{i,j in M} |t_ij|,   t_ij = mean(L_i - L_j) / sd_boot(mean(L_i - L_j)),
+    with the bootstrap distribution of T_R simulated by resampling the loss rows.
+    The elimination rule removes the model with the largest standardized excess loss.
+
+    Args:
+        losses_by_model: {model_name: 1-D array of per-observation losses (e.g. squared errors)}.
+        alpha: confidence level; survivors form the (1-alpha) MCS "superior set".
+        n_boot: bootstrap replications.
+
+    Returns dict: superior_set (list), eliminated_order (list), p_values (per eliminated model),
+    best_model, and `available` flag. Robust to tiny samples — never raises.
+    """
+
+    names = [n for n, v in losses_by_model.items() if v is not None and np.asarray(v).size > 0]
+    if len(names) < 2:
+        return {"available": False, "superior_set": names, "eliminated_order": [], "p_values": {}}
+
+    # Align all loss vectors to the common minimum length (drop NaN rows jointly).
+    arrs = [np.asarray(losses_by_model[n], dtype=float).reshape(-1) for n in names]
+    n_obs = min(a.size for a in arrs)
+    if n_obs < 3:
+        # Too few observations for bootstrap inference: fall back to mean-loss ranking only.
+        mean_losses = {n: float(np.nanmean(a)) for n, a in zip(names, arrs)}
+        ordered = sorted(names, key=lambda n: mean_losses[n])
+        return {
+            "available": False,
+            "reason": "n_obs<3",
+            "superior_set": names,
+            "eliminated_order": [],
+            "p_values": {},
+            "best_model": ordered[0],
+            "mean_losses": mean_losses,
+        }
+
+    L = np.column_stack([a[:n_obs] for a in arrs])  # (n_obs, n_models)
+    row_mask = np.all(np.isfinite(L), axis=1)
+    L = L[row_mask]
+    n_obs = L.shape[0]
+    if n_obs < 3:
+        mean_losses = {names[j]: float(np.mean(L[:, j])) for j in range(len(names))}
+        ordered = sorted(range(len(names)), key=lambda j: mean_losses[names[j]])
+        return {
+            "available": False,
+            "reason": "n_obs<3_after_nan",
+            "superior_set": names,
+            "eliminated_order": [],
+            "p_values": {},
+            "best_model": names[ordered[0]],
+            "mean_losses": mean_losses,
+        }
+
+    rng = np.random.default_rng(int(seed))
+    n_boot = int(max(200, min(n_boot, 5000)))
+    boot_idx = rng.integers(0, n_obs, size=(n_boot, n_obs))
+
+    active = list(range(len(names)))
+    eliminated_order: List[str] = []
+    p_values: Dict[str, float] = {}
+
+    while len(active) > 1:
+        sub = L[:, active]  # (n_obs, k)
+        k = sub.shape[1]
+        col_means = sub.mean(axis=0)  # (k,)
+        grand = col_means.mean()
+
+        # Bootstrap means for each active model.
+        boot_means = sub[boot_idx, :].mean(axis=1)  # (n_boot, k)
+        boot_grand = boot_means.mean(axis=1, keepdims=True)  # (n_boot, 1)
+
+        # Standardized excess loss d_i = mean_i - grand_mean ; sd from bootstrap.
+        d = col_means - grand
+        boot_d = boot_means - boot_grand  # (n_boot, k)
+        sd = boot_d.std(axis=0)
+        sd = np.where(sd > 1e-12, sd, 1e-12)
+        t = d / sd  # (k,)
+
+        # Bootstrap distribution of T_R under the EPA null: recenter the bootstrap
+        # excess losses around the observed ones so they simulate equal mean loss.
+        t_boot = (boot_d - d[None, :]) / sd[None, :]
+        T_R_obs = float(np.max(np.abs(t)))
+        T_R_boot = np.max(np.abs(t_boot), axis=1)
+        p_val = float(np.mean(T_R_boot >= T_R_obs))
+
+        if p_val > float(alpha):
+            break  # cannot reject EPA: the active set is the MCS
+
+        worst_local = int(np.argmax(t))  # largest standardized excess loss
+        worst_global = active[worst_local]
+        eliminated_order.append(names[worst_global])
+        p_values[names[worst_global]] = p_val
+        active.pop(worst_local)
+
+    superior_set = [names[j] for j in active]
+    mean_losses = {names[j]: float(np.mean(L[:, j])) for j in range(len(names))}
+    best_model = min(mean_losses, key=mean_losses.get)
+    return {
+        "available": True,
+        "alpha": float(alpha),
+        "n_obs": int(n_obs),
+        "superior_set": superior_set,
+        "eliminated_order": eliminated_order,
+        "p_values": p_values,
+        "best_model": best_model,
+        "mean_losses": mean_losses,
+    }

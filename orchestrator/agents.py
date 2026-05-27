@@ -12,4 +12,7 @@ from orchestrator_langchain.agents import (
     create_orchestrator_agent,
     create_series_annotator_agent,
     create_strategy_selector_agent,
+    create_series_analyst_agent,
+    create_model_critic_agent,
+    create_combination_architect_agent,
 )

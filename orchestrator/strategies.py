@@ -228,6 +228,19 @@ def generate_combined_predictions(
 
     y_true = np.asarray(data_y_true, dtype=float)
     y_preds = np.asarray(data_y_preds, dtype=float)
+    model_names = list(model_names)
+
+    # Pruning (V3): restrict the model axis to the surviving subset chosen by the
+    # ModelCritic agent. Combining only the survivors is the cheapest, well-supported
+    # remedy for the forecast combination puzzle (Kourentzes et al. 2019; Wang et al. 2023).
+    survivors = candidate.params.get("survivors")
+    pruned_models: List[str] = []
+    if isinstance(survivors, (list, tuple)) and survivors:
+        keep_idx = [j for j, m in enumerate(model_names) if m in set(survivors)]
+        if len(keep_idx) >= 1:
+            pruned_models = [m for j, m in enumerate(model_names) if j not in set(keep_idx)]
+            y_preds = y_preds[:, keep_idx, :]
+            model_names = [model_names[j] for j in keep_idx]
 
     n_windows, n_models, horizon = y_preds.shape
 
@@ -236,6 +249,9 @@ def generate_combined_predictions(
         "method": method,
         "rolling": {"mode": rolling_cfg.mode, "train_window": rolling_cfg.train_window},
     }
+    if pruned_models:
+        debug["survivors"] = list(model_names)
+        debug["pruned_models"] = pruned_models
 
     combined = np.full((n_windows, horizon), np.nan, dtype=float)
 
@@ -638,6 +654,49 @@ def generate_combined_predictions(
                 last_weights["residual"] = {model_names[j]: float(w_R[j]) for j in range(n_models)}
 
         debug["weights_last_window_by_component"] = last_weights
+        return combined, debug
+
+    if method == "double_shrinkage_per_horizon":
+        # Double shrinkage (Liu 2024, OBES; Frazier et al. 2023): shrink the estimated
+        # combination weights toward ZERO via ridge (l2) AND toward EQUAL weights via the
+        # convex mix `lambda_eq`. This minimizes weight-estimation variance — the documented
+        # cause of the forecast combination puzzle (Claeskens et al. 2016) — and is the
+        # default robust regime over the pruned pool.
+        l2 = float(candidate.params.get("l2", 50.0))
+        lambda_eq = float(candidate.params.get("shrinkage", 0.5))
+        lambda_eq = min(max(lambda_eq, 0.0), 1.0)
+        top_k = int(candidate.params.get("top_k", n_models))
+        top_k = max(1, min(top_k, n_models))
+        debug.update({"l2": l2, "lambda_eq": lambda_eq, "top_k": top_k})
+
+        last_weights: Dict[str, Dict[str, float]] = {}
+        uniform = _uniform_weights(n_models)
+
+        for i in range(n_windows):
+            tr = _train_slice(i, rolling_cfg)
+            if tr.stop - tr.start <= 0:
+                combined[i, :] = np.nanmean(y_preds[i, :, :], axis=0)
+                continue
+
+            for h in range(horizon):
+                y_t = y_true[tr, h]
+                X = y_preds[tr, :, h]
+                rmse = np.sqrt(np.nanmean((X - y_t[:, None]) ** 2, axis=0))
+                order = np.argsort(rmse)
+                keep = order[:top_k]
+
+                # Shrink toward zero via ridge, projected to the simplex.
+                w_ridge_small = _ridge_weights(y_t, X[:, keep], l2=l2, nonneg_simplex=True)
+                w_ridge = np.zeros(n_models, dtype=float)
+                w_ridge[keep] = w_ridge_small
+                # Shrink toward equal weights.
+                w = (1.0 - lambda_eq) * w_ridge + lambda_eq * uniform
+                combined[i, h] = float(np.nansum(w * y_preds[i, :, h]))
+
+                if i == n_windows - 1:
+                    last_weights[str(h)] = {model_names[j]: float(w[j]) for j in range(n_models)}
+
+        debug["weights_last_window_by_horizon"] = last_weights
         return combined, debug
 
     # Unknown method: fallback
