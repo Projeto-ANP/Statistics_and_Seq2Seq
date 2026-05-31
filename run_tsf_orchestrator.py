@@ -957,13 +957,8 @@ if __name__ == "__main__":
     ]
 
     dataset = "NN5_WEEKLY_DATASET"
-    # Original .tsf for the leakage-safe full history (series[:-horizon]) used by the
-    # SeriesAnalyst. The .tsf filenames do NOT follow the uppercased result-folder naming
-    # (e.g. results "NN5_WEEKLY_DATASET" ↔ source "nn5_weekly_dataset.tsf"; "ETTH1" ↔
-    # "ETTH1.tsf"), so pass the path explicitly to avoid any mapping ambiguity.
     original_tsf_path = "../forecasting_datasets/nn5_weekly_dataset.tsf"
-
-    # ── V3: SeriesAnalyst → ModelCritic (prune) → CombinationArchitect (robust + DM gate) ──
+    
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
@@ -978,33 +973,3 @@ if __name__ == "__main__":
         version="v3_pruning",
         original_tsf_path=original_tsf_path,
     )
-
-    # ── V2 (legacy): SeriesAnnotator → StrategySelector ──
-    # exec_dataset_orchestrator(
-    #     models,
-    #     dataset=dataset,
-    #     use_llm=True,
-    #     series_annotator_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
-    #     strategy_selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
-    #     debug=False,
-    #     rolling="expanding",
-    #     train_window=3,
-    #     llm_logs=True,
-    #     version="v2_annotations",
-    # )
-
-    # ── V1 (legacy): PatternAnalyst + Proposer + Skeptic + Statistician ──────
-    # exec_dataset_orchestrator(
-    #     models,
-    #     dataset=dataset,
-    #     use_llm=True,
-    #     proposer_model=_utils.ModelConfig(model="gemma4:26b", temperature=0.7),
-    #     skeptic_model=_utils.ModelConfig(model="gpt-oss:20b", temperature=0.3),
-    #     statistician_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.2),
-    #     pattern_analyst_model=_utils.ModelConfig(model="qwen3.5:27b-q4_K_M", temperature=0.2),
-    #     debug=False,
-    #     rolling="expanding",
-    #     train_window=3,
-    #     llm_logs=True,
-    #     version="v1_pattern",
-    # )

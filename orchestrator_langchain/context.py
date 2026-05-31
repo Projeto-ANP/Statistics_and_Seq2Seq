@@ -1,6 +1,7 @@
 from typing import List, Any, Optional
 import os
 import re
+import numpy as np
 import pandas as pd
 CONTEXT_MEMORY = {}
 
@@ -116,6 +117,31 @@ def resolve_tsf_path(tsf_path: Optional[str], dataset: Optional[str], base_dir: 
     return None
 
 
+def _apply_dataset_filter(df_tsf, dataset: Optional[str]):
+    """Per-dataset row filter that mirrors the same series-pruning the base regressors applied.
+
+    Why: if the regressors dropped some series before training, the orchestrator's CSV
+    `dataset_index = i` indexes the FILTERED .tsf — so `df.iloc[i]` on the raw .tsf would
+    point at the wrong series. Only ANP_MONTHLY needs this today: its regressors dropped any
+    series where some non-overlapping 24-point window had >50% zeros (mes_11_venda_mensal.tsf
+    cleanup). All other datasets pass through unchanged.
+    """
+    if not dataset or str(dataset).upper() != "ANP_MONTHLY":
+        return df_tsf
+    def _should_remove(series, window_size: int = 24) -> bool:
+        arr = np.asarray(series)
+        for i in range(0, len(arr), window_size):
+            window = arr[i:i + window_size]
+            if len(window) > 0 and float(np.mean(window == 0)) > 0.5:
+                return True
+        return False
+    try:
+        mask = df_tsf["series_value"].apply(_should_remove)
+        return df_tsf[~mask].reset_index(drop=True)
+    except Exception:
+        return df_tsf
+
+
 def load_original_series_history(dataset_index, horizon: int, tsf_path: Optional[str] = None, dataset: Optional[str] = None, base_dir: str = "../forecasting_datasets") -> Optional[List[float]]:
     """Leakage-safe historical series for one series, read from its original .tsf.
 
@@ -137,6 +163,7 @@ def load_original_series_history(dataset_index, horizon: int, tsf_path: Optional
     try:
         loader = DatasetLoader()
         df_tsf, _ = loader.read_tsf(path_tsf=path)
+        df_tsf = _apply_dataset_filter(df_tsf, dataset)
         idx = int(dataset_index)
         if idx < 0 or idx >= len(df_tsf):
             return None
