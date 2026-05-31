@@ -20,7 +20,7 @@ METHODS = {
     "mean":         f"{BASE}/mean",
     "median":       f"{BASE}/median",
     "orchestrator_v1": f"{BASE}/orchestrator_llm_v1_pattern",
-    "orchestrator_v2": f"{BASE}/orchestrator_llm_v2_annotations",
+    "orchestrator_v3": f"{BASE}/orchestrator_llm_v3_pruning",
     "FFORMA":       f"{BASE}/FFORMA",
     "ADE":        f"{BASE}/ADE",
     
