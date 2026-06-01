@@ -149,8 +149,14 @@ COLS_V3 = [
 
 
 def cols_for_version(version: str):
-    """Active CSV schema for a pipeline version: base + (V3 | legacy V1/V2)."""
-    if str(version).startswith("v3"):
+    """Active CSV schema for a pipeline version.
+
+    v3_* and v4_* both use the V3+Sprint-1 schema (Sprint-1 lives inside run_llm_pipeline_v3
+    with the original V3 contract preserved + new columns appended). v4_* is an alias that
+    lets you tag the experiment differently in the output path while reusing the same code.
+    """
+    v = str(version).lower()
+    if v.startswith("v3") or v.startswith("v4"):
         return COLS_BASE + COLS_V3
     return COLS_BASE + COLS_LEGACY
 
@@ -277,7 +283,9 @@ def exec_dataset_orchestrator(
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:
-                _is_v3 = version.startswith("v3")
+                # v3_* and v4_* both route to run_langchain_pipeline_v3 (Sprint-1 enhancements
+                # live inside that function: pool curation + dual anchor + relaxed DM gate).
+                _is_v3 = version.startswith("v3") or version.startswith("v4")
                 _is_v2 = version.startswith("v2")
                 if _is_v3:
                     result = run_langchain_pipeline_v3(
