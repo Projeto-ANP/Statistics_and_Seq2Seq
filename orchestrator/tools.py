@@ -2372,6 +2372,18 @@ def model_critic_brief_tool() -> str:
     """
 
     data = load_validation_from_context()
+    # Sprint-1: if the V3 pipeline pre-curated the pool by error-correlation, restrict the
+    # diagnostics shown to the LLM to the surviving cluster representatives. The full pool is
+    # preserved in `context['predictions']` and reused by full_mean/full_median baselines.
+    curated_idx = get_context("pool_curated_indices")
+    if isinstance(curated_idx, list) and curated_idx and len(curated_idx) < data.n_models:
+        from orchestrator.data_contract import ValidationData as _VD
+        idx = [int(i) for i in curated_idx]
+        data = _VD(
+            y_true=data.y_true,
+            y_preds=data.y_preds[:, idx, :],
+            model_names=[data.model_names[i] for i in idx],
+        )
     diag = _per_model_diagnostics(data)
     n_models = int(data.n_models)
     min_keep = max(3, int(round(np.sqrt(max(n_models, 1)))))
@@ -2384,6 +2396,7 @@ def model_critic_brief_tool() -> str:
         "n_windows": int(data.n_windows),
         "diagnostics": diag,
         "series_profile": series_profile,
+        "pool_curation_report": get_context("pool_curated_report", {}),
         "pruning_rules": {
             "min_keep": min_keep,
             "floor": (

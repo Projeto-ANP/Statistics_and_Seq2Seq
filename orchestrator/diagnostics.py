@@ -554,3 +554,138 @@ def model_confidence_set(
         "best_model": best_model,
         "mean_losses": mean_losses,
     }
+
+
+def curate_pool_by_error_correlation(
+    y_true: "np.ndarray",
+    y_preds: "np.ndarray",
+    model_names: "list[str]",
+    threshold: float = 0.92,
+    min_keep: int = 6,
+) -> dict:
+    """Upstream pool curation by error-correlation clustering.
+
+    Why: pools that mix many wavelet/transform variants of the same base model (CWT_rf, DWT_rf,
+    FT_rf, …) produce highly-correlated error vectors, which inflates Var(ŵ) in any weighted
+    combination ("combination puzzle"; Claeskens et al. 2016). Reducing the pool to ONE
+    representative per error-correlation cluster before fitting weights cuts that variance —
+    typically improving both the equal-weights anchor and any learner. Reference: Cawood &
+    van Zyl (2024) on high-correlation pool elimination; Kourentzes et al. (2019).
+
+    Algorithm:
+      1. Compute the matrix of pairwise Pearson correlations between models' error vectors
+         (flattened across validation windows × horizon).
+      2. Union-find: merge models whose |corr| > threshold into the same cluster.
+      3. In each cluster, keep the model with the smallest validation RMSE; mark the rest as
+         pruned-by-correlation.
+      4. If fewer than `min_keep` survive, restore the lowest-RMSE pruned models until the
+         floor is met (diversity safeguard).
+
+    Args:
+        y_true: shape (n_windows, horizon).
+        y_preds: shape (n_windows, n_models, horizon).
+        model_names: list of model names aligned to axis-1 of y_preds.
+        threshold: |Pearson corr| above which two models are considered redundant. 0.92 is
+            tight enough to keep diverse variants and aggressive enough to cut clear duplicates.
+        min_keep: hard floor on survivor count (diversity).
+
+    Returns:
+        dict with `kept_idx`, `kept_names`, `pruned_idx`, `pruned_names`, `clusters` (mapping
+        survivor → list of cluster members), and `report` (diagnostics for logging).
+    """
+
+    import numpy as np
+
+    yt = np.asarray(y_true, dtype=float)
+    yp = np.asarray(y_preds, dtype=float)
+    n_models = int(yp.shape[1])
+    names = list(model_names)
+
+    if n_models <= min_keep:
+        return {
+            "kept_idx": list(range(n_models)),
+            "kept_names": names,
+            "pruned_idx": [],
+            "pruned_names": [],
+            "clusters": {i: [i] for i in range(n_models)},
+            "report": {"reason": "n_models<=min_keep, no curation", "threshold": threshold, "min_keep": min_keep},
+        }
+
+    # Errors flattened per model: shape (n_models, n_windows*horizon)
+    err = (yp - yt[:, None, :]).transpose(1, 0, 2).reshape(n_models, -1)
+
+    # Per-model RMSE (used to pick representative within cluster)
+    rmse = np.sqrt(np.nanmean(err ** 2, axis=1))
+
+    # Correlation matrix (NaN-safe)
+    finite_mask = np.all(np.isfinite(err), axis=1)
+    corr = np.full((n_models, n_models), np.nan, dtype=float)
+    valid_idx = np.where(finite_mask)[0]
+    if len(valid_idx) >= 2:
+        sub_corr = np.corrcoef(err[valid_idx])
+        for ai, a in enumerate(valid_idx):
+            for bi, b in enumerate(valid_idx):
+                corr[a, b] = sub_corr[ai, bi]
+
+    # Union-find: |corr| > threshold → same cluster
+    parent = list(range(n_models))
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    def _union(a: int, b: int) -> None:
+        pa, pb = _find(a), _find(b)
+        if pa != pb:
+            parent[pa] = pb
+
+    for i in range(n_models):
+        for j in range(i + 1, n_models):
+            c = corr[i, j]
+            if np.isfinite(c) and abs(c) > threshold:
+                _union(i, j)
+
+    # Group by cluster root; pick the model with the smallest RMSE
+    clusters_by_root: dict = {}
+    for i in range(n_models):
+        clusters_by_root.setdefault(_find(i), []).append(i)
+
+    survivors: list = []
+    pruned: list = []
+    survivors_to_cluster: dict = {}
+    for members in clusters_by_root.values():
+        finite_members = [m for m in members if np.isfinite(rmse[m])]
+        pool = finite_members if finite_members else members
+        winner = min(pool, key=lambda m: rmse[m])
+        survivors.append(winner)
+        survivors_to_cluster[winner] = sorted(members)
+        for m in members:
+            if m != winner:
+                pruned.append(m)
+
+    # Diversity safeguard: restore lowest-RMSE pruned until min_keep is met
+    if len(survivors) < min_keep:
+        pruned_sorted = sorted(pruned, key=lambda m: rmse[m] if np.isfinite(rmse[m]) else np.inf)
+        while len(survivors) < min_keep and pruned_sorted:
+            restore = pruned_sorted.pop(0)
+            survivors.append(restore)
+            survivors_to_cluster[restore] = [restore]
+            pruned = [p for p in pruned if p != restore]
+
+    survivors = sorted(set(survivors))
+    pruned = sorted(set(pruned) - set(survivors))
+
+    return {
+        "kept_idx": survivors,
+        "kept_names": [names[i] for i in survivors],
+        "pruned_idx": pruned,
+        "pruned_names": [names[i] for i in pruned],
+        "clusters": {int(s): [int(m) for m in survivors_to_cluster.get(s, [s])] for s in survivors},
+        "report": {
+            "threshold": threshold,
+            "min_keep": min_keep,
+            "n_models_before": n_models,
+            "n_models_after": len(survivors),
+            "n_clusters": len(clusters_by_root),
+        },
+    }

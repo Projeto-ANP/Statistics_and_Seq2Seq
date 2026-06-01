@@ -147,6 +147,28 @@ def trend_direction(x: np.ndarray) -> str:
     return "flat"
 
 
+def _catch22_features(x: np.ndarray) -> Dict[str, float]:
+    """Compute Lubba et al. (2019) catch22 features. Optional dependency: returns {} if
+    pycatch22 isn't installed, allowing the rest of compute_series_features to keep working.
+    The 22 features are the canonical subset of HCTSA that captures most series-level variance
+    and is used as the standard meta-feature input by FFORMA-style meta-learners since 2024.
+    """
+    try:
+        import pycatch22
+    except Exception:
+        return {}
+    if x.size < 8:
+        return {}
+    try:
+        out = pycatch22.catch22_all(x.tolist(), catch24=False)
+        names = out.get("names", []) or []
+        values = out.get("values", []) or []
+        return {f"c22_{name}": (float(v) if v is not None and np.isfinite(float(v)) else float("nan"))
+                for name, v in zip(names, values)}
+    except Exception:
+        return {}
+
+
 def compute_series_features(history: np.ndarray, period: int) -> Dict[str, Any]:
     """Bundle of deterministic features for the SeriesAnalyst.
 
@@ -160,7 +182,7 @@ def compute_series_features(history: np.ndarray, period: int) -> Dict[str, Any]:
     strengths = stl_strengths(x, period=period)
     se = spectral_entropy(x)
 
-    return {
+    base = {
         "n_observations": n,
         "seasonal_period_assumed": int(period),
         "history_too_short_for_period": bool(n < 2 * max(2, int(period))),
@@ -176,3 +198,5 @@ def compute_series_features(history: np.ndarray, period: int) -> Dict[str, Any]:
         "adf_pvalue": adf_pvalue(x),
         "variance_ratio_halves": variance_ratio_halves(x),
     }
+    base.update(_catch22_features(x))
+    return base

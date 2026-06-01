@@ -134,6 +134,13 @@ COLS_V3 = [
     "delta_chosen_vs_full_median",
     "delta_chosen_vs_pruned_mean",
     "delta_pruned_mean_vs_full_mean",
+    # Sprint-1 additions: dual anchor (mean/median) + upstream pool curation
+    "pruned_mean_score",
+    "pruned_median_score",
+    "anchor_choice",
+    "delta_chosen_vs_pruned_median",
+    "pool_curated_size",
+    "pool_curated_removed",
     # V3 think blocks
     "series_analyst_think",
     "model_critic_think",
@@ -442,6 +449,13 @@ def exec_dataset_orchestrator(
         delta_chosen_vs_full_median = np.nan
         delta_chosen_vs_pruned_mean = np.nan
         delta_pruned_mean_vs_full_mean = np.nan
+        # Sprint-1
+        pruned_mean_score = np.nan
+        pruned_median_score = np.nan
+        anchor_choice = ""
+        delta_chosen_vs_pruned_median = np.nan
+        pool_curated_size = np.nan
+        pool_curated_removed_csv = ""
         series_analyst_think = ""
         model_critic_think = ""
         combination_architect_think = ""
@@ -752,12 +766,26 @@ def exec_dataset_orchestrator(
                     full_mean_score = _f("full_mean_score")
                     full_median_score = _f("full_median_score")
                     pruned_equal_weights_score = _f("pruned_equal_weights_score")
+                    pruned_mean_score = _f("pruned_mean_score")
+                    pruned_median_score = _f("pruned_median_score")
+                    anchor_choice = str(_bl3.get("anchor_choice") or "")
                     llm_regime_score = _f("llm_regime_score")
                     chosen_score_v3 = _f("chosen_score")
                     delta_chosen_vs_full_mean = _f("delta_chosen_vs_full_mean")
                     delta_chosen_vs_full_median = _f("delta_chosen_vs_full_median")
                     delta_chosen_vs_pruned_mean = _f("delta_chosen_vs_pruned_mean")
+                    delta_chosen_vs_pruned_median = _f("delta_chosen_vs_pruned_median")
                     delta_pruned_mean_vs_full_mean = _f("delta_pruned_mean_vs_full_mean")
+                    try:
+                        _pcs = _bl3.get("pool_curated_size")
+                        pool_curated_size = int(_pcs) if _pcs is not None else np.nan
+                    except Exception:
+                        pool_curated_size = np.nan
+                    try:
+                        _pcr = _bl3.get("pool_curated_removed") or []
+                        pool_curated_removed_csv = json.dumps(_pcr, ensure_ascii=False)
+                    except Exception:
+                        pool_curated_removed_csv = ""
                     oracle_regime_v3 = str(_bl3.get("oracle_regime") or "")
                     _lpb = _bl3.get("llm_picked_best_regime")
                     llm_picked_best_regime = bool(_lpb) if _lpb is not None else np.nan
@@ -913,6 +941,13 @@ def exec_dataset_orchestrator(
             "delta_chosen_vs_full_median": delta_chosen_vs_full_median,
             "delta_chosen_vs_pruned_mean": delta_chosen_vs_pruned_mean,
             "delta_pruned_mean_vs_full_mean": delta_pruned_mean_vs_full_mean,
+            # Sprint-1
+            "pruned_mean_score": pruned_mean_score,
+            "pruned_median_score": pruned_median_score,
+            "anchor_choice": anchor_choice,
+            "delta_chosen_vs_pruned_median": delta_chosen_vs_pruned_median,
+            "pool_curated_size": pool_curated_size,
+            "pool_curated_removed": pool_curated_removed_csv,
             "series_analyst_think": series_analyst_think,
             "model_critic_think": model_critic_think,
             "combination_architect_think": combination_architect_think,

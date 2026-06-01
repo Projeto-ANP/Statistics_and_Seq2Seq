@@ -87,13 +87,18 @@ def run_langchain_pipeline_v3(
     train_window: int = 3,
     require_tool_call: bool = True,
     llm_logs: bool = True,
-    gate_alpha: float = 0.10,
+    gate_alpha: float = 0.20,
+    pool_curation_threshold: float = 0.92,
+    pool_curation_min_keep: int = 6,
 ) -> Dict[str, Any]:
-    """V3: SeriesAnalyst → ModelCritic (prune) → CombinationArchitect → robust core (DM gate).
+    """V3 (post-Sprint-1): SeriesAnalyst → ModelCritic (prune) → CombinationArchitect →
+    robust core (DM gate against the better of pruned_mean / pruned_median).
 
-    Pruning of bad/redundant base models (Kourentzes et al. 2019; Wang et al. 2023) + double
-    shrinkage toward equal weights (Liu 2024) anchored by a Diebold-Mariano significance gate.
-    All three agents run at temperature=0 for reproducibility.
+    Sprint-1 changes vs. original V3:
+    - Upstream pool curation by error-correlation clustering (Cawood & van Zyl 2024).
+    - Dual anchor: evaluate pruned_mean AND pruned_median, gate against the better one.
+    - DM gate alpha relaxed 0.10 → 0.20 to recover power on 3×horizon residuals.
+    - catch22 features (Lubba et al. 2019) appended to compute_series_features.
     """
     _base.create_series_analyst_agent = lc_agents.create_series_analyst_agent
     _base.create_model_critic_agent = lc_agents.create_model_critic_agent
@@ -109,4 +114,6 @@ def run_langchain_pipeline_v3(
         require_tool_call=require_tool_call,
         llm_logs=llm_logs,
         gate_alpha=gate_alpha,
+        pool_curation_threshold=pool_curation_threshold,
+        pool_curation_min_keep=pool_curation_min_keep,
     )
