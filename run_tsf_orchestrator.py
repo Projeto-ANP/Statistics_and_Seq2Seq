@@ -30,7 +30,7 @@ def extract_values(list_str):
 #     return df
 
 
-# Columns common to every pipeline version (metrics + final-combination traceability).
+# Columns common to EVERY pipeline version (metrics + meta only — these are always populated).
 COLS_BASE = [
     "dataset_index",
     "horizon",
@@ -50,9 +50,15 @@ COLS_BASE = [
     "score_preset",
     "tool_missing",
     "tools_called",
+]
+
+# V3-style traceability columns (final-combination debug, weight maps, candidate ranking).
+# Populated by V1/V2/V3/V4 (all pre-V5 versions). V5 doesn't fill these — its combiners are
+# either uniform-weight (median/trimmed/winsorized/geometric) or use simpler weighting that
+# the dedicated V5 columns (chosen_method, per-method scores, selector_evidence) cover better.
+COLS_V3_TRACE_EXTRAS = [
     "final_candidate_names",
     "final_candidate_count",
-    # Traceability of the final combination applied on final_test
     "best_strategy_name",
     "best_strategy_method",
     "best_strategy_params",
@@ -148,17 +154,54 @@ COLS_V3 = [
 ]
 
 
+# V5 columns: single LLM call, picks 1 of 6 robust combiners (no weights, no pruning).
+COLS_V5 = [
+    # Decision
+    "chosen_method",
+    "effective_method",
+    "safeguard_triggered",
+    "series_type",
+    "selector_confidence",
+    "selector_narrative",
+    # All six validation scores so the paper can show why each was chosen / rejected
+    "simple_median_score",
+    "trimmed_mean_20_score",
+    "winsorized_mean_10_score",
+    "geometric_mean_positive_score",
+    "inverse_rmse_shrunk_score",
+    "single_best_val_score",
+    "best_method_on_validation",
+    "chosen_score",
+    # Series features (subset, for quick analysis without parsing series_profile JSON)
+    "feat_trend_strength",
+    "feat_seasonal_strength",
+    "feat_spectral_entropy",
+    "feat_forecastability",
+    "feat_hurst",
+    "feat_adf_pvalue",
+    # RAG memory diagnostics
+    "rag_n_neighbors",
+    "rag_dominant_neighbor_method",
+    "memory_db_size",
+    # Selector reasoning
+    "selector_think",
+    "selector_evidence",
+]
+
+
 def cols_for_version(version: str):
     """Active CSV schema for a pipeline version.
 
-    v3_* and v4_* both use the V3+Sprint-1 schema (Sprint-1 lives inside run_llm_pipeline_v3
-    with the original V3 contract preserved + new columns appended). v4_* is an alias that
-    lets you tag the experiment differently in the output path while reusing the same code.
+    - v5_* → BASE + COLS_V5 (lean: drops the V3-style trace/extras that V5 doesn't fill).
+    - v3_*/v4_* → BASE + V3_TRACE_EXTRAS + COLS_V3 (V3+Sprint-1 with full debug trace).
+    - v1_*/v2_* → BASE + V3_TRACE_EXTRAS + COLS_LEGACY (V1/V2 with full debug trace).
     """
     v = str(version).lower()
+    if v.startswith("v5"):
+        return COLS_BASE + COLS_V5
     if v.startswith("v3") or v.startswith("v4"):
-        return COLS_BASE + COLS_V3
-    return COLS_BASE + COLS_LEGACY
+        return COLS_BASE + COLS_V3_TRACE_EXTRAS + COLS_V3
+    return COLS_BASE + COLS_V3_TRACE_EXTRAS + COLS_LEGACY
 
 
 def _extract_think_blocks(text: str) -> str:
@@ -213,6 +256,8 @@ def exec_dataset_orchestrator(
     series_analyst_model: _utils.ModelConfig = None,
     model_critic_model: _utils.ModelConfig = None,
     combination_architect_model: _utils.ModelConfig = None,
+    # V5 model (single LLM call selector)
+    selector_model: _utils.ModelConfig = None,
     debug: bool = False,
     rolling: str = "expanding",
     train_window: int = 3,
@@ -225,6 +270,9 @@ def exec_dataset_orchestrator(
     # resolved case-insensitively from the dataset name; if still not found, the pipeline
     # falls back to the validation-window proxy.
     original_tsf_path: str = None,
+    # V5: RAG memory location (SQLite). One file per experiment.
+    v5_memory_db_path: str = "./memory/v5_episodic.db",
+    v5_use_rag: bool = True,
 ):
     # dataset = "ANP_MONTHLY"
     # dataset = "ETTH1"
@@ -255,7 +303,12 @@ def exec_dataset_orchestrator(
 
     from orchestrator_langchain.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
     from orchestrator.pipeline import run_deterministic_pipeline, run_llm_pipeline
-    from orchestrator_langchain.pipeline import run_langchain_pipeline, run_langchain_pipeline_v2, run_langchain_pipeline_v3
+    from orchestrator_langchain.pipeline import (
+        run_langchain_pipeline,
+        run_langchain_pipeline_v2,
+        run_langchain_pipeline_v3,
+        run_langchain_pipeline_v5,
+    )
 
     # Active CSV schema for this version (V3 drops the legacy V1/V2 columns).
     cols_serie = cols_for_version(version)
@@ -283,11 +336,25 @@ def exec_dataset_orchestrator(
         print(f"----- DATASET INDEX: {i} -----")
         if use_llm:
             try:
-                # v3_* and v4_* both route to run_langchain_pipeline_v3 (Sprint-1 enhancements
-                # live inside that function: pool curation + dual anchor + relaxed DM gate).
+                # v5_* → single-LLM Selector + RAG memory (V5)
+                # v3_*/v4_* → V3+Sprint-1 (pool curation + dual anchor + relaxed DM gate)
+                # v2_* → series annotator + strategy selector (legacy)
+                # default → V1 proposer/skeptic/statistician (legacy)
+                _is_v5 = version.startswith("v5")
                 _is_v3 = version.startswith("v3") or version.startswith("v4")
                 _is_v2 = version.startswith("v2")
-                if _is_v3:
+                if _is_v5:
+                    result = run_langchain_pipeline_v5(
+                        selector_model=selector_model,
+                        debug=debug,
+                        rolling_mode=rolling,
+                        train_window=train_window,
+                        require_tool_call=True,
+                        llm_logs=llm_logs,
+                        use_rag=v5_use_rag,
+                        memory_db_path=v5_memory_db_path,
+                    )
+                elif _is_v3:
                     result = run_langchain_pipeline_v3(
                         series_analyst_model=series_analyst_model,
                         model_critic_model=model_critic_model,
@@ -467,6 +534,33 @@ def exec_dataset_orchestrator(
         series_analyst_think = ""
         model_critic_think = ""
         combination_architect_think = ""
+
+        # V5 fields
+        v5_chosen_method = ""
+        v5_effective_method = ""
+        v5_safeguard_triggered = ""
+        v5_series_type = ""
+        v5_selector_confidence = ""
+        v5_selector_narrative = ""
+        v5_simple_median_score = np.nan
+        v5_trimmed_mean_20_score = np.nan
+        v5_winsorized_mean_10_score = np.nan
+        v5_geometric_mean_positive_score = np.nan
+        v5_inverse_rmse_shrunk_score = np.nan
+        v5_single_best_val_score = np.nan
+        v5_best_method_on_validation = ""
+        v5_chosen_score = np.nan
+        v5_feat_trend_strength = np.nan
+        v5_feat_seasonal_strength = np.nan
+        v5_feat_spectral_entropy = np.nan
+        v5_feat_forecastability = np.nan
+        v5_feat_hurst = np.nan
+        v5_feat_adf_pvalue = np.nan
+        v5_rag_n_neighbors = np.nan
+        v5_rag_dominant_neighbor_method = ""
+        v5_memory_db_size = np.nan
+        v5_selector_think = ""
+        v5_selector_evidence = ""
 
         debate_ran = np.nan
         debate_trigger = np.nan
@@ -811,6 +905,79 @@ def exec_dataset_orchestrator(
             except Exception:
                 pass
 
+            # V5: extract fields from selector result
+            try:
+                v5_chosen_method = str(result.get("chosen_method") or "")
+                v5_effective_method = str(result.get("effective_method") or "")
+                v5_series_type = str(result.get("series_type") or "")
+                _bl5 = result.get("baselines") if isinstance(result, dict) else None
+                def _f5(key):
+                    v = (_bl5 or {}).get(key)
+                    try:
+                        return float(v) if v is not None and isinstance(v, (int, float)) else np.nan
+                    except Exception:
+                        return np.nan
+                if isinstance(_bl5, dict):
+                    v5_simple_median_score = _f5("simple_median_score")
+                    v5_trimmed_mean_20_score = _f5("trimmed_mean_20_score")
+                    v5_winsorized_mean_10_score = _f5("winsorized_mean_10_score")
+                    v5_geometric_mean_positive_score = _f5("geometric_mean_positive_score")
+                    v5_inverse_rmse_shrunk_score = _f5("inverse_rmse_shrunk_score")
+                    v5_single_best_val_score = _f5("single_best_val_score")
+                    v5_best_method_on_validation = str(_bl5.get("best_method_on_validation") or "")
+                    v5_chosen_score = _f5("chosen_score")
+                    # Reuse the unified chosen_score column for V5 too
+                    chosen_score_v3 = v5_chosen_score
+                # Selector reasoning (from parsed JSON object) and safeguard from description
+                try:
+                    desc5 = json.loads(description) if isinstance(description, str) and description.strip().startswith("{") else None
+                except Exception:
+                    desc5 = None
+                if isinstance(desc5, dict):
+                    v5_safeguard_triggered = str(desc5.get("safeguard_triggered") or "")
+                    sr = desc5.get("selector_reasoning") or {}
+                    if isinstance(sr, dict):
+                        v5_selector_confidence = str(sr.get("confidence") or "")
+                        v5_selector_narrative = str(sr.get("narrative") or "")
+                        ev_list = sr.get("evidence") or []
+                        if isinstance(ev_list, list):
+                            v5_selector_evidence = json.dumps(ev_list, ensure_ascii=False)
+                    feats = desc5.get("series_features") or {}
+                    if isinstance(feats, dict):
+                        v5_feat_trend_strength = float(feats.get("trend_strength")) if isinstance(feats.get("trend_strength"), (int, float)) else np.nan
+                        v5_feat_seasonal_strength = float(feats.get("seasonal_strength")) if isinstance(feats.get("seasonal_strength"), (int, float)) else np.nan
+                        v5_feat_spectral_entropy = float(feats.get("spectral_entropy")) if isinstance(feats.get("spectral_entropy"), (int, float)) else np.nan
+                        v5_feat_forecastability = float(feats.get("forecastability")) if isinstance(feats.get("forecastability"), (int, float)) else np.nan
+                        v5_feat_hurst = float(feats.get("hurst")) if isinstance(feats.get("hurst"), (int, float)) else np.nan
+                        v5_feat_adf_pvalue = float(feats.get("adf_pvalue")) if isinstance(feats.get("adf_pvalue"), (int, float)) else np.nan
+                # V5 think + RAG diagnostics (queried directly from memory after pipeline)
+                _arts5 = result.get("llm_artifacts") if isinstance(result, dict) else None
+                if isinstance(_arts5, dict):
+                    raw5 = _arts5.get("raw", {}) or {}
+                    v5_selector_think = _extract_think_blocks(str(raw5.get("v5_selector", "")))
+                # RAG diagnostics from the brief context (set during the tool call)
+                try:
+                    from orchestrator_langchain.context import get_context as _gc
+                    brief5 = _gc("orchestrator_v5_selector_brief", {})
+                    if isinstance(brief5, dict):
+                        rn = brief5.get("rag_neighbors") or []
+                        v5_rag_n_neighbors = int(len(rn))
+                        if rn:
+                            from collections import Counter
+                            top_method = Counter(str(x.get("chosen_method", "")) for x in rn).most_common(1)[0][0]
+                            v5_rag_dominant_neighbor_method = top_method
+                except Exception:
+                    pass
+                try:
+                    from orchestrator.memory.episodic import EpisodicMemory
+                    mem5 = EpisodicMemory.get_default()
+                    if mem5 is not None:
+                        v5_memory_db_size = int(mem5.count())
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
         print("Description: ", description)
         print("Predictions: ", preds_real)
 
@@ -959,6 +1126,32 @@ def exec_dataset_orchestrator(
             "series_analyst_think": series_analyst_think,
             "model_critic_think": model_critic_think,
             "combination_architect_think": combination_architect_think,
+            # V5 selector + RAG
+            "chosen_method": v5_chosen_method,
+            "effective_method": v5_effective_method,
+            "safeguard_triggered": v5_safeguard_triggered,
+            "series_type": v5_series_type,
+            "selector_confidence": v5_selector_confidence,
+            "selector_narrative": v5_selector_narrative,
+            "simple_median_score": v5_simple_median_score,
+            "trimmed_mean_20_score": v5_trimmed_mean_20_score,
+            "winsorized_mean_10_score": v5_winsorized_mean_10_score,
+            "geometric_mean_positive_score": v5_geometric_mean_positive_score,
+            "inverse_rmse_shrunk_score": v5_inverse_rmse_shrunk_score,
+            "single_best_val_score": v5_single_best_val_score,
+            "best_method_on_validation": v5_best_method_on_validation,
+            # `chosen_score` is unified across V3/V5 → set above via chosen_score_v3
+            "feat_trend_strength": v5_feat_trend_strength,
+            "feat_seasonal_strength": v5_feat_seasonal_strength,
+            "feat_spectral_entropy": v5_feat_spectral_entropy,
+            "feat_forecastability": v5_feat_forecastability,
+            "feat_hurst": v5_feat_hurst,
+            "feat_adf_pvalue": v5_feat_adf_pvalue,
+            "rag_n_neighbors": v5_rag_n_neighbors,
+            "rag_dominant_neighbor_method": v5_rag_dominant_neighbor_method,
+            "memory_db_size": v5_memory_db_size,
+            "selector_think": v5_selector_think,
+            "selector_evidence": v5_selector_evidence,
         }
 
         df_new = pd.DataFrame(data_serie)
@@ -999,20 +1192,37 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
-    dataset = "NN5_WEEKLY_DATASET"
-    original_tsf_path = "../forecasting_datasets/nn5_weekly_dataset.tsf"
-    
+    dataset = "ANP_MONTHLY"
+    original_tsf_path = "../forecasting_datasets/mes_11_venda_mensal.tsf"
+
+    # ── V5 (current default): single LLM Selector + RAG memory ───────────────
+    # Picks 1 of 6 robust combiners per series. Bounded LLM agency.
+    # Memory persists at ./memory/v5_episodic.db — created automatically.
+    # Cold-start safe: first ~30 series fall back to local validation scores; after that the
+    # RAG retriever surfaces past similar series as in-context evidence for the Selector.
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
         use_llm=True,
-        series_analyst_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
-        model_critic_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
-        combination_architect_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+        selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
         debug=False,
         rolling="expanding",
         train_window=3,
         llm_logs=True,
-        version="v3_pruning",
+        version="v5_selector",
         original_tsf_path=original_tsf_path,
+        v5_memory_db_path="./memory/v5_episodic.db",
+        v5_use_rag=True,
     )
+
+    # ── V3+Sprint-1 (legacy, kept for ablations) ─────────────────────────────
+    # exec_dataset_orchestrator(
+    #     models,
+    #     dataset=dataset,
+    #     use_llm=True,
+    #     series_analyst_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     model_critic_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     combination_architect_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     debug=False, rolling="expanding", train_window=3, llm_logs=True,
+    #     version="v3_pruning", original_tsf_path=original_tsf_path,
+    # )

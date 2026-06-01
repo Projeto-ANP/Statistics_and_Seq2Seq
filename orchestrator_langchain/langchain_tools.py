@@ -66,3 +66,15 @@ def combination_architect_brief() -> str:
     """V3: Robust combination regimes over the surviving pool + recommended shrinkage for the CombinationArchitect."""
 
     return orch_tools.combination_architect_brief_tool()
+
+
+# ── V5 pipeline tool (single LLM call, picks 1 of 6 robust combiners) ────────
+
+@tool("v5_selector_brief")
+def v5_selector_brief() -> str:
+    """V5: Single-call brief for the Selector. Bundles series features (catch22 + classics),
+    per-method validation scores for all 6 menu options, per-model summary, RAG neighbors from
+    episodic memory, and applicable procedural rules. LLM picks ONE of six robust combiners.
+    """
+
+    return orch_tools.v5_selector_brief_tool()

@@ -15,4 +15,5 @@ from orchestrator_langchain.agents import (
     create_series_analyst_agent,
     create_model_critic_agent,
     create_combination_architect_agent,
+    create_v5_selector_agent,
 )

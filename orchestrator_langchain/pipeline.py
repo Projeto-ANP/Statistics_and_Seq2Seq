@@ -117,3 +117,34 @@ def run_langchain_pipeline_v3(
         pool_curation_threshold=pool_curation_threshold,
         pool_curation_min_keep=pool_curation_min_keep,
     )
+
+
+def run_langchain_pipeline_v5(
+    selector_model: _utils.ModelConfig,
+    debug: bool = False,
+    rolling_mode: str = "expanding",
+    train_window: int = 3,
+    require_tool_call: bool = True,
+    llm_logs: bool = True,
+    use_rag: bool = True,
+    memory_db_path: str = "./memory/v5_episodic.db",
+) -> Dict[str, Any]:
+    """V5: Single-LLM-call Selector + RAG memory. Picks 1 of 6 robust combiners per series.
+
+    See ARCHITECTURE_V5_PROPOSAL.md for the design. Bounded LLM agency (≈2.6 bits per series),
+    no weight estimation, no pool pruning, episodic memory persists in SQLite at
+    `memory_db_path`. Cold-start safe: if memory is empty, RAG returns no neighbors and the
+    Selector falls back on local validation scores + features.
+    """
+    _base.create_v5_selector_agent = lc_agents.create_v5_selector_agent
+
+    return _base.run_llm_pipeline_v5(
+        selector_model=selector_model,
+        debug=debug,
+        rolling_mode=rolling_mode,
+        train_window=train_window,
+        require_tool_call=require_tool_call,
+        llm_logs=llm_logs,
+        use_rag=use_rag,
+        memory_db_path=memory_db_path,
+    )

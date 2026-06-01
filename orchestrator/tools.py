@@ -2516,3 +2516,148 @@ def combination_architect_brief_tool() -> str:
     tools_called.append("combination_architect_brief_tool")
     set_context("tools_called", tools_called)
     return json.dumps(out, indent=2, default=str)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# V5 — Selector brief (single LLM call, picks 1 of 6 robust combiners)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def v5_selector_brief_tool() -> str:
+    """V5 tool for the Selector agent. Bundles everything the LLM needs to pick ONE of six
+    robust combination methods for THIS series:
+
+    1. Deterministic series features (catch22 + classics + STL).
+    2. Per-method validation scores (each of the 6 menu options evaluated on the 3 val windows).
+    3. Per-model summary (top-5 by RMSE + stability).
+    4. RAG: up to 5 similar past series with their winning methods (from episodic memory).
+    5. Procedural rules (high-confidence regularities learned from accumulated memory).
+
+    The brief deliberately INCLUDES the validation scores for each method so the LLM can see
+    the local signal, but the strongest evidence is the RAG neighbors (memory dominates local
+    overfitting on 3 windows). See ARCHITECTURE_V5_PROPOSAL.md §3.
+    """
+
+    import numpy as np
+    from orchestrator.data_contract import load_validation_from_context
+    from orchestrator.combiners import MENU, evaluate_method_on_validation
+    from orchestrator.features import compute_series_features
+
+    data = load_validation_from_context()
+    y_true_val = np.asarray(data.y_true, dtype=float)
+    y_preds_val = np.asarray(data.y_preds, dtype=float)
+    model_names = list(data.model_names)
+    n_models = int(data.n_models)
+    horizon = int(data.horizon)
+
+    # 1) Deterministic features on the leakage-safe history
+    history = load_history_from_context()
+    dataset_name = get_context("dataset_name", "")
+    period = _infer_seasonal_period(dataset_name, horizon)
+    features = compute_series_features(history, period=period)
+
+    # Detect series_type from the history sign pattern
+    hist_arr = np.asarray(history, dtype=float)
+    if np.all(hist_arr > 0):
+        series_type = "positive_only"
+    elif np.allclose(hist_arr, np.round(hist_arr)) and np.all(hist_arr >= 0):
+        series_type = "count"
+    else:
+        series_type = "signed"
+
+    # 2) Per-method validation scores (deterministic — the LLM doesn't recompute these)
+    val_scores: Dict[str, Dict[str, float]] = {}
+    for m in MENU:
+        try:
+            val_scores[m] = evaluate_method_on_validation(m, y_true_val, y_preds_val)
+        except Exception as e:
+            val_scores[m] = {"error": str(e), "rmse": float("nan"), "smape": float("nan"), "composite": float("nan")}
+
+    # Rank methods by composite (lower is better)
+    finite = {k: v for k, v in val_scores.items() if isinstance(v.get("composite"), (int, float)) and np.isfinite(v.get("composite", float("nan")))}
+    method_ranking = sorted(finite.keys(), key=lambda k: finite[k]["composite"])
+    best_method_val = method_ranking[0] if method_ranking else "trimmed_mean_20"
+
+    # 3) Per-model summary — top 5 by RMSE
+    errors = y_preds_val - y_true_val[:, None, :]
+    rmse_per_model = np.sqrt(np.nanmean(errors ** 2, axis=(0, 2)))
+    rmse_std_per_model = np.nanstd(
+        [np.sqrt(np.nanmean((errors[w] ** 2), axis=1)) for w in range(y_true_val.shape[0])], axis=0,
+    )
+    bias_per_model = np.nanmean(errors, axis=(0, 2))
+    model_order = np.argsort(rmse_per_model)
+    top_models = []
+    for j in model_order[: min(5, n_models)]:
+        top_models.append({
+            "name": model_names[int(j)],
+            "rmse_mean": float(rmse_per_model[int(j)]),
+            "rmse_std_across_windows": float(rmse_std_per_model[int(j)]) if int(j) < len(rmse_std_per_model) else float("nan"),
+            "bias": float(bias_per_model[int(j)]),
+        })
+
+    # Gap-to-2nd metric (used to assess single_best_val viability)
+    if n_models >= 2:
+        best_rmse = float(rmse_per_model[int(model_order[0])])
+        second_rmse = float(rmse_per_model[int(model_order[1])])
+        single_best_gap = (second_rmse - best_rmse) / (abs(best_rmse) + 1e-9)
+    else:
+        single_best_gap = float("inf")
+
+    # 4) Disagreement (already computed elsewhere — quick reuse)
+    disagreement = float(np.nanmean(np.nanstd(y_preds_val, axis=1)))
+
+    # 5) RAG retrieval (Sprint-C: episodic memory). When memory module is absent or empty,
+    # neighbors is [] and the LLM falls back to local validation + features.
+    neighbors: List[Dict[str, Any]] = []
+    procedural_rules: List[Dict[str, Any]] = []
+    try:
+        from orchestrator.memory.episodic import EpisodicMemory
+        mem = EpisodicMemory.get_default()
+        if mem is not None:
+            neighbors = mem.query_nearest(features=features, k=5, dataset=dataset_name)
+            procedural_rules = mem.applicable_rules(features)
+    except Exception as _e:
+        # Memory is optional — log and proceed without it
+        neighbors = []
+        procedural_rules = []
+
+    out = {
+        "series_features": features,
+        "series_type": series_type,
+        "n_models": n_models,
+        "n_windows": int(data.n_windows),
+        "horizon": horizon,
+        "disagreement_score": disagreement,
+        "validation_method_scores": val_scores,
+        "best_method_on_validation": best_method_val,
+        "method_ranking_by_composite": method_ranking,
+        "per_model_summary": {
+            "top_5_by_rmse": top_models,
+            "single_best_gap": float(single_best_gap),
+            "single_best_viable": bool(single_best_gap >= 0.05),
+        },
+        "rag_neighbors": neighbors,
+        "procedural_rules": procedural_rules,
+        "menu": MENU,
+        "selection_rules": {
+            "if_positive_only_and_seasonal": "geometric_mean_positive is a strong candidate",
+            "if_signed_or_zero_present": "geometric_mean_positive is DISQUALIFIED",
+            "if_single_best_gap_lt_5pct": "single_best_val will safeguard-fallback to trimmed_mean_20",
+            "if_rag_3_of_5_agree": "memory has strong prior; only override if local evidence > 2%",
+            "default_safe": "trimmed_mean_20 (M-competition top-3, Spiliotis 2024)",
+        },
+        "output_schema": {
+            "chosen_method": "EXACTLY one of: " + ", ".join(MENU),
+            "confidence": "high|medium|low",
+            "evidence": ["cite RAG neighbor IDs / validation scores / feature values"],
+            "rejected": {"method_name": "why not"},
+            "narrative": "1-2 sentence summary",
+        },
+    }
+
+    set_context("orchestrator_v5_selector_brief", out)
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+    tools_called.append("v5_selector_brief_tool")
+    set_context("tools_called", tools_called)
+    return json.dumps(out, indent=2, default=str)

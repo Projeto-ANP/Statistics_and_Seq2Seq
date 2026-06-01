@@ -36,6 +36,7 @@ from orchestrator.agents import (
     create_series_analyst_agent,
     create_model_critic_agent,
     create_combination_architect_agent,
+    create_v5_selector_agent,
 )
 
 
@@ -2241,4 +2242,234 @@ def run_llm_pipeline_v3(
 
     set_context("orchestrator_last_pipeline", out)
     _log("V3 pipeline completed.")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V5 — Selector + RAG memory pipeline
+# (ARCHITECTURE_V5_PROPOSAL.md). One LLM call. Picks 1 of 6 robust combiners.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_V5_MENU = [
+    "simple_median",
+    "trimmed_mean_20",
+    "winsorized_mean_10",
+    "geometric_mean_positive",
+    "inverse_rmse_shrunk",
+    "single_best_val",
+]
+
+
+def run_llm_pipeline_v5(
+    selector_model: _utils.ModelConfig,
+    debug: bool = False,
+    rolling_mode: str = "expanding",
+    train_window: int = 3,
+    require_tool_call: bool = True,
+    llm_logs: bool = True,
+    use_rag: bool = True,
+    memory_db_path: str = "./memory/v5_episodic.db",
+) -> Dict[str, Any]:
+    """V5 pipeline: ONE LLM call that picks one of six robust combiners (menu) for the series.
+
+    Pipeline:
+      1) Compute deterministic features (catch22 + classics + STL).
+      2) Evaluate ALL six menu methods on the 3 validation windows (deterministic).
+      3) Retrieve k=5 nearest past episodes from episodic memory (RAG; cold-start safe).
+      4) Selector LLM picks ONE method, citing RAG + validation scores + features.
+      5) Apply the chosen method to the final-test predictions.
+      6) Log the episode to memory (so future series can RAG-retrieve it).
+
+    No weight estimation. No pool pruning. No regime/shrinkage hyperparameter tuning. The
+    LLM's role is bounded to one decision among six (≈2.6 bits of agency per series). This
+    eliminates the variance source that doomed V3/V4 on 3-validation-window regimes.
+    """
+
+    import math
+    import numpy as np
+    import os
+
+    def _log(msg: str) -> None:
+        if llm_logs:
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{ts} ORCH|V5] {msg}", flush=True)
+
+    _log(
+        f"Starting V5 | selector={selector_model.model} | rolling={rolling_mode} "
+        f"| train_window={train_window} | use_rag={use_rag}"
+    )
+
+    from orchestrator.combiners import MENU, apply_combiner, evaluate_method_on_validation
+    from orchestrator.features import compute_series_features
+    from orchestrator.tools import _infer_seasonal_period
+    from orchestrator.data_contract import load_history_from_context
+
+    selector = create_v5_selector_agent(selector_model.model, debug=debug)
+
+    llm_artifacts: Dict[str, Any] = {
+        "selector": selector_model.model,
+        "prompts": {},
+        "raw": {},
+        "parsed": {},
+    }
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+
+    data = load_validation_from_context()
+    y_true_val = np.asarray(data.y_true, dtype=float)
+    y_preds_val = np.asarray(data.y_preds, dtype=float)
+    model_names = list(data.model_names)
+    n_models = int(data.n_models)
+    horizon = int(data.horizon)
+
+    # ── Step 1: deterministic features (also informs RAG distance) ───────────
+    dataset_name = get_context("dataset_name", "")
+    dataset_index = get_context("dataset_index", -1)
+    history = load_history_from_context()
+    period = _infer_seasonal_period(dataset_name, horizon)
+    features = compute_series_features(history, period=period)
+
+    # Series type detection (drives geometric_mean eligibility)
+    hist_arr = np.asarray(history, dtype=float)
+    if np.all(hist_arr > 0):
+        series_type = "positive_only"
+    elif np.allclose(hist_arr, np.round(hist_arr)) and np.all(hist_arr >= 0):
+        series_type = "count"
+    else:
+        series_type = "signed"
+
+    # ── Step 2: deterministic per-method validation scores (the LLM sees these) ──
+    val_method_scores: Dict[str, Dict[str, float]] = {}
+    for m in _V5_MENU:
+        try:
+            val_method_scores[m] = evaluate_method_on_validation(m, y_true_val, y_preds_val)
+        except Exception as e:
+            val_method_scores[m] = {"error": str(e), "composite": float("nan")}
+
+    finite = {k: v for k, v in val_method_scores.items() if isinstance(v.get("composite"), (int, float)) and np.isfinite(v.get("composite", float("nan")))}
+    best_method_on_val = min(finite, key=lambda k: finite[k]["composite"]) if finite else "trimmed_mean_20"
+    _log(f"Val scores best={best_method_on_val} ({finite.get(best_method_on_val, {}).get('composite', float('nan')):.4f})")
+
+    # ── Step 3: Selector LLM picks ONE method ────────────────────────────────
+    sel_prompt = (
+        "Call v5_selector_brief() FIRST. Then return ONLY the JSON per the schema "
+        "(chosen_method, confidence, evidence, rejected, narrative). No markdown."
+    )
+    llm_artifacts["prompts"]["v5_selector"] = sel_prompt
+    chosen_method = "trimmed_mean_20"  # safe default
+    sel_obj: Dict[str, Any] = {}
+    try:
+        sel_out, sel_obj = _run_agent_with_retry(
+            lambda: selector.run(sel_prompt).content, "V5Selector", max_retries=2, log_func=_log
+        )
+        proposed = str(sel_obj.get("chosen_method", "")).strip()
+        if proposed in _V5_MENU:
+            chosen_method = proposed
+        else:
+            _log(f"V5Selector returned invalid method {proposed!r} — falling back to trimmed_mean_20")
+        llm_artifacts["raw"]["v5_selector"] = str(sel_out)
+        llm_artifacts["parsed"]["v5_selector"] = sel_obj
+    except Exception as _e:
+        _log(f"V5Selector failed (non-fatal, fallback to trimmed_mean_20): {_e}")
+    set_context("orchestrator_llm_artifacts", llm_artifacts)
+    _log(f"Selector chose: {chosen_method} (confidence={sel_obj.get('confidence', 'unknown')})")
+
+    # ── Step 4: build final-test prediction matrix and apply chosen method ───
+    final_preds = get_context("predictions")
+    if not isinstance(final_preds, dict) or not final_preds:
+        raise RuntimeError("context['predictions'] not found. generate_all_validations_context() should set it.")
+
+    final_matrix = np.full((n_models, horizon), np.nan, dtype=float)
+    for j, m in enumerate(model_names):
+        if m not in final_preds:
+            continue
+        arr = np.asarray(final_preds[m], dtype=float)
+        final_matrix[j, : min(horizon, len(arr))] = arr[:horizon]
+
+    final_result, apply_debug = apply_combiner(
+        chosen_method, final_matrix, y_true_val=y_true_val, y_preds_val=y_preds_val,
+    )
+    # If a safeguard fallback fired, record the actual method used
+    effective_method = apply_debug.get("fallback_to", chosen_method) if "safeguard_triggered" in apply_debug else chosen_method
+    _log(f"Applied: chosen={chosen_method} effective={effective_method} | safeguard={apply_debug.get('safeguard_triggered', 'none')}")
+
+    # ── Step 5: log episode to memory (Sprint-C) ─────────────────────────────
+    if use_rag:
+        try:
+            from orchestrator.memory.episodic import EpisodicMemory
+            mem = EpisodicMemory.get_default(memory_db_path)
+            if mem is not None:
+                chosen_score_val = finite.get(effective_method, {}).get("composite", float("nan"))
+                mem.add_episode(
+                    dataset=dataset_name or "unknown",
+                    series_idx=int(dataset_index) if isinstance(dataset_index, (int, float)) and dataset_index >= 0 else -1,
+                    features=features,
+                    chosen_method=str(effective_method),
+                    chosen_score=float(chosen_score_val) if np.isfinite(chosen_score_val) else None,
+                    method_scores=val_method_scores,
+                    series_type=series_type,
+                    disagreement=float(np.nanmean(np.nanstd(y_preds_val, axis=1))),
+                    confidence=str(sel_obj.get("confidence", "")),
+                    narrative=str(sel_obj.get("narrative", "")),
+                )
+                _log(f"Episode logged. Memory now has {mem.count()} total / {mem.count(dataset_name)} for this dataset.")
+        except Exception as _e:
+            _log(f"Memory write failed (non-fatal): {_e}")
+
+    tools_called = get_context("tools_called", [])
+    if not isinstance(tools_called, list):
+        tools_called = []
+
+    description = {
+        "mode": "llm_v5",
+        "agent": {"selector": selector_model.model},
+        "tool_validation": {
+            "tools_called": tools_called,
+            "require_tool_call": bool(require_tool_call),
+            "tool_missing": bool(require_tool_call and "v5_selector_brief_tool" not in tools_called),
+        },
+        "score_preset": "balanced",
+        "best": {"name": effective_method, "type": "combiner_v5", "params": {"method": effective_method}, "description": effective_method, "formula": "", "learns_weights": False, "constraints": "menu", "risks": [], "validation_plan": "rolling"},
+        "score": float(finite.get(effective_method, {}).get("composite", float("nan"))) if effective_method in finite else float("nan"),
+        "chosen_method": chosen_method,
+        "effective_method": effective_method,
+        "safeguard_triggered": apply_debug.get("safeguard_triggered"),
+        "series_type": series_type,
+        "validation_method_scores": val_method_scores,
+        "best_method_on_validation": best_method_on_val,
+        "selector_reasoning": sel_obj,
+        "series_features": features,
+        "predict_debug": apply_debug,
+    }
+
+    # Baselines block for CSV columns
+    baselines_info = {
+        "simple_median_score": val_method_scores.get("simple_median", {}).get("composite", float("nan")),
+        "trimmed_mean_20_score": val_method_scores.get("trimmed_mean_20", {}).get("composite", float("nan")),
+        "winsorized_mean_10_score": val_method_scores.get("winsorized_mean_10", {}).get("composite", float("nan")),
+        "geometric_mean_positive_score": val_method_scores.get("geometric_mean_positive", {}).get("composite", float("nan")),
+        "inverse_rmse_shrunk_score": val_method_scores.get("inverse_rmse_shrunk", {}).get("composite", float("nan")),
+        "single_best_val_score": val_method_scores.get("single_best_val", {}).get("composite", float("nan")),
+        "best_method_on_validation": best_method_on_val,
+        "chosen_method": chosen_method,
+        "effective_method": effective_method,
+        "chosen_score": float(finite.get(effective_method, {}).get("composite", float("nan"))) if effective_method in finite else float("nan"),
+    }
+
+    out = {
+        "success": True,
+        "best": description["best"],
+        "ranking": [],
+        "description": json.dumps(description, ensure_ascii=False, default=str),
+        "result": [float(x) for x in final_result],
+        "baselines": baselines_info,
+        "chosen_method": chosen_method,
+        "effective_method": effective_method,
+        "series_features": features,
+        "series_type": series_type,
+        "llm_artifacts": llm_artifacts,
+    }
+
+    set_context("orchestrator_last_pipeline", out)
+    _log("V5 pipeline completed.")
     return out

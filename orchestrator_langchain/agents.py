@@ -17,6 +17,7 @@ from orchestrator_langchain.langchain_tools import (
     series_analysis_brief,
     model_critic_brief,
     combination_architect_brief,
+    v5_selector_brief,
 )
 
 
@@ -249,4 +250,24 @@ def create_combination_architect_agent(model_id: str = DEFAULT_MODEL_ID, debug: 
         temperature=0.0,
         force_tool_call=True,
         max_tool_rounds=3,
+    )
+
+
+# ── V5 pipeline agent (single LLM call, picks 1 of 6 robust combiners) ──────
+
+def create_v5_selector_agent(model_id: str = DEFAULT_MODEL_ID, debug: bool = False) -> LangchainAgent:
+    """V5: Selector agent. Sees series features (catch22 + classics) + per-method validation
+    scores + RAG neighbors from episodic memory + procedural rules. Picks ONE of six robust
+    combiners. temperature=0 for reproducibility; generous context budget for the rich brief.
+    """
+    _ = debug
+    return LangchainAgent(
+        model_id=model_id,
+        tools=[v5_selector_brief],
+        system_prompt=_load_prompt("v5_selector.md"),
+        temperature=0.0,
+        force_tool_call=True,
+        max_tool_rounds=3,
+        num_ctx=16384,
+        num_predict=4096,
     )
