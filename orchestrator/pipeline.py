@@ -75,9 +75,28 @@ def _run_agent_with_retry(
             output = agent_func()
             elapsed = time.perf_counter() - t0
             log_func(f"{agent_name}: response received in {elapsed:.1f}s")
-            log_func(f"{agent_name} raw (first 2000 chars): {str(output)[:2000]}")
-            
-            cleaned = _strip_think_blocks(str(output))
+            raw_str = str(output)
+            log_func(f"{agent_name} raw (first 2000 chars): {raw_str[:2000]}")
+
+            cleaned = _strip_think_blocks(raw_str)
+            # Explicit empty-output detection: when the model fits its whole budget inside
+            # <think>...</think> (typical when num_predict is too small or context overflows),
+            # the cleaned text is empty and `extract_json_object` would return None silently.
+            # Surfacing this distinctly helps diagnose num_ctx / num_predict tuning issues.
+            if not cleaned.strip():
+                log_func(
+                    f"{agent_name}: EMPTY content after stripping <think> blocks "
+                    f"(raw_len={len(raw_str)}, elapsed={elapsed:.1f}s). "
+                    "Likely num_predict exhausted inside thinking or num_ctx overflow. "
+                    "Check ChatOllama num_ctx/num_predict in agents.py."
+                )
+                if attempt < max_retries:
+                    continue
+                raise RuntimeError(
+                    f"{agent_name} returned empty content after {max_retries} attempts (hard-stop). "
+                    f"Tune num_ctx/num_predict in LangchainAgent."
+                )
+
             parsed_obj = extract_json_object(cleaned)
             if parsed_obj is None or not isinstance(parsed_obj, dict):
                 if attempt < max_retries:
@@ -86,7 +105,7 @@ def _run_agent_with_retry(
                 else:
                     raise RuntimeError(
                         f"{agent_name} did not return valid JSON after {max_retries} attempts (hard-stop). "
-                        f"Raw (first 2000 chars): {str(output)[:2000]}"
+                        f"Raw (first 2000 chars): {raw_str[:2000]}"
                     )
             
             log_func(f"{agent_name}: successfully parsed JSON")
@@ -676,7 +695,9 @@ def run_llm_pipeline(
 
     def _log(msg: str) -> None:
         if llm_logs:
-            print(f"[ORCH|LLM] {msg}", flush=True)
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{ts} ORCH|LLM] {msg}", flush=True)
 
     proposer = create_proposer_agent(proposer_model.model, debug=debug)
     skeptic = create_skeptic_agent(skeptic_model.model, debug=debug)
@@ -1344,7 +1365,9 @@ def run_llm_pipeline_v2(
 
     def _log(msg: str) -> None:
         if llm_logs:
-            print(f"[ORCH|V2] {msg}", flush=True)
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{ts} ORCH|V2] {msg}", flush=True)
 
     _log(
         f"Starting V2 pipeline | annotator={series_annotator_model.model} "
@@ -1804,7 +1827,9 @@ def run_llm_pipeline_v3(
 
     def _log(msg: str) -> None:
         if llm_logs:
-            print(f"[ORCH|V3] {msg}", flush=True)
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{ts} ORCH|V3] {msg}", flush=True)
 
     _log(
         f"Starting V3 | analyst={series_analyst_model.model} | critic={model_critic_model.model} "

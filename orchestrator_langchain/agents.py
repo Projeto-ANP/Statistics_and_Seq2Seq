@@ -43,12 +43,31 @@ class LangchainAgent:
         temperature: float = 0.2,
         force_tool_call: bool = True,
         max_tool_rounds: int = 3,
+        # Ollama runtime knobs. Defaults are tuned for qwen3/gpt-oss agents in V3:
+        # tool results can be sizeable (per-model diagnostics + correlation matrix), and
+        # thinking-mode models can emit long <think> blocks before the final JSON. Without
+        # these, Ollama defaults (num_ctx=2048, num_predict=128) silently truncate the
+        # prompt and cut the answer mid-thinking → empty content → "invalid JSON" retries.
+        num_ctx: int = 16384,
+        num_predict: int = 8192,
+        keep_alive: str = "10m",
+        reasoning: Optional[bool] = None,
     ) -> None:
         self._tools = tools
         self._system_prompt = system_prompt
         self._force_tool_call = force_tool_call
         self._max_tool_rounds = max_tool_rounds
-        self._llm = ChatOllama(model=model_id, temperature=temperature,base_url="http://127.0.0.1:11501")
+        llm_kwargs = {
+            "model": model_id,
+            "temperature": temperature,
+            "base_url": "http://127.0.0.1:11501",
+            "num_ctx": num_ctx,
+            "num_predict": num_predict,
+            "keep_alive": keep_alive,
+        }
+        if reasoning is not None:
+            llm_kwargs["reasoning"] = reasoning
+        self._llm = ChatOllama(**llm_kwargs)
         self._bound_llm = self._bind_tools(self._llm, tools)
         self._tool_map = {t.name: t for t in tools}
 
