@@ -426,6 +426,13 @@ Para trocar de dataset, ajuste `dataset` **e** `original_tsf_path` para o `.tsf`
 Se `original_tsf_path=None`, o caminho é resolvido case-insensitive pelo nome do dataset; não achando, cai
 no proxy de janelas. Confira a coluna/flag `series_history_source` (`tsf_original` vs `validation_proxy`).
 
+**Filtro específico do dataset — ANP_MONTHLY:** os regressores que produziram os CSVs do `ANP_MONTHLY`
+descartaram, antes de treinar, qualquer série em que algum bloco não-sobreposto de 24 pontos tivesse >50%
+de zeros. Sem replicar esse filtro, `df.iloc[i]` no `.tsf` apontaria para uma série diferente da que está
+em `dataset_index = i` no CSV. O loader reaplica esse filtro automaticamente quando `dataset="ANP_MONTHLY"`
+(função `_apply_dataset_filter` em `context.py`) e reseta o índice — basta passar o `.tsf` original via
+`original_tsf_path`. Nenhum outro dataset sofre essa filtragem.
+
 ### Decisões resolvidas (eram pendências)
 1. Contagem de janelas: corrigida para 3 (`iloc[-(train_window+1):-1]`). ✓
 2. Série histórica: **série original completa do `.tsf` truncada em `[:-horizon]`** (105 pts no NN5),
