@@ -44,7 +44,7 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
     
-    dataset_name = "ETTM2"
+    dataset_name = "ANP_MONTHLY"
     
     len_datasets = aux.get_dataset_size(models[0], dataset_name=dataset_name)
     for dataset_index in range(len_datasets):

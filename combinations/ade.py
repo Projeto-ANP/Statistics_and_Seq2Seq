@@ -370,7 +370,7 @@ if __name__ == "__main__":
         "NaiveMovingAverage",
     ]
 
-    dataset_name = "NN5_WEEKLY_DATASET"  # 'ETTH1', 'ETTH2', 'ETTM1', 'ETTM2', 'ANP_MONTHLY', 'NN5_WEEKLY_DATASET'
+    dataset_name = "ANP_MONTHLY"  # 'ETTH1', 'ETTH2', 'ETTM1', 'ETTM2', 'ANP_MONTHLY', 'NN5_WEEKLY_DATASET'
     map_dataset_name_to_freq = {
         "ETTH1": {"horizon": 24, "freq": "H"},
         "ETTH2": {"horizon": 24, "freq": "H"},
