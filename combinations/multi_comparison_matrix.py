@@ -19,16 +19,16 @@ METHODS = {
     "dba":          f"{BASE}/dba",
     "mean":         f"{BASE}/mean",
     "median":       f"{BASE}/median",
-    "orchestrator_v1": f"{BASE}/orchestrator_llm_v1_pattern",
+    # "orchestrator_v1": f"{BASE}/orchestrator_llm_v1_pattern",
     "orchestrator_v3": f"{BASE}/orchestrator_llm_v3_pruning",
     "FFORMA":       f"{BASE}/FFORMA",
     "ADE":        f"{BASE}/ADE",
     
 }
 
-DATASETS = ["NN5_WEEKLY_DATASET"]
+DATASETS = ["NN5_WEEKLY_DATASET", "ETTH1", "ETTH2", "ETTM1", "ETTM2", "ANP_MONTHLY"]
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output_v2")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
