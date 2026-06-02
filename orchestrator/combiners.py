@@ -260,4 +260,9 @@ def evaluate_method_on_validation(
     rmse = float(np.sqrt(np.nanmean(err ** 2)))
     mae = float(np.nanmean(np.abs(err)))
     smape = float(np.nanmean(2.0 * np.abs(err) / (np.abs(yp) + np.abs(yt) + 1e-9)))
-    return {"rmse": rmse, "mae": mae, "smape": smape, "composite": (rmse + smape) / 2.0}
+    # Fix A (post-diagnosis): composite = SMAPE only. The previous (rmse + smape)/2 was
+    # RMSE-dominated for raw-scale series (RMSE in thousands, SMAPE in [0,2]), so the
+    # Selector was optimizing the wrong objective. Final benchmark in the MCM matrix is
+    # SMAPE, so the per-method validation score should be SMAPE too. (Atiya 2020;
+    # Spiliotis 2024 — scale-free metrics for cross-series ranking.)
+    return {"rmse": rmse, "mae": mae, "smape": smape, "composite": float(smape)}

@@ -2615,7 +2615,15 @@ def v5_selector_brief_tool() -> str:
     #     than k=5 in-dataset neighbors exist.
     neighbors: List[Dict[str, Any]] = []
     procedural_rules: List[Dict[str, Any]] = []
+    rag_warmup_active = False
+    memory_count_for_dataset = 0
     use_rag = bool(get_context("v5_use_rag", True))
+    # Warmup gate: if the dataset's memory has fewer than this many episodes, suppress RAG
+    # entirely. This breaks the cold-start bias loop where the first N series default to one
+    # method (because memory is empty), then memory becomes biased toward that method, then
+    # subsequent series follow the (biased) RAG signal. Diagnosis from the V5 audit on
+    # ANP_MONTHLY: trimmed_mean_20 was chosen 154/182 times because of exactly this loop.
+    warmup_threshold = int(get_context("v5_rag_warmup_threshold", 30))
     if use_rag:
         try:
             from orchestrator.memory.episodic import EpisodicMemory
@@ -2623,17 +2631,23 @@ def v5_selector_brief_tool() -> str:
             mem = EpisodicMemory.get_default(db_path) if db_path else EpisodicMemory.get_default()
             cross_fallback = bool(get_context("v5_cross_dataset_fallback", False))
             if mem is not None:
-                neighbors = mem.query_nearest(
-                    features=features,
-                    k=5,
-                    dataset=dataset_name,
-                    cross_dataset_fallback=cross_fallback,
-                )
-                procedural_rules = mem.applicable_rules(features)
+                memory_count_for_dataset = int(mem.count(dataset_name)) if dataset_name else int(mem.count())
+                if memory_count_for_dataset < warmup_threshold:
+                    rag_warmup_active = True
+                    # Skip retrieval entirely while warming up.
+                else:
+                    neighbors = mem.query_nearest(
+                        features=features,
+                        k=5,
+                        dataset=dataset_name,
+                        cross_dataset_fallback=cross_fallback,
+                    )
+                    procedural_rules = mem.applicable_rules(features)
         except Exception as _e:
             # Memory is optional — log and proceed without it
             neighbors = []
             procedural_rules = []
+            rag_warmup_active = False
 
     out = {
         "series_features": features,
@@ -2651,6 +2665,9 @@ def v5_selector_brief_tool() -> str:
             "single_best_viable": bool(single_best_gap >= 0.05),
         },
         "rag_neighbors": neighbors,
+        "rag_warmup_active": bool(rag_warmup_active),
+        "rag_warmup_threshold": int(warmup_threshold),
+        "memory_count_for_dataset": int(memory_count_for_dataset),
         "procedural_rules": procedural_rules,
         "menu": MENU,
         "selection_rules": {

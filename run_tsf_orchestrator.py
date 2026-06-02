@@ -287,6 +287,11 @@ def exec_dataset_orchestrator(
     v5_memory_db_path: str = None,
     v5_use_rag: bool = True,
     v5_cross_dataset_fallback: bool = False,
+    # Suppress RAG entirely until the dataset has at least this many episodes. Breaks the
+    # cold-start bias loop where early-default choices contaminate later RAG retrievals.
+    # Diagnosed from the V5 audit on ANP_MONTHLY (chosen_method=trimmed_mean_20 in 154/182
+    # cases). Set to 0 to disable warmup gating.
+    v5_rag_warmup_threshold: int = 30,
 ):
     # dataset = "ANP_MONTHLY"
     # dataset = "ETTH1"
@@ -375,6 +380,7 @@ def exec_dataset_orchestrator(
                         use_rag=v5_use_rag,
                         memory_db_path=effective_memory_db,
                         cross_dataset_fallback=v5_cross_dataset_fallback,
+                        rag_warmup_threshold=v5_rag_warmup_threshold,
                     )
                 elif _is_v3:
                     result = run_langchain_pipeline_v3(

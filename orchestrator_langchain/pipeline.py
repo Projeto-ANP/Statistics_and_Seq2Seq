@@ -129,13 +129,15 @@ def run_langchain_pipeline_v5(
     use_rag: bool = True,
     memory_db_path: str = "./memory/v5_episodic.db",
     cross_dataset_fallback: bool = False,
+    rag_warmup_threshold: int = 30,
 ) -> Dict[str, Any]:
     """V5: Single-LLM-call Selector + RAG memory. Picks 1 of 6 robust combiners per series.
 
     See ARCHITECTURE_V5_PROPOSAL.md for the design. Bounded LLM agency (≈2.6 bits per series),
     no weight estimation, no pool pruning, episodic memory persists in SQLite at
-    `memory_db_path`. Cold-start safe: if memory is empty, RAG returns no neighbors and the
-    Selector falls back on local validation scores + features.
+    `memory_db_path`. Cold-start safe: if memory has fewer than `rag_warmup_threshold`
+    episodes for the dataset, RAG is suppressed entirely and the Selector decides from
+    validation + features only (avoids cold-start bias loop).
     """
     _base.create_v5_selector_agent = lc_agents.create_v5_selector_agent
 
@@ -149,4 +151,5 @@ def run_langchain_pipeline_v5(
         use_rag=use_rag,
         memory_db_path=memory_db_path,
         cross_dataset_fallback=cross_dataset_fallback,
+        rag_warmup_threshold=rag_warmup_threshold,
     )
