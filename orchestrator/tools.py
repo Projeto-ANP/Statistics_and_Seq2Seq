@@ -2607,18 +2607,33 @@ def v5_selector_brief_tool() -> str:
 
     # 5) RAG retrieval (Sprint-C: episodic memory). When memory module is absent or empty,
     # neighbors is [] and the LLM falls back to local validation + features.
+    #
+    # Configuration is read from context (set by run_llm_pipeline_v5):
+    #   - v5_use_rag: if False, skip retrieval entirely (Config A — pure menu ablation).
+    #   - v5_memory_db_path: which SQLite file to query (per-dataset by default).
+    #   - v5_cross_dataset_fallback: whether to look outside the current dataset when fewer
+    #     than k=5 in-dataset neighbors exist.
     neighbors: List[Dict[str, Any]] = []
     procedural_rules: List[Dict[str, Any]] = []
-    try:
-        from orchestrator.memory.episodic import EpisodicMemory
-        mem = EpisodicMemory.get_default()
-        if mem is not None:
-            neighbors = mem.query_nearest(features=features, k=5, dataset=dataset_name)
-            procedural_rules = mem.applicable_rules(features)
-    except Exception as _e:
-        # Memory is optional — log and proceed without it
-        neighbors = []
-        procedural_rules = []
+    use_rag = bool(get_context("v5_use_rag", True))
+    if use_rag:
+        try:
+            from orchestrator.memory.episodic import EpisodicMemory
+            db_path = get_context("v5_memory_db_path", None)
+            mem = EpisodicMemory.get_default(db_path) if db_path else EpisodicMemory.get_default()
+            cross_fallback = bool(get_context("v5_cross_dataset_fallback", False))
+            if mem is not None:
+                neighbors = mem.query_nearest(
+                    features=features,
+                    k=5,
+                    dataset=dataset_name,
+                    cross_dataset_fallback=cross_fallback,
+                )
+                procedural_rules = mem.applicable_rules(features)
+        except Exception as _e:
+            # Memory is optional — log and proceed without it
+            neighbors = []
+            procedural_rules = []
 
     out = {
         "series_features": features,

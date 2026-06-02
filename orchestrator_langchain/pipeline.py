@@ -128,6 +128,7 @@ def run_langchain_pipeline_v5(
     llm_logs: bool = True,
     use_rag: bool = True,
     memory_db_path: str = "./memory/v5_episodic.db",
+    cross_dataset_fallback: bool = False,
 ) -> Dict[str, Any]:
     """V5: Single-LLM-call Selector + RAG memory. Picks 1 of 6 robust combiners per series.
 
@@ -147,4 +148,5 @@ def run_langchain_pipeline_v5(
         llm_logs=llm_logs,
         use_rag=use_rag,
         memory_db_path=memory_db_path,
+        cross_dataset_fallback=cross_dataset_fallback,
     )

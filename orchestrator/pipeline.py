@@ -2269,6 +2269,7 @@ def run_llm_pipeline_v5(
     llm_logs: bool = True,
     use_rag: bool = True,
     memory_db_path: str = "./memory/v5_episodic.db",
+    cross_dataset_fallback: bool = False,
 ) -> Dict[str, Any]:
     """V5 pipeline: ONE LLM call that picks one of six robust combiners (menu) for the series.
 
@@ -2297,8 +2298,14 @@ def run_llm_pipeline_v5(
 
     _log(
         f"Starting V5 | selector={selector_model.model} | rolling={rolling_mode} "
-        f"| train_window={train_window} | use_rag={use_rag}"
+        f"| train_window={train_window} | use_rag={use_rag} | cross_dataset={cross_dataset_fallback} "
+        f"| memory_db={memory_db_path}"
     )
+
+    # Expose RAG configuration to the brief tool via context (it doesn't take params directly).
+    set_context("v5_use_rag", bool(use_rag))
+    set_context("v5_memory_db_path", str(memory_db_path))
+    set_context("v5_cross_dataset_fallback", bool(cross_dataset_fallback))
 
     from orchestrator.combiners import MENU, apply_combiner, evaluate_method_on_validation
     from orchestrator.features import compute_series_features
