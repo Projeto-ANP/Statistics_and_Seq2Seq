@@ -270,9 +270,23 @@ def exec_dataset_orchestrator(
     # resolved case-insensitively from the dataset name; if still not found, the pipeline
     # falls back to the validation-window proxy.
     original_tsf_path: str = None,
-    # V5: RAG memory location (SQLite). One file per experiment.
-    v5_memory_db_path: str = "./memory/v5_episodic.db",
+    # V5 RAG memory configuration.
+    #
+    # `v5_memory_db_path=None` (default) → auto-derives to "./memory/v5_<dataset>.db" so each
+    # dataset accumulates its own isolated memory. This is the CLEAN experimental design: the
+    # learning curve per dataset is measurable and there's no cross-dataset contamination.
+    #
+    # `v5_cross_dataset_fallback=False` (default) → RAG retrieval never reaches outside the
+    # current dataset, even if there are <k=5 episodes available locally. The Selector falls
+    # back to local validation scores + features instead. Set to True to enable cross-dataset
+    # bootstrap (riskier; turns heterogeneous-domain memory into possible noise).
+    #
+    # To disable memory entirely (Config A — ablation): pass `v5_use_rag=False`.
+    # To use the SAME db across multiple runs (e.g., share NN5 + ANP memory): pass an explicit
+    # path like "./memory/v5_global.db" AND set v5_cross_dataset_fallback=True.
+    v5_memory_db_path: str = None,
     v5_use_rag: bool = True,
+    v5_cross_dataset_fallback: bool = False,
 ):
     # dataset = "ANP_MONTHLY"
     # dataset = "ETTH1"
@@ -344,6 +358,13 @@ def exec_dataset_orchestrator(
                 _is_v3 = version.startswith("v3") or version.startswith("v4")
                 _is_v2 = version.startswith("v2")
                 if _is_v5:
+                    # Resolve the memory DB path. None → per-dataset auto-naming, which
+                    # isolates each dataset's memory cleanly. Explicit path → shared DB.
+                    effective_memory_db = (
+                        v5_memory_db_path
+                        if v5_memory_db_path
+                        else f"./memory/v5_{dataset}.db"
+                    )
                     result = run_langchain_pipeline_v5(
                         selector_model=selector_model,
                         debug=debug,
@@ -352,7 +373,8 @@ def exec_dataset_orchestrator(
                         require_tool_call=True,
                         llm_logs=llm_logs,
                         use_rag=v5_use_rag,
-                        memory_db_path=v5_memory_db_path,
+                        memory_db_path=effective_memory_db,
+                        cross_dataset_fallback=v5_cross_dataset_fallback,
                     )
                 elif _is_v3:
                     result = run_langchain_pipeline_v3(
@@ -1195,11 +1217,23 @@ if __name__ == "__main__":
     dataset = "ANP_MONTHLY"
     original_tsf_path = "../forecasting_datasets/mes_11_venda_mensal.tsf"
 
-    # ── V5 (current default): single LLM Selector + RAG memory ───────────────
-    # Picks 1 of 6 robust combiners per series. Bounded LLM agency.
-    # Memory persists at ./memory/v5_episodic.db — created automatically.
-    # Cold-start safe: first ~30 series fall back to local validation scores; after that the
-    # RAG retriever surfaces past similar series as in-context evidence for the Selector.
+    # ════════════════════════════════════════════════════════════════════════
+    #  V5 — THREE RECOMMENDED RAG CONFIGURATIONS (uncomment ONE at a time)
+    # ════════════════════════════════════════════════════════════════════════
+    # Three configs let you isolate the contribution of each pillar in the paper:
+    #
+    #   Config A — V5 NO MEMORY (ablation baseline; only the menu + selector).
+    #              Measures the menu's pure contribution. Most defensible result.
+    #
+    #   Config B — V5 WITH PER-DATASET MEMORY (recommended default).
+    #              Each dataset accumulates its own DB (./memory/v5_<DATASET>.db).
+    #              No cross-contamination. Memory grows during the run.
+    #
+    #   Config C — V5 WITH CROSS-DATASET MEMORY (optional risky ablation).
+    #              One shared DB. Useful if you pre-warmed memory with M4_MONTHLY
+    #              before running ANP_MONTHLY. Only run AFTER B works.
+
+    # ── Config B (DEFAULT — per-dataset isolated memory, no cross-domain leak) ──
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
@@ -1211,9 +1245,37 @@ if __name__ == "__main__":
         llm_logs=True,
         version="v5_selector",
         original_tsf_path=original_tsf_path,
-        v5_memory_db_path="./memory/v5_episodic.db",
+        # v5_memory_db_path=None → auto-derives to ./memory/v5_<DATASET>.db
+        v5_memory_db_path=None,
         v5_use_rag=True,
+        v5_cross_dataset_fallback=False,
     )
+
+    # ── Config A — V5 sem memória (pure menu ablation) ──────────────────────
+    # exec_dataset_orchestrator(
+    #     models,
+    #     dataset=dataset,
+    #     use_llm=True,
+    #     selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     debug=False, rolling="expanding", train_window=3, llm_logs=True,
+    #     version="v5_no_rag",            # different version → different output folder
+    #     original_tsf_path=original_tsf_path,
+    #     v5_use_rag=False,               # disable RAG entirely
+    # )
+
+    # ── Config C — V5 com memória cross-dataset (precisa de pre-warmup) ─────
+    # exec_dataset_orchestrator(
+    #     models,
+    #     dataset=dataset,
+    #     use_llm=True,
+    #     selector_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.0),
+    #     debug=False, rolling="expanding", train_window=3, llm_logs=True,
+    #     version="v5_cross_rag",
+    #     original_tsf_path=original_tsf_path,
+    #     v5_memory_db_path="./memory/v5_global.db",   # shared DB across datasets
+    #     v5_use_rag=True,
+    #     v5_cross_dataset_fallback=True,              # allow looking at other datasets
+    # )
 
     # ── V3+Sprint-1 (legacy, kept for ablations) ─────────────────────────────
     # exec_dataset_orchestrator(
