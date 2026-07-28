@@ -36,7 +36,7 @@ class LLMRole:
 
     model: Optional[str] = None
     temperature: float = 0.2
-    base_url: str = "http://127.0.0.1:11501"
+    base_url: str = "http://127.0.0.1:11434"
 
     @property
     def enabled(self) -> bool:

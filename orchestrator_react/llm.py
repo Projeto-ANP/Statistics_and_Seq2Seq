@@ -58,7 +58,7 @@ class ScriptedLLM:
 
 @dataclass
 class OllamaClient:
-    """Real client over a local Ollama server (default http://127.0.0.1:11501)."""
+    """Real client over a local Ollama server (default http://127.0.0.1:11434)."""
 
     role: LLMRole
     num_ctx: int = 8192
