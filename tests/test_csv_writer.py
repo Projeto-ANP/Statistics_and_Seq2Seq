@@ -66,12 +66,14 @@ def test_new_columns_are_all_present():
         "agent_model_combinator", "agent_model_diagnostico", "agent_model_relato",
         "accept_confidence", "calibration_gate_triggered", "ablation_config",
         "justificativa_final",
+        "selection_margin", "selection_bootstrap_pvalue", "selection_dm_pvalue",
+        "selection_verdict",
     ):
         assert name in W.COLS_SERIE
 
 
 def test_schema_has_no_duplicates():
-    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 43
+    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 47
 
 
 # ══════════════════════════════════════════════════════════════════════════════

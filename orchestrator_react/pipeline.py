@@ -207,6 +207,7 @@ class SeriesOutcome:
                 "n_windows": state.n_windows,
             },
             "loop": self.react.summary(),
+            "selection_confidence": state.selection_confidence(),
             "diagnosis": self.diagnosis or None,
             "config": {
                 "ablation": state.config.fingerprint(),
@@ -308,6 +309,7 @@ class SeriesOutcome:
             "agent_model_diagnostico": cfg.diagnostician.label(),
             "agent_model_relato": cfg.reporter.label(),
             "accept_confidence": react.accept_confidence if react else None,
+            **_selection_columns(self.state),
             "calibration_gate_triggered": bool(
                 self.phase2.get("calibration_gate", {}).get("triggered", False)
             ),
@@ -503,6 +505,24 @@ def run_dataset(
 # ──────────────────────────────────────────────────────────────────────────────
 # helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _selection_columns(state: Optional[ReactState]) -> Dict[str, Any]:
+    """Deterministic answer to "is this choice defensible?", for the CSV."""
+    if state is None:
+        return {
+            "selection_margin": None,
+            "selection_bootstrap_pvalue": None,
+            "selection_dm_pvalue": None,
+            "selection_verdict": "no_comparison",
+        }
+    conf = state.selection_confidence()
+    return {
+        "selection_margin": conf.get("margin"),
+        "selection_bootstrap_pvalue": conf.get("bootstrap_pvalue"),
+        "selection_dm_pvalue": conf.get("dm_pvalue"),
+        "selection_verdict": conf.get("verdict"),
+    }
 
 
 def _round(x: Any, nd: int = 6) -> Optional[float]:

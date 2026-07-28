@@ -207,6 +207,9 @@ EXPECTED_FIELDS = {
     "agent_model_combinator", "agent_model_diagnostico", "agent_model_relato",
     "accept_confidence", "calibration_gate_triggered", "ablation_config",
     "justificativa_final",
+    # beyond 4.4: the deterministic replacement for self-reported confidence
+    "selection_margin", "selection_bootstrap_pvalue", "selection_dm_pvalue",
+    "selection_verdict",
 }
 
 REMOVED_FIELDS = {

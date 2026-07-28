@@ -651,7 +651,12 @@ def evaluate_strategy(
         },
         "rmse_per_window": [round(float(w["RMSE"]), 4) for w in attempt.per_window],
         "score": round(float(attempt.score), 4),
-        "current_best": {"id": best.attempt_id, "score": round(float(best.score), 4)},
+        "current_best": {
+            "id": best.attempt_id,
+            "score": round(float(best.score), 4),
+            "strategy": best.brief(include_rationale=False)["strategy"],
+            "origin": best.origin,
+        },
         "worse_than_best_by": gap,
         "is_best": bool(attempt is best),
     }

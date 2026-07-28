@@ -631,5 +631,188 @@ def test_unparsed_turns_keep_the_raw_text_for_forensics():
     assert "I will begin" not in _json.dumps(r.trajectory)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# waste the server run exposed
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_empty_responses_are_retried_not_charged():
+    """gpt-oss sometimes emits only a <think> block and stops.
+
+    That is a failed generation, not a decision, so it must not consume one of the
+    eight hypotheses the agent gets.
+    """
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    llm = ScriptedLLM([
+        "",                                            # empty
+        "<think>still thinking</think>",               # empty after the think block
+        step("evaluate_strategy", {"combine": "median", "pool": FULL_POOL}, "test it"),
+        step("accept", {"attempt_id": "a2"}),
+    ])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.empty_responses == 2
+    assert r.iterations_used == 2, "the two empty generations cost no iteration"
+    assert r.stop_reason == "agent_accepted"
+    assert [t["action"] for t in r.trajectory] == ["evaluate_strategy", "accept"]
+
+
+def test_a_persistently_empty_model_still_terminates():
+    s, series, pool = prepared(ReactConfig(max_iterations=2))
+    r = run_react_loop(s, ScriptedLLM([""] * 20), series, pool, s.config)
+    assert r.iterations_used == 2
+    assert r.final_attempt is not None
+
+
+def test_a_malformed_answer_is_still_shown_to_the_agent():
+    """Non-empty but unreadable is different: the model can learn from that one."""
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    llm = ScriptedLLM(["I think the mean looks fine", step("accept", {"attempt_id": "a1"})])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.empty_responses == 0
+    assert r.trajectory[0]["action"] == "unparsed"
+    assert r.iterations_used == 2
+
+
+def test_unparsed_turns_keep_the_raw_text():
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    llm = ScriptedLLM(["I will begin by reviewing the series.", step("accept", {"attempt_id": "a1"})])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert "I will begin by reviewing" in r.parse_failures[0]["raw"]
+    assert "I will begin" not in json.dumps(r.trajectory), "must not bloat the CSV"
+
+
+def test_unscored_weight_handles_are_flagged_near_the_end():
+    """The agent burned its last turns building handles it never evaluated."""
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    handle = T.weights_inverse_error(s, pool="pool1")["weights"]
+
+    assert "never scored" not in P.build_turn_prompt(s, series, pool, [], 1, 8)
+    late = P.build_turn_prompt(s, series, pool, [], 6, 8)
+    assert "never scored" in late and handle in late
+
+    T.evaluate_strategy(s, {"combine": "weighted", "pool": "pool1", "weights": handle})
+    assert "never scored" not in P.build_turn_prompt(s, series, pool, [], 6, 8)
+
+
+def test_the_prompt_says_handles_start_empty():
+    """A model fresh off another series reached for a `w1` that did not exist."""
+    s, series, pool = prepared()
+    assert "none yet" in P.build_turn_prompt(s, series, pool, [], 1, 8)
+    assert "Never assume w1 or pool1 exists" in P.build_system_prompt()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# selection confidence — the deterministic replacement for self-report
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_self_reported_confidence_is_recorded_but_not_trusted():
+    """gpt-oss:20b answered 0.9 on all 13 accepts of a 19-series run.
+
+    The field is kept because the specification asks for it and because "the model
+    always says 0.9" is itself a finding, but nothing downstream depends on it.
+    """
+    s, series, pool = prepared(ReactConfig(max_iterations=2))
+    llm = ScriptedLLM([step("accept", {"attempt_id": "a1", "confidence": 0.9})])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.accept_confidence == 0.9
+    # the statistical verdict is computed independently of what the model claimed
+    assert "confidence" not in json.dumps(s.selection_confidence())
+
+
+def test_selection_confidence_has_the_full_schema():
+    s, series, pool = prepared()
+    conf = s.selection_confidence()
+    assert set(conf) >= {
+        "n_windows", "n_attempts", "winner", "runner_up", "margin",
+        "bootstrap_pvalue", "dm_pvalue", "verdict",
+    }
+    assert conf["winner"] == s.best_attempt().attempt_id
+
+
+def test_two_indistinguishable_strategies_are_reported_as_such():
+    """The honest answer with three windows is usually "cannot tell"."""
+    s, series, pool = prepared()
+    T.evaluate_strategy(s, {"combine": "trimmed_mean", "pool": FULL_POOL, "trim_pct": 0.05})
+    conf = s.selection_confidence()
+    assert conf["verdict"] in {"indistinguishable", "weak", "separated", "undetermined"}
+    assert conf["runner_up"] is not None
+    assert conf["margin"] is not None
+
+
+def test_a_clearly_worse_runner_up_moves_the_verdict():
+    """A deliberately bad model against the best baseline should separate."""
+    s, series, pool = prepared()
+    # keep only two attempts: the best baseline and a terrible single model
+    best = s.best_attempt()
+    s.attempts = [a for a in s.attempts if a is best]
+    s._attempt_by_spec = {k: v for k, v in s._attempt_by_spec.items() if v is best}
+    T.evaluate_strategy(s, {"combine": "best_single", "model": "bad"})
+
+    conf = s.selection_confidence()
+    assert conf["margin"] > 0, "the runner-up must score worse"
+    assert conf["dm_pvalue"] is not None
+    assert conf["verdict"] in {"separated", "weak", "indistinguishable"}
+
+
+def test_a_single_attempt_cannot_be_compared():
+    s = make_state()
+    POOL.seed_baselines(s, methods=("mean",))
+    conf = s.selection_confidence()
+    assert conf["verdict"] == "no_comparison"
+    assert conf["runner_up"] is None
+
+
+def test_every_attempt_carries_its_paired_evidence():
+    """Without per-window scores and residuals there is nothing to test with."""
+    s, series, pool = prepared()
+    for attempt in s.attempts:
+        assert len(attempt.per_window_scores) == s.n_windows
+        assert len(attempt.residuals) == s.n_windows * s.horizon
+        assert all(np.isfinite(v) for v in attempt.residuals)
+
+
+def test_residuals_match_the_backtest():
+    s, series, pool = prepared()
+    attempt = [a for a in s.attempts if a.spec["combine"] == "mean"][0]
+    combined, _ = s.backtest(attempt.spec)
+    expected = (combined - s.y_true).reshape(-1)
+    assert attempt.residuals == pytest.approx(expected)
+
+
+def test_selection_confidence_is_deterministic():
+    """Same data, same verdict — a bootstrap with a fixed seed must not wander."""
+    a = make_state(seed=11); POOL.run_phase2(a, a.config)
+    b = make_state(seed=11); POOL.run_phase2(b, b.config)
+    assert a.selection_confidence() == b.selection_confidence()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# exploration: the agent lost to `dba` three times and never tried dba variants
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_the_prompt_points_at_the_leading_method():
+    sp = P.build_system_prompt()
+    assert "SAME method on a better pool" in sp
+    assert "dba on a pruned pool" in sp
+
+
+def test_the_observation_names_the_leader_when_you_lose():
+    """Seeing only "rank 3/5" hides which method you are losing to."""
+    s, series, pool = prepared()
+    losing = T.evaluate_strategy(s, {"combine": "best_single", "model": "bad"})
+    line = P.summarize_observation("evaluate_strategy", True, losing)
+    assert "leader is" in line
+    assert losing["current_best"]["strategy"]
+    assert losing["current_best"]["origin"] == "baseline"
+
+    # re-submitting whatever is currently leading must not report a leader
+    leading = T.evaluate_strategy(s, s.best_attempt().spec)
+    assert leading["is_best"] is True
+    assert "leader is" not in P.summarize_observation("evaluate_strategy", True, leading)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

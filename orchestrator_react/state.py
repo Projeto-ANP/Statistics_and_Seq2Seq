@@ -11,7 +11,7 @@ it always goes through the validation-window backtest first.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -38,6 +38,11 @@ class Attempt:
     rationale: str = ""
     iteration: Optional[int] = None
     n_models: int = 0
+    #: Composite score per validation window, normalised against the mean anchor.
+    #: A paired sample: it is what makes a bootstrap between two attempts possible.
+    per_window_scores: List[float] = field(default_factory=list)
+    #: Flattened (forecast - actual) across every window, for Diebold-Mariano.
+    residuals: List[float] = field(default_factory=list)
 
     def brief(self, include_rationale: bool = True) -> Dict[str, Any]:
         """Compact history row, exactly as the agent sees it."""
@@ -136,6 +141,7 @@ class ReactState:
         self.tool_errors: List[Dict[str, Any]] = []
 
         self._baseline_agg: Optional[Dict[str, float]] = None
+        self._baseline_windows: Optional[List[Dict[str, float]]] = None
         self._contiguous: Optional[bool] = None
 
     # ── validation ───────────────────────────────────────────────────────────
@@ -426,9 +432,18 @@ class ReactState:
     def baseline_aggregate(self) -> Dict[str, float]:
         """Score normalisation anchor: plain mean of all models."""
         if self._baseline_agg is None:
-            combined, _ = self.backtest({"combine": "mean", "pool": FULL_POOL})
-            self._baseline_agg, _ = self._score_metrics(combined)
-        return self._baseline_agg
+            self._compute_anchor()
+        return self._baseline_agg  # type: ignore[return-value]
+
+    def baseline_per_window(self) -> List[Dict[str, float]]:
+        """The anchor's metrics window by window, for the paired comparison."""
+        if self._baseline_windows is None:
+            self._compute_anchor()
+        return self._baseline_windows  # type: ignore[return-value]
+
+    def _compute_anchor(self) -> None:
+        combined, _ = self.backtest({"combine": "mean", "pool": FULL_POOL})
+        self._baseline_agg, self._baseline_windows = self._score_metrics(combined)
 
     # ── history ──────────────────────────────────────────────────────────────
 
@@ -451,7 +466,15 @@ class ReactState:
             return self._attempt_by_spec[key], False
 
         agg, per_window = self._score_metrics(combined)
-        score = M.composite_score(agg, self.baseline_aggregate(), self.config.score_weights())
+        weights = self.config.score_weights()
+        score = M.composite_score(agg, self.baseline_aggregate(), weights)
+
+        anchor_windows = self.baseline_per_window()
+        per_window_scores = [
+            M.composite_score(per_window[i], anchor_windows[i], weights)
+            for i in range(min(len(per_window), len(anchor_windows)))
+        ]
+        residuals = (combined - self.y_true).reshape(-1)
 
         self._attempt_seq += 1
         n_models = 1 if norm["combine"] == "best_single" else len(self.get_pool(norm["pool"]))
@@ -465,6 +488,8 @@ class ReactState:
             rationale=rationale,
             iteration=iteration,
             n_models=n_models,
+            per_window_scores=[float(v) for v in per_window_scores],
+            residuals=[float(v) for v in residuals],
         )
         self.attempts.append(attempt)
         self._attempt_by_spec[key] = attempt
@@ -482,6 +507,81 @@ class ReactState:
 
     def rank_of(self, attempt: Attempt) -> int:
         return self.ranked_attempts().index(attempt) + 1
+
+    # ── is the winner actually separable from the runner-up? ────────────────
+
+    def selection_confidence(self) -> Dict[str, Any]:
+        """How defensible is the choice, given only `n_windows` validation windows?
+
+        A language model asked to rate its own confidence answers with a constant
+        (gpt-oss:20b returned 0.9 on every accept of a 19-series run), so the number
+        carries no information. This is the deterministic alternative: it asks
+        whether the selected strategy is statistically distinguishable from the
+        runner-up, using the two tests the forecasting literature uses for exactly
+        this question.
+
+            margin              relative score gap to the runner-up
+            bootstrap_pvalue    paired bootstrap over the per-window scores
+            dm_pvalue           Diebold-Mariano on the residuals, HLN-corrected
+            verdict             "separated" when both reject at alpha,
+                                "indistinguishable" when neither does,
+                                "weak" when they disagree
+
+        With three windows the honest answer is usually "indistinguishable", and
+        saying so is the point: it marks the rows where the selection is within
+        noise and should not be read as evidence for the chosen method.
+        """
+        ranked = self.ranked_attempts()
+        out: Dict[str, Any] = {
+            "n_windows": self.n_windows,
+            "n_attempts": len(ranked),
+            "winner": ranked[0].attempt_id if ranked else None,
+            "runner_up": None,
+            "margin": None,
+            "bootstrap_pvalue": None,
+            "dm_pvalue": None,
+            "verdict": "no_comparison",
+        }
+        if len(ranked) < 2:
+            return out
+
+        best, second = ranked[0], ranked[1]
+        out["runner_up"] = second.attempt_id
+        if np.isfinite(best.score) and np.isfinite(second.score):
+            scale = abs(best.score) or 1.0
+            out["margin"] = round(float((second.score - best.score) / scale), 5)
+
+        try:
+            from orchestrator.diagnostics import diebold_mariano, paired_bootstrap_score
+        except Exception:  # pragma: no cover - the module is pure numpy
+            return out
+
+        if len(best.per_window_scores) >= 3 and len(second.per_window_scores) >= 3:
+            boot = paired_bootstrap_score(
+                np.asarray(best.per_window_scores), np.asarray(second.per_window_scores)
+            )
+            p = boot.get("p_value")
+            out["bootstrap_pvalue"] = round(float(p), 4) if p is not None and np.isfinite(p) else None
+
+        if best.residuals and second.residuals:
+            dm = diebold_mariano(
+                np.asarray(best.residuals), np.asarray(second.residuals), loss="squared", h=1
+            )
+            p = dm.get("p_value")
+            out["dm_pvalue"] = round(float(p), 4) if p is not None and np.isfinite(p) else None
+
+        alpha = 0.10
+        votes = [p for p in (out["bootstrap_pvalue"], out["dm_pvalue"]) if p is not None]
+        if not votes:
+            out["verdict"] = "undetermined"
+        elif all(p < alpha for p in votes):
+            out["verdict"] = "separated"
+        elif all(p >= alpha for p in votes):
+            out["verdict"] = "indistinguishable"
+        else:
+            out["verdict"] = "weak"
+        out["alpha"] = alpha
+        return out
 
     # ── tool trace ───────────────────────────────────────────────────────────
 

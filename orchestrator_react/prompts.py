@@ -82,6 +82,10 @@ def build_system_prompt(include_history_rules: bool = True) -> str:
         "  handles you will not evaluate.",
         "- Handles start empty for every series. Never assume w1 or pool1 exists:",
         "  create it in this run before you refer to it.",
+        "- If a SEEDED BASELINE is leading, the most direct improvement is usually the",
+        "  SAME method on a better pool - dba on a pruned pool, median on a stable",
+        "  subset - not a different method entirely. The baselines run on all models,",
+        "  so a smaller pool is the variable you have not tried yet.",
         "- If a call is rejected, read the error: it lists the arguments that ARE",
         "  accepted. Do not retry the same shape.",
         f"- When you {TERMINAL_ACTION}, justification must explain the choice in terms of",
@@ -284,11 +288,15 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
         return f"ERROR {observation.get('error', 'unknown')}: {str(observation.get('detail', ''))[:120]}"
 
     if action == "evaluate_strategy":
+        leader = observation.get("current_best", {})
+        tail = ""
+        if not observation.get("is_best"):
+            tail = f", leader is {leader.get('id')} ({leader.get('strategy', '?')})"
         return (
             f"rank {observation.get('rank')}/{observation.get('total_attempts')}"
             f" score={observation.get('score')}"
             f" rmse={observation.get('metrics', {}).get('rmse')}"
-            + (" (best so far)" if observation.get("is_best") else "")
+            + (" (best so far)" if observation.get("is_best") else tail)
             + (" [already tested]" if observation.get("already_tested") else "")
         )
     if action.startswith("weights_"):

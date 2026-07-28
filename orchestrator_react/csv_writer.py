@@ -77,6 +77,14 @@ NEW_COLUMNS: List[str] = [
     "agent_model_diagnostico",
     "agent_model_relato",
     "accept_confidence",
+    # Beyond Section 4.4: the agent's self-reported confidence turned out to be a
+    # constant (0.9 on every accept of a 19-series gpt-oss:20b run), so it cannot
+    # support any claim. These four are the deterministic replacement — whether the
+    # selected strategy is statistically distinguishable from the runner-up.
+    "selection_margin",
+    "selection_bootstrap_pvalue",
+    "selection_dm_pvalue",
+    "selection_verdict",
     "calibration_gate_triggered",
     "ablation_config",
     "justificativa_final",
