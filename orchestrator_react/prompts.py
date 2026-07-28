@@ -77,6 +77,11 @@ def build_system_prompt(include_history_rules: bool = True) -> str:
         "  combine_weighted; you will never see the numbers, and you do not need to.",
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
+        "- Computing weights scores NOTHING on its own: every weights_* call must be",
+        "  followed by evaluate_strategy. Do not spend your last turns building",
+        "  handles you will not evaluate.",
+        "- Handles start empty for every series. Never assume w1 or pool1 exists:",
+        "  create it in this run before you refer to it.",
         "- If a call is rejected, read the error: it lists the arguments that ARE",
         "  accepted. Do not retry the same shape.",
         f"- When you {TERMINAL_ACTION}, justification must explain the choice in terms of",
@@ -133,10 +138,14 @@ def build_turn_prompt(
             parts.append("  (empty)")
 
     handles = _handles_summary(state)
+    parts.append("")
     if handles:
-        parts.append("")
         parts.append("HANDLES YOU HAVE CREATED:")
         parts.append(_compact(handles, limit=600))
+    else:
+        # Saying "none" matters: handles reset per series, and a model that just
+        # finished another one will otherwise reach for a `w1` that does not exist.
+        parts.append("HANDLES YOU HAVE CREATED: none yet (pools and weights start empty)")
 
     if scratchpad:
         parts.append("")
@@ -153,7 +162,14 @@ def build_turn_prompt(
         parts.append(_compact(last_observation, limit=1400))
 
     remaining = max_iterations - iteration + 1
+    pending = _unscored_weights(state)
     parts.append("")
+    if pending and remaining <= 3:
+        parts.append(
+            f"NOTE: {pending} were computed but never scored. Weights score nothing "
+            "until evaluate_strategy runs on them, so that work is lost unless you "
+            "evaluate now."
+        )
     if remaining <= 1:
         parts.append(
             f"This is your LAST iteration. Use {TERMINAL_ACTION} to take the best attempt."
@@ -234,11 +250,13 @@ def _handles_summary(state: ReactState) -> Dict[str, Any]:
         for h, idx in state.pools.items()
         if h != "pool_full"
     }
+    used = {a.spec.get("weights") for a in state.attempts if a.spec.get("weights")}
     weights = {
         h: {
             "method": r.method,
             "pool": r.pool_handle,
             "concentration": state.weights_summary(h).get("concentration"),
+            "scored": h in used,
         }
         for h, r in state.weights.items()
     }
@@ -248,6 +266,12 @@ def _handles_summary(state: ReactState) -> Dict[str, Any]:
     if weights:
         out["weights"] = weights
     return out
+
+
+def _unscored_weights(state: ReactState) -> List[str]:
+    """Weight handles that cost a turn to build and have never been scored."""
+    used = {a.spec.get("weights") for a in state.attempts if a.spec.get("weights")}
+    return [h for h in state.weights if h not in used]
 
 
 def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) -> str:

@@ -32,6 +32,10 @@ from orchestrator_react.registry import TERMINAL_ACTION, call_tool, tools_called
 from orchestrator_react.state import Attempt, ReactState
 
 
+#: How many times to re-ask when the model returns nothing at all.
+EMPTY_RESPONSE_RETRIES = 2
+
+
 @dataclass
 class ReactResult:
     """Everything Phase 3 hands to Phase 4 and to the CSV writer."""
@@ -49,6 +53,13 @@ class ReactResult:
     elapsed_s: float = 0.0
     tools: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
+    #: Generations that came back empty and were re-asked rather than charged to
+    #: the iteration budget.
+    empty_responses: int = 0
+    #: Raw model output for every turn the parser could not read. Kept out of the
+    #: CSV, which it would bloat, and written to the per-series artifacts instead —
+    #: that is where to look when a model keeps missing the output format.
+    parse_failures: List[Dict[str, Any]] = field(default_factory=list)
     #: Raw model output for every turn the parser could not read. Kept out of the
     #: CSV, which would bloat `react_trajectory_json`, and written to the per-series
     #: artifacts instead — that is where you look when a model keeps missing the
@@ -67,6 +78,7 @@ class ReactResult:
             "overridden": self.overridden,
             "llm_model": self.llm_model,
             "n_trajectory_steps": len(self.trajectory),
+            "empty_responses": self.empty_responses,
             "elapsed_s": round(self.elapsed_s, 2),
         }
 
@@ -135,14 +147,32 @@ def run_react_loop(
             diagnosis=diagnosis,
         )
 
-        try:
-            raw = client.complete(system, user)
-        except LLMError as exc:
-            result.errors.append(str(exc))
-            result.stop_reason = "llm_error"
+        # An EMPTY answer is a failed generation, not a decision: gpt-oss emits a
+        # <think> block and sometimes stops before writing anything after it.
+        # Retrying costs a call; spending one of eight iterations on it costs a
+        # hypothesis. A malformed but non-empty answer is different — that one goes
+        # back to the agent as an observation, because it can learn from it.
+        raw = ""
+        step = None
+        for attempt_no in range(1, EMPTY_RESPONSE_RETRIES + 2):
+            try:
+                raw = client.complete(system, user)
+            except LLMError as exc:
+                result.errors.append(str(exc))
+                result.stop_reason = "llm_error"
+                step = None
+                break
+            step = parse_agent_step(raw)
+            if step.ok or step.parse_error != "empty response":
+                break
+            result.empty_responses += 1
+            if attempt_no <= EMPTY_RESPONSE_RETRIES:
+                result.errors.append(
+                    f"iteration {iteration}: empty response, retrying "
+                    f"({attempt_no}/{EMPTY_RESPONSE_RETRIES})"
+                )
+        if step is None:
             break
-
-        step = parse_agent_step(raw)
         entry: Dict[str, Any] = {
             "iteration": iteration,
             "thought": _clip(step.thought, 600),
