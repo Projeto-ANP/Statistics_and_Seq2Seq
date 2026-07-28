@@ -24,6 +24,7 @@ from orchestrator_react.config import LLMRole, ReactConfig
 from orchestrator_react.data_source import SeriesAlignmentError, load_series_source
 from orchestrator_react.llm import ScriptedLLM
 from orchestrator_react.state import FULL_POOL
+from test_orchestrator_react import make_state as _ms
 
 from test_ingest_and_pool import (  # noqa: E402
     HORIZON,
@@ -199,6 +200,7 @@ EXPECTED_FIELDS = {
     "description", "decision_report", "score_preset", "tool_missing", "tools_called",
     "best_strategy_name", "best_strategy_method", "best_strategy_params",
     "predict_debug", "selected_base_models", "weights_by_horizon",
+    "n_pool_models", "effective_models", "n_effective_models",
     "final_candidate_names", "final_candidate_count",
     # new (Section 4.4)
     "series_profile_json", "ranking_stability_score", "error_correlation_groups",
@@ -311,6 +313,68 @@ def test_trajectory_column_stays_small(fake_repo):
     llm = ScriptedLLM([step("series_profile", {}), step("accept", {"attempt_id": "a1"})])
     out = run(fake_repo, client=llm)
     assert len(out.csv_fields()["react_trajectory_json"]) < 3000
+
+
+def test_effective_models_expose_a_collapsed_weighting(fake_repo):
+    """A "weighted combination of N models" can be one model wearing a label.
+
+    Real case, NN5 series 11: OLS on three windows put weight 1.0 on
+    NaiveMovingAverage and 0.0 on the other eight, while the row still reported
+    nine selected models. Anyone analysing pool size would have read nine.
+    """
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    top = T.select_top_k(s, k=4)
+    # force a one-hot weighting, exactly what OLS produces when it collapses
+    handle = T.weights_softmax_neg_error(s, pool=top["pool"], eta=20.0)["weights"]
+    recipe = s.get_weights_recipe(handle)
+    recipe.resolved = np.array([1.0, 0.0, 0.0, 0.0])
+
+    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
+                           config=s.config)
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": top["pool"], "weights": handle})
+    from orchestrator_react.react_loop import ReactResult
+
+    out.react = ReactResult(final_attempt=attempt)
+
+    assert len(out.selected_models()) == 4, "the pool is still four models"
+    assert len(out.effective_models()) == 1, "only one of them carries weight"
+    fields = out.csv_fields()
+    assert fields["n_pool_models"] == 4
+    assert fields["n_effective_models"] == 1
+    assert "effective=1" in out.decision_report()
+
+
+def test_effective_models_match_the_pool_when_weights_are_spread(fake_repo):
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    top = T.select_top_k(s, k=3)
+    handle = T.weights_inverse_error(s, pool=top["pool"], shrinkage=0.5)["weights"]
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": top["pool"], "weights": handle})
+    from orchestrator_react.react_loop import ReactResult
+
+    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
+                           config=s.config, react=ReactResult(final_attempt=attempt))
+    assert out.effective_models() == sorted(out.selected_models())
+
+
+def test_bootstrap_is_marked_unreliable_with_three_windows():
+    """Resampling three values gives a p-value in roughly {0, 0.5, 1}.
+
+    It over-rejects, so with few windows the verdict follows Diebold-Mariano and
+    the bootstrap is reported as context rather than as evidence.
+    """
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    T.evaluate_strategy(s, {"combine": "best_single", "model": "bad"})
+    conf = s.selection_confidence()
+    assert s.n_windows == 3
+    assert conf["bootstrap_reliable"] is False
+    assert conf["bootstrap_pvalue"] is not None, "still reported, just not trusted"
+    # the verdict must be consistent with DM alone
+    dm = conf["dm_pvalue"]
+    if dm is not None:
+        assert conf["verdict"] == ("separated" if dm < 0.10 else "indistinguishable")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

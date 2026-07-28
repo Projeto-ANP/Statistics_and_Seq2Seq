@@ -570,8 +570,23 @@ class ReactState:
             p = dm.get("p_value")
             out["dm_pvalue"] = round(float(p), 4) if p is not None and np.isfinite(p) else None
 
+        # A paired bootstrap resampling three values can only produce a handful of
+        # distinct means, so its p-value degenerates to roughly {0, 0.5, 1} and it
+        # over-rejects. Diebold-Mariano works on n_windows * horizon residuals
+        # (24 points here), which is coarse but not degenerate. With few windows the
+        # verdict therefore follows DM, and the bootstrap is reported as context
+        # rather than as evidence.
         alpha = 0.10
-        votes = [p for p in (out["bootstrap_pvalue"], out["dm_pvalue"]) if p is not None]
+        min_windows_for_bootstrap = 5
+        bootstrap_reliable = self.n_windows >= min_windows_for_bootstrap
+        out["alpha"] = alpha
+        out["bootstrap_reliable"] = bootstrap_reliable
+
+        votes = [out["dm_pvalue"]]
+        if bootstrap_reliable:
+            votes.append(out["bootstrap_pvalue"])
+        votes = [p for p in votes if p is not None]
+
         if not votes:
             out["verdict"] = "undetermined"
         elif all(p < alpha for p in votes):
@@ -580,7 +595,6 @@ class ReactState:
             out["verdict"] = "indistinguishable"
         else:
             out["verdict"] = "weak"
-        out["alpha"] = alpha
         return out
 
     # ── tool trace ───────────────────────────────────────────────────────────

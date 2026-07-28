@@ -59,6 +59,9 @@ KEPT_COLUMNS: List[str] = [
     "best_strategy_params",
     "predict_debug",
     "selected_base_models",
+    "n_pool_models",
+    "effective_models",
+    "n_effective_models",
     "weights_by_horizon",
 ]
 

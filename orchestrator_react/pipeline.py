@@ -198,6 +198,7 @@ class SeriesOutcome:
             "attempt_id": attempt.attempt_id,
             "origin": attempt.origin,
             "models": self.selected_models(),
+            "effective_models": self.effective_models(),
             "weights": weights_block,
             "validation": {
                 "score": _round(attempt.score),
@@ -216,6 +217,23 @@ class SeriesOutcome:
             },
         }
 
+    def effective_models(self, threshold: float = 0.01) -> List[str]:
+        """Models that actually carry weight in the winning strategy.
+
+        `selected_models` reports the pool the strategy was built on, which is not
+        the same thing: OLS on three windows routinely collapses onto one model, so
+        a "weighted combination of 9 models" can be a single model wearing a
+        weighted label. Reporting only the pool size would overstate how much
+        combination the agent is really doing.
+        """
+        if self.state is None or not self.react or not self.react.final_attempt:
+            return []
+        weights = effective_weights(self.state, self.react.final_attempt.spec)["weights"]
+        if not weights:
+            return []
+        first = weights[next(iter(weights))]
+        return sorted(name for name, value in first.items() if abs(float(value)) > threshold)
+
     def selected_models(self) -> List[str]:
         if not self.react or not self.react.final_attempt or self.state is None:
             return []
@@ -231,7 +249,8 @@ class SeriesOutcome:
         r = self.react
         a = r.final_attempt
         return (
-            f"strategy={a.spec['combine']} | models={len(self.selected_models())} "
+            f"strategy={a.spec['combine']} | pool={len(self.selected_models())} "
+            f"effective={len(self.effective_models())} "
             f"| score={_round(a.score)} | origin={a.origin} "
             f"| iterations={r.iterations_used} | stop={r.stop_reason} "
             f"| llm={r.llm_model} | ablation={self.config.fingerprint() if self.config else ''}"
@@ -294,6 +313,12 @@ class SeriesOutcome:
             "best_strategy_params": _dumps(attempt.spec if attempt else {}),
             "predict_debug": _dumps(self.predict_debug),
             "selected_base_models": _dumps(self.selected_models()),
+            # The pool the strategy was built on vs. the models that actually carry
+            # weight. They differ whenever a weighting scheme concentrates, which
+            # OLS on three windows does almost every time.
+            "n_pool_models": len(self.selected_models()),
+            "effective_models": _dumps(self.effective_models()),
+            "n_effective_models": len(self.effective_models()),
             "weights_by_horizon": _dumps(weights_map.get("weights", {})),
             # -- new, Section 4.4 -----------------------------------------------
             "series_profile_json": _dumps(self.series_card),
