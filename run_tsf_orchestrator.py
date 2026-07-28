@@ -1,688 +1,451 @@
+"""Entry point for the forecast-combination orchestrator (ReAct architecture).
+
+Same job as before, same calling convention: `exec_dataset_orchestrator(...)` loops
+over every series of a dataset, decides how to combine the pool, and appends one row
+per series to `<results>/<experiment>/<DATASET>.csv`.
+
+What changed under the hood
+---------------------------
+The Proposer / Skeptic / Statistician / PatternAnalyst debate is gone. It is
+replaced by a **single agent** cycling Thought -> Action -> Observation over a
+closed catalog of 22 deterministic tools, where every strategy it proposes is
+backtested on the validation windows before it can be accepted.
+
+    Phase 0  ingestion            per-model CSVs + the original .tsf series
+    Phase 1  diagnosis            deterministic profile, optional LLM reading
+    Phase 2  pool evaluation      error table, stability, redundancy, and the
+                                  mean/median/DBA baselines seeded first
+    Phase 3  ReAct loop           the single combiner agent
+    Phase 4  application          winning strategy applied to the test forecasts
+    Phase 5  report               optional natural-language justification
+
+The previous version of this file is preserved in git:
+
+    git show 3fcfc122:run_tsf_orchestrator.py
+
+Signature changes from the old call
+-----------------------------------
+    proposer_model / skeptic_model / statistician_model / pattern_analyst_model
+        -> combinator_model      (one agent instead of four)
+
+    train_window=3               -> n_windows=3
+        The old name counted rows including the test row and sliced
+        `iloc[-train_window:-1]`, so `train_window=3` actually gave TWO validation
+        windows. `n_windows` is the number of validation windows directly, so
+        `n_windows=3` matches the three windows the mean/median/dba/ADE/FFORMA
+        baselines on disk were computed with.
+
+    rolling="expanding"          -> backtest_mode="expanding" | "loo"
+
+    (new)                        -> source_file="ETTh1.tsf"
+        The .tsf the base models were trained on, looked up in `source_dir`. Each
+        series is checked against the forecast CSVs at load time, so a wrong file
+        fails loudly instead of silently pairing the wrong series.
+
+Examples
+--------
+    from orchestrator_react.config import LLMRole
+
+    exec_dataset_orchestrator(
+        models,
+        dataset="ANP_MONTHLY",
+        source_file="mes_11_venda_mensal.tsf",
+        combinator_model=LLMRole(model="gpt-oss:20b", temperature=0.2),
+        version="react_v1",
+    )
+
+Command line:
+
+    python run_tsf_orchestrator.py --dataset ANP_MONTHLY \\
+        --source mes_11_venda_mensal.tsf --combinator gpt-oss:20b --version react_v1
+"""
+
+from __future__ import annotations
+
+import argparse
 import os
-import re
-import json
-import pandas as pd
-import numpy as np
-from streamfuels.datasets import DatasetLoader
-from sklearn.metrics import mean_absolute_percentage_error as mape
-from orchestrator_langchain.context import read_model_preds
-from all_functions import calculate_smape, calculate_rmse, calculate_msmape, calculate_mae, pocid
+import sys
+import time
+from typing import Any, Dict, List, Optional, Sequence
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from orchestrator_react import pipeline as _pipeline
+from orchestrator_react.config import LLMRole, ReactConfig
+from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter
+from orchestrator_react.data_source import DEFAULT_SOURCE_DIR, SeriesAlignmentError
+from orchestrator_react.ingest import DEFAULT_RESULTS_DIR, count_series
 
 
-def extract_values(list_str):
-    if isinstance(list_str, str):
-        numbers = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", list_str)
-        return [float(num) for num in numbers]
-    return []
-
-
-# def read_model_preds(model_name, dataset_index, dataset="ANP_MONTHLY"):
-#     df = pd.read_csv(
-#         f"./timeseries/mestrado/resultados/{model_name}/normal/{dataset}.csv",
-#         sep=";",
-#     )
-#     df = df[df["dataset_index"] == dataset_index]
-
-#     df["start_test"] = pd.to_datetime(df["start_test"], errors="coerce", infer_datetime_format=True)
-#     df["final_test"] = pd.to_datetime(df["final_test"], errors="coerce", infer_datetime_format=True)
-#     df = df.sort_values(by="start_test")
-
-#     return df
-
-
-COLS_SERIE = [
-    "dataset_index",
-    "horizon",
-    "regressor",
-    "mape",
-    "pocid",
-    "smape",
-    "rmse",
-    "msmape",
-    "mae",
-    "test",
-    "predictions",
-    "start_test",
-    "final_test",
-    "description",
-    "debate_ran",
-    "debate_trigger",
-    "approach_pre_debate",
-    "approach_post_debate",
-    "debate_explanation",
-    "selection_explanation",
-    "when_good",
-    "decision_report",
-    "llm_artifacts_path",
-    "score_preset",
-    "tool_missing",
-    "tools_called",
-    "proposer_selected_names",
-    "proposer_params_overrides",
-    "proposer_force_debate",
-    "proposer_debate_margin",
-    "final_candidate_names",
-    "final_candidate_count",
-    "skeptic_remove_names",
-    "skeptic_add_names",
-    "skeptic_params_overrides",
-    "statistician_remove_names",
-    "statistician_add_names",
-    "statistician_params_overrides",
-
-    # Traceability of the final combination applied on final_test
-    "best_strategy_name",
-    "best_strategy_method",
-    "best_strategy_params",
-    "predict_debug",
-    "selected_base_models",
-    "weights_by_horizon",
-
-    # LLM raw think blocks (if present)
-    "proposer_think",
-    "skeptic_think",
-    "statistician_think",
-
-    # PatternAnalyst outputs
-    "pattern_analyst_think",
-    "pattern_analyst_trend_champion",
-    "pattern_analyst_seas_champion",
-    "pattern_analyst_method_hint",
-    "pattern_analyst_narrative",
+#: The 19 models used by the previous runs. Kept as the default so a call that only
+#: passes `models` behaves as before.
+DEFAULT_MODELS: List[str] = [
+    "ARIMA",
+    "ETS",
+    "THETA",
+    # "ridge",
+    "rf",
+    "catboost",
+    # "CWT_ridge",
+    # "DWT_ridge",
+    # "FT_ridge",
+    "CWT_rf",
+    "DWT_rf",
+    "FT_rf",
+    "CWT_catboost",
+    "DWT_catboost",
+    "FT_catboost",
+    "ONLY_CWT_catboost",
+    "ONLY_CWT_rf",
+    # "ONLY_CWT_ridge",
+    "ONLY_DWT_catboost",
+    "ONLY_DWT_rf",
+    # "ONLY_DWT_ridge",
+    "ONLY_FT_catboost",
+    "ONLY_FT_rf",
+    # "ONLY_FT_ridge",
+    "NaiveSeasonal",
+    "NaiveMovingAverage",
 ]
 
-
-def _extract_think_blocks(text: str) -> str:
-    """Extract concatenated <think>...</think> blocks from raw model output."""
-
-    if not isinstance(text, str) or not text:
-        return ""
-    out = []
-    start = 0
-    while True:
-        s = text.find("<think>", start)
-        if s == -1:
-            break
-        e = text.find("</think>", s)
-        if e == -1:
-            break
-        out.append(text[s + len("<think>") : e].strip())
-        start = e + len("</think>")
-    return "\n\n".join([x for x in out if x])
-
-
-def get_predictions_models(models, dataset_index, final_test, dataset="ANP_MONTHLY"):
-    final_test_predictions = {}
-    final_test_data = None
-
-    final_test_date = pd.to_datetime(final_test, errors="coerce", infer_datetime_format=True)
-
-    for model in models:
-        df = read_model_preds(model, dataset_index, dataset=dataset)
-        test_df = df[df["final_test"] == final_test_date]
-
-        if not test_df.empty:
-            final_row = test_df.iloc[0]
-            final_test_predictions[model] = extract_values(final_row["predictions"])
-            final_test_data = extract_values(final_row["test"])
-
-    return final_test_predictions, final_test_data
-
-import orchestrator.utils as _utils
-def exec_dataset_orchestrator(
-    models,
-    dataset,
-    use_llm: bool = False,
-    proposer_model: _utils.ModelConfig = None,
-    skeptic_model: _utils.ModelConfig = None,
-    statistician_model: _utils.ModelConfig = None,
-    pattern_analyst_model: _utils.ModelConfig = None,
-    debug: bool = False,
-    rolling: str = "expanding",
-    train_window: int = 3,
-    llm_logs: bool = True,
-    # start_index: int = 0,
-    # end_index: int = 182,
-    version: str = "v1_pattern",
-):
-    # dataset = "ANP_MONTHLY"
-    # dataset = "ETTH1"
-    dataset_file = f"./timeseries/mestrado/resultados/catboost/normal/{dataset}.csv"
-    df_dt = pd.read_csv(dataset_file, sep=";")
+#: Parameters of the old debate architecture. Passing one raises with an
+#: explanation rather than a bare TypeError, because an old call pasted from a
+#: notebook is the most likely way to hit this.
+_RETIRED = {
+    "proposer_model": "the four debate agents became one combinator; use combinator_model",
+    "skeptic_model": "the four debate agents became one combinator; use combinator_model",
+    "statistician_model": "the four debate agents became one combinator; use combinator_model",
+    "pattern_analyst_model": (
+        "the PatternAnalyst is gone; trend/seasonality champions are now computed "
+        "deterministically inside series_profile()"
+    ),
+    "debate": "there is no debate any more",
+    "debate_auto": "there is no debate any more",
+    "debate_margin": "there is no debate any more",
+    "require_tool_call": "tool use is structural now: the agent can only act through the catalog",
+    "ollama_model": "use combinator_model",
+    "train_window": (
+        "renamed to n_windows, and it now counts validation windows directly "
+        "(old train_window=4 == new n_windows=3)"
+    ),
+    "rolling": "renamed to backtest_mode, with values 'expanding' or 'loo'",
+    "debug": "use llm_logs",
+}
 
 
-    df_dt["final_test"] = pd.to_datetime(
-        df_dt["final_test"],
-        errors="coerce",          # transforma inválidos em NaT
-        infer_datetime_format=True
+def _as_role(value: Any, default_temperature: float = 0.2) -> LLMRole:
+    """Accepts an `LLMRole`, the old `ModelConfig`, a plain string, or None."""
+    if value is None:
+        return LLMRole(model=None)
+    if isinstance(value, LLMRole):
+        return value
+    if isinstance(value, str):
+        return LLMRole(
+            model=None if value.strip().lower() in {"", "none"} else value,
+            temperature=default_temperature,
+        )
+    model = getattr(value, "model", None)  # duck-types orchestrator.utils.ModelConfig
+    if model is None:
+        raise TypeError(f"cannot read a model name from {value!r}")
+    return LLMRole(
+        model=str(model),
+        temperature=float(getattr(value, "temperature", default_temperature)),
     )
-    
-    if df_dt["final_test"].isna().sum() > 0:
-        print("Existem datas inválidas que viraram NaT.")
 
-    df_new_dt = df_dt.sort_values("final_test").reset_index(drop=True)
-    # df_new_dt.iloc[-1]['horizon']
-    exp_name = f"orchestrator_llm_{version}" if use_llm else f"orchestrator_deterministic_{version}"
-    horizon =df_new_dt.iloc[-1]['horizon']
-    final_test = df_new_dt.iloc[-1]['final_test']
-    num_series = df_dt["dataset_index"].nunique()
 
-    path_experiments = f"./timeseries/mestrado/resultados/{exp_name}/"
-    path_csv = f"{path_experiments}/{dataset}.csv"
-    path_llm_artifacts = f"{path_experiments}/llm_artifacts/{dataset}/"
-    os.makedirs(path_experiments, exist_ok=True)
-    os.makedirs(path_llm_artifacts, exist_ok=True)
+def exec_dataset_orchestrator(
+    models: Optional[Sequence[str]] = None,
+    dataset: str = "ANP_MONTHLY",
+    source_file: Optional[str] = None,
+    *,
+    use_llm: bool = True,
+    combinator_model: Any = "gpt-oss:20b",
+    diagnostician_model: Any = None,
+    reporter_model: Any = None,
+    source_dir: str = DEFAULT_SOURCE_DIR,
+    results_dir: str = DEFAULT_RESULTS_DIR,
+    output_dir: Optional[str] = None,
+    n_windows: int = 3,
+    backtest_mode: str = "expanding",
+    max_iterations: int = 8,
+    early_stop_patience: int = 2,
+    pool_mode: str = "full",
+    pool_k: int = 8,
+    score_preset: str = "balanced",
+    show_attempt_history: bool = True,
+    calibration_gate: bool = False,
+    indices: Optional[Sequence[int]] = None,
+    limit: Optional[int] = None,
+    llm_logs: bool = True,
+    stop_on_error: bool = False,
+    save_artifacts: bool = True,
+    dry_run: bool = False,
+    version: str = "react_v1",
+    config: Optional[ReactConfig] = None,
+    **retired: Any,
+) -> Dict[str, Any]:
+    """Runs the orchestrator over every series of `dataset`.
 
-    from orchestrator_langchain.context import CONTEXT_MEMORY, generate_all_validations_context, init_context
-    from orchestrator.pipeline import run_deterministic_pipeline, run_llm_pipeline
-    from orchestrator_langchain.pipeline import run_langchain_pipeline
+    Args:
+        models: the pool. Defaults to the 19 models used so far.
+        dataset: results dataset name, e.g. "ANP_MONTHLY".
+        source_file: the `.tsf` under `source_dir`, e.g. "ETTh1.tsf". Without it
+            there is no historical series and `series_profile()` falls back to the
+            validation windows.
+        use_llm: False runs the deterministic arm — the best seeded baseline, no
+            agent. That is the control arm of the ablations.
+        combinator_model: the Phase 3 agent. Accepts an `LLMRole`, the old
+            `ModelConfig`, or a plain model name.
+        diagnostician_model: enables Phase 1 with an LLM (ablation 2).
+        reporter_model: enables Phase 5.
+        n_windows: validation windows. 3 matches the baselines already on disk.
+        indices / limit: run a subset, for smoke runs.
+        output_dir: write somewhere other than `results_dir`, so a smoke run does
+            not touch the results tree.
+        config: a fully built `ReactConfig`; the keyword arguments are applied on
+            top of it.
 
-    # Ensure CSV schema is up-to-date (add missing columns if file already exists).
-    if not os.path.exists(path_csv):
-        pd.DataFrame(columns=COLS_SERIE).to_csv(path_csv, sep=";", index=False)
-    else:
-        try:
-            df_existing = pd.read_csv(path_csv, sep=";")
-            missing = [c for c in COLS_SERIE if c not in df_existing.columns]
-            if missing:
-                for c in missing:
-                    df_existing[c] = np.nan
-                df_existing = df_existing.reindex(columns=COLS_SERIE)
-                df_existing.to_csv(path_csv, sep=";", index=False)
-        except Exception:
-            # If the existing file is malformed, keep running; new rows will still append.
-            pass
+    Returns:
+        A summary dict with the counts, the CSV path and the per-series outcomes.
 
-    for i in range(num_series):
-        init_context()
-        CONTEXT_MEMORY["models_available"] = models
-        generate_all_validations_context(models, i, train_window=train_window, dataset=dataset)
-        print(f"----- DATASET INDEX: {i} -----")
-        if use_llm:
-            try:
-                # result = run_llm_pipeline(
-                #     model_id=ollama_model,
-                #     debug=debug,
-                #     rolling_mode=rolling,
-                #     train_window=train_window,
-                #     require_tool_call=True,
-                #     llm_logs=llm_logs,
-                # )
-                result = run_langchain_pipeline(
-                    proposer_model,
-                    skeptic_model,
-                    statistician_model,
-                    pattern_analyst_model,
-                    debug=debug,
-                    rolling_mode=rolling,
-                    train_window=train_window,
-                    require_tool_call=True,
-                    llm_logs=llm_logs,
-                )
-            except Exception as e:
-                tools_called = None
-                try:
-                    tools_called = list(CONTEXT_MEMORY.get("tools_called", []))
-                except Exception:
-                    tools_called = None
+    Raises:
+        TypeError: a parameter of the old debate architecture was passed.
+        SeriesAlignmentError: the `.tsf` is not the file the forecasts came from.
+    """
+    for name in retired:
+        raise TypeError(
+            f"`{name}` no longer exists: "
+            f"{_RETIRED.get(name, 'removed together with the debate architecture')}"
+        )
 
-                llm_artifacts_path = ""
-                try:
-                    artifacts = CONTEXT_MEMORY.get("orchestrator_llm_artifacts")
-                    llm_artifacts_path = os.path.abspath(os.path.join(path_llm_artifacts, f"dataset_{i}.json"))
-                    payload = {
-                        "dataset_index": i,
-                        "exception": {
-                            "type": type(e).__name__,
-                            "message": str(e),
-                        },
-                        "tools_called": tools_called,
-                        "artifacts": artifacts if isinstance(artifacts, dict) else None,
-                        "context_snapshot": None,
-                    }
-                    try:
-                        payload["context_snapshot"] = dict(CONTEXT_MEMORY)
-                    except Exception:
-                        payload["context_snapshot"] = "unavailable"
+    models = list(models) if models else list(DEFAULT_MODELS)
+    if not models:
+        raise ValueError("empty model pool")
 
-                    with open(llm_artifacts_path, "w", encoding="utf-8") as f:
-                        json.dump(payload, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    llm_artifacts_path = ""
+    cfg = config or ReactConfig()
+    cfg.name = version
+    cfg.n_validation_windows = int(n_windows)
+    cfg.backtest_mode = backtest_mode
+    cfg.max_iterations = int(max_iterations)
+    cfg.early_stop_patience = int(early_stop_patience)
+    cfg.pool_mode = pool_mode
+    cfg.pool_k = int(pool_k)
+    cfg.score_preset = score_preset
+    cfg.show_attempt_history = bool(show_attempt_history)
+    cfg.calibration_gate = bool(calibration_gate)
 
-                result = {
-                    "success": False,
-                    "description": {
-                        "mode": "llm",
-                        "error": "LLM pipeline failed (hard-stop)",
-                        "dataset_index": i,
-                        "exception": str(e),
-                        "exception_type": type(e).__name__,
-                        "tools_called": tools_called,
-                        "llm_artifacts_path": llm_artifacts_path,
-                    },
-                    "result": [],
-                    "debate": {
-                        "debate_ran": False,
-                        "debate_trigger": "exception",
-                    },
-                }
+    cfg.combinator = _as_role(combinator_model)
+    cfg.diagnostician = _as_role(diagnostician_model)
+    cfg.reporter = _as_role(reporter_model)
+    cfg.diagnostic_llm = cfg.diagnostician.enabled
+
+    # Environment variables win, so a model can be swapped without editing code.
+    cfg = ReactConfig.from_env(cfg)
+
+    if not use_llm:
+        cfg.combinator = LLMRole(model=None)
+        cfg.diagnostician = LLMRole(model=None)
+        cfg.reporter = LLMRole(model=None)
+        cfg.diagnostic_llm = False
+
+    experiment = f"orchestrator_react_{version}"
+    out_dir = output_dir or results_dir
+
+    todo = list(indices) if indices is not None else None
+    if todo is None and limit:
+        total = count_series(dataset, models[0], results_dir)
+        todo = list(range(min(int(limit), total)))
+
+    def log(message: str) -> None:
+        if llm_logs:
+            print(message, flush=True)
+
+    log(f"dataset      : {dataset}")
+    log(f"reading from : {results_dir}")
+    log(f"writing to   : {os.path.join(out_dir, experiment)}")
+    log(f"source       : {source_file or '(none - profile falls back to the windows)'}")
+    log(f"models       : {len(models)}")
+    log(f"ablation     : {cfg.fingerprint()}")
+    log(
+        f"pool mode    : {cfg.pool_mode} | windows: {cfg.n_validation_windows}"
+        f" | backtest: {cfg.backtest_mode}"
+    )
+    log(
+        f"llm          : combinator={cfg.combinator.label()} "
+        f"diagnostician={cfg.diagnostician.label()} reporter={cfg.reporter.label()}"
+    )
+    log(f"series       : {'all' if todo is None else todo}")
+    if dry_run:
+        log("dry run      : nothing will be written")
+    log("-" * 74)
+
+    writer = (
+        None
+        if dry_run
+        else ResultWriter(
+            dataset=dataset,
+            experiment=experiment,
+            results_dir=out_dir,
+            save_artifacts=save_artifacts,
+        )
+    )
+
+    started = time.perf_counter()
+    outcomes: List[Any] = []
+    ok = failed = 0
+    failures: List[str] = []
+
+    for outcome in _pipeline.run_dataset(
+        models=models,
+        dataset=dataset,
+        source_file=source_file,
+        config=cfg,
+        source_dir=source_dir,
+        results_dir=results_dir,
+        indices=todo,
+    ):
+        outcomes.append(outcome)
+        if outcome.success:
+            ok += 1
+            attempt = outcome.react.final_attempt
+            log(
+                f"[{outcome.dataset_index:>4}] {attempt.spec['combine']:<14}"
+                f" score={attempt.score:7.4f} origin={attempt.origin:<8}"
+                f" iters={outcome.react.iterations_used} stop={outcome.react.stop_reason}"
+            )
         else:
-            result = run_deterministic_pipeline()
+            failed += 1
+            failures.append(f"{outcome.dataset_index}: {outcome.error}")
+            log(f"[{outcome.dataset_index:>4}] FAILED: {outcome.error}")
 
-        _, test = get_predictions_models(models, dataset_index=i, final_test=final_test, dataset=dataset.upper())
+        if writer is not None:
+            writer.write(outcome, regressor=experiment)
 
-        description = result.get("description", "")
-        if not isinstance(description, str):
-            try:
-                description = json.dumps(description, ensure_ascii=False)
-            except Exception:
-                description = str(description)
-        preds_real = result.get("result", [])
+        if not outcome.success and stop_on_error:
+            raise RuntimeError(
+                f"stopped at dataset_index={outcome.dataset_index}: {outcome.error}"
+            )
 
-        debate_explanation = ""
-        selection_explanation = ""
-        when_good = ""
-        decision_report = ""
-        llm_artifacts_path = ""
+    elapsed = time.perf_counter() - started
+    log("-" * 74)
+    log(f"done in {elapsed:.1f}s | ok: {ok} | failed: {failed}")
+    if writer is not None:
+        log(f"csv: {writer.csv_path}")
+        if save_artifacts:
+            log(f"artifacts: {writer.artifacts_dir}")
+    for line in failures[:20]:
+        log(f"  failure {line}")
 
-        score_preset = ""
-        tool_missing = np.nan
-        tools_called_csv = ""
-        proposer_selected_names = ""
-        proposer_params_overrides = ""
-        proposer_force_debate = np.nan
-        proposer_debate_margin = np.nan
-        final_candidate_names = ""
-        final_candidate_count = np.nan
-        skeptic_remove_names = ""
-        skeptic_add_names = ""
-        skeptic_params_overrides = ""
-        statistician_remove_names = ""
-        statistician_add_names = ""
-        statistician_params_overrides = ""
+    return {
+        "dataset": dataset,
+        "experiment": experiment,
+        "ablation_config": cfg.fingerprint(),
+        "n_ok": ok,
+        "n_failed": failed,
+        "failures": failures,
+        "csv_path": writer.csv_path if writer else None,
+        "artifacts_dir": writer.artifacts_dir if (writer and save_artifacts) else None,
+        "elapsed_s": elapsed,
+        "columns": COLS_SERIE,
+        "outcomes": outcomes,
+    }
 
-        proposer_think = ""
-        skeptic_think = ""
-        statistician_think = ""
-        pattern_analyst_think = ""
-        pattern_analyst_trend_champion = ""
-        pattern_analyst_seas_champion = ""
-        pattern_analyst_method_hint = ""
-        pattern_analyst_narrative = ""
 
-        best_strategy_name = ""
-        best_strategy_method = ""
-        best_strategy_params = ""
-        predict_debug_csv = ""
-        selected_base_models = ""
-        weights_by_horizon = ""
+# ──────────────────────────────────────────────────────────────────────────────
+# command line
+# ──────────────────────────────────────────────────────────────────────────────
 
-        debate_ran = np.nan
-        debate_trigger = np.nan
-        approach_pre = np.nan
-        approach_post = np.nan
-        if use_llm:
-            debate_info = result.get("debate") if isinstance(result, dict) else None
-            if isinstance(debate_info, dict):
-                debate_ran = bool(debate_info.get("debate_ran", False))
-                debate_trigger = debate_info.get("debate_trigger")
-                pre = debate_info.get("best_pre_debate")
-                post = debate_info.get("best_post_debate")
-                if isinstance(pre, dict):
-                    approach_pre = pre.get("name")
-                if isinstance(post, dict):
-                    approach_post = post.get("name")
-                # If debate didn't run, keep both as the final best.
-                if not debate_ran:
-                    best_now = result.get("best")
-                    if isinstance(best_now, dict):
-                        approach_pre = best_now.get("name")
-                        approach_post = best_now.get("name")
 
-            expl = result.get("explanations") if isinstance(result, dict) else None
-            if isinstance(expl, dict):
-                # Prefer orchestrator text; fall back to skeptic/statistician when available.
-                debate_explanation = str(expl.get("orchestrator_debate_notes") or expl.get("skeptic_rationale") or "")
-                selection_explanation = str(expl.get("orchestrator_reasoning") or "")
-                when_good = str(expl.get("orchestrator_when_good") or expl.get("statistician_when_good") or expl.get("skeptic_when_good") or "")
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Forecast combination with a single ReAct agent over deterministic tools.",
+    )
+    p.add_argument("--dataset", required=True, help="results dataset name, e.g. ANP_MONTHLY")
+    p.add_argument("--source", default=None, help=".tsf file, e.g. mes_11_venda_mensal.tsf")
+    p.add_argument("--source-dir", default=DEFAULT_SOURCE_DIR)
+    p.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR,
+                   help="where the per-model result CSVs are read from")
+    p.add_argument("--output-dir", default=None, help="where to write (default: --results-dir)")
+    p.add_argument("--version", default="react_v1", help="experiment folder suffix")
+    p.add_argument("--models", nargs="+", default=None)
 
-            try:
-                decision_report = (
-                    f"pre={approach_pre} | post={approach_post} | score_preset={score_preset} | debate_ran={debate_ran} | trigger={debate_trigger} | "
-                    f"debate_note={debate_explanation} | selection={selection_explanation} | when_good={when_good}"
-                )
-            except Exception:
-                decision_report = ""
+    p.add_argument("--config", default=None, help="JSON file with a ReactConfig")
+    p.add_argument("--windows", type=int, default=3, help="validation windows (default 3)")
+    p.add_argument("--backtest-mode", choices=["expanding", "loo"], default="expanding")
+    p.add_argument("--max-iterations", type=int, default=8)
+    p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
+    p.add_argument("--pool-k", type=int, default=8)
+    p.add_argument("--score-preset", default="balanced")
+    p.add_argument("--no-history", action="store_true", help="ablation 4: hide the attempt history")
+    p.add_argument("--calibration-gate", action="store_true")
 
-            # Persist full LLM artifacts for auditability (raw prompts/outputs).
-            artifacts = result.get("llm_artifacts") if isinstance(result, dict) else None
-            if isinstance(artifacts, dict):
-                try:
-                    llm_artifacts_path = os.path.abspath(os.path.join(path_llm_artifacts, f"dataset_{i}.json"))
-                    with open(llm_artifacts_path, "w", encoding="utf-8") as f:
-                        json.dump({"dataset_index": i, "artifacts": artifacts}, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    llm_artifacts_path = ""
-                try:
-                    raw = artifacts.get("raw", {}) if isinstance(artifacts.get("raw"), dict) else {}
-                    proposer_think = _extract_think_blocks(str(raw.get("proposer", "")))
-                    skeptic_think = _extract_think_blocks(str(raw.get("skeptic", "")))
-                    statistician_think = _extract_think_blocks(str(raw.get("statistician", "")))
-                    pattern_analyst_think = _extract_think_blocks(str(raw.get("pattern_analyst", "")))
-                    parsed_pa = artifacts.get("parsed", {}) if isinstance(artifacts.get("parsed"), dict) else {}
-                    pa_obj = parsed_pa.get("pattern_analyst")
-                    if isinstance(pa_obj, dict):
-                        pattern_analyst_trend_champion = str(pa_obj.get("trend_champion") or "")
-                        pattern_analyst_seas_champion = str(pa_obj.get("seasonality_champion") or "")
-                        pattern_analyst_method_hint = str(pa_obj.get("recommended_method_hint") or "")
-                        pattern_analyst_narrative = str(pa_obj.get("cot_narrative") or "")
-                except Exception:
-                    proposer_think = ""
-                    skeptic_think = ""
-                    statistician_think = ""
-                    pattern_analyst_think = ""
-            # If pipeline failed and stored artifacts_path inside description, keep it.
-            if not llm_artifacts_path:
-                try:
-                    desc_obj = json.loads(description) if isinstance(description, str) and description.strip().startswith("{") else None
-                    if isinstance(desc_obj, dict) and desc_obj.get("llm_artifacts_path"):
-                        llm_artifacts_path = str(desc_obj.get("llm_artifacts_path"))
-                except Exception:
-                    pass
+    p.add_argument("--combinator", default="gpt-oss:20b", help="Phase 3 agent")
+    p.add_argument("--diagnostician", default=None, help="Phase 1 LLM (ablation 2)")
+    p.add_argument("--reporter", default=None, help="Phase 5 LLM")
+    p.add_argument("--no-llm", action="store_true", help="deterministic arm: no agent at all")
 
-            # Extract key LLM decision fields into explicit CSV columns.
-            desc_obj = None
-            try:
-                desc_obj = json.loads(description) if isinstance(description, str) and description.strip().startswith("{") else None
-            except Exception:
-                desc_obj = None
+    p.add_argument("--indices", nargs="+", type=int, default=None)
+    p.add_argument("--limit", type=int, default=None, help="only the first N series")
+    p.add_argument("--stop-on-error", action="store_true")
+    p.add_argument("--no-artifacts", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+    return p
 
-            if isinstance(desc_obj, dict):
-                try:
-                    score_preset = str(desc_obj.get("score_preset") or "")
-                except Exception:
-                    score_preset = ""
 
-                tv = desc_obj.get("tool_validation")
-                if isinstance(tv, dict):
-                    tool_missing = bool(tv.get("tool_missing"))
-                    tc = tv.get("tools_called", [])
-                    if isinstance(tc, list):
-                        try:
-                            tools_called_csv = json.dumps(tc, ensure_ascii=False)
-                        except Exception:
-                            tools_called_csv = str(tc)
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    config = ReactConfig.from_json_file(args.config) if args.config else None
+    try:
+        summary = exec_dataset_orchestrator(
+            models=args.models,
+            dataset=args.dataset,
+            source_file=args.source,
+            use_llm=not args.no_llm,
+            combinator_model=args.combinator,
+            diagnostician_model=args.diagnostician,
+            reporter_model=args.reporter,
+            source_dir=args.source_dir,
+            results_dir=args.results_dir,
+            output_dir=args.output_dir,
+            n_windows=args.windows,
+            backtest_mode=args.backtest_mode,
+            max_iterations=args.max_iterations,
+            pool_mode=args.pool_mode,
+            pool_k=args.pool_k,
+            score_preset=args.score_preset,
+            show_attempt_history=not args.no_history,
+            calibration_gate=args.calibration_gate,
+            indices=args.indices,
+            limit=args.limit,
+            stop_on_error=args.stop_on_error,
+            save_artifacts=not args.no_artifacts,
+            dry_run=args.dry_run,
+            version=args.version,
+            config=config,
+        )
+    except SeriesAlignmentError as exc:
+        print(f"\nALIGNMENT ERROR - the .tsf does not match the results:\n  {exc}", file=sys.stderr)
+        return 2
+    except RuntimeError as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 1
+    return 1 if summary["n_failed"] and args.stop_on_error else 0
 
-                llm = desc_obj.get("llm")
-                if isinstance(llm, dict):
-                    pr = llm.get("proposer")
-                    if isinstance(pr, dict):
-                        try:
-                            proposer_selected_names = json.dumps(pr.get("selected_names", []), ensure_ascii=False)
-                        except Exception:
-                            proposer_selected_names = str(pr.get("selected_names", ""))
-                        try:
-                            proposer_params_overrides = json.dumps(pr.get("params_overrides", {}), ensure_ascii=False)
-                        except Exception:
-                            proposer_params_overrides = str(pr.get("params_overrides", ""))
-                        proposer_force_debate = bool(pr.get("force_debate", False))
-                        proposer_debate_margin = pr.get("debate_margin")
 
-                    sk = llm.get("skeptic")
-                    if isinstance(sk, dict):
-                        try:
-                            skeptic_remove_names = json.dumps(sk.get("remove_names", []), ensure_ascii=False)
-                        except Exception:
-                            skeptic_remove_names = str(sk.get("remove_names", ""))
-                        try:
-                            skeptic_add_names = json.dumps(sk.get("add_names", []), ensure_ascii=False)
-                        except Exception:
-                            skeptic_add_names = str(sk.get("add_names", ""))
-                        try:
-                            skeptic_params_overrides = json.dumps(sk.get("params_overrides", {}), ensure_ascii=False)
-                        except Exception:
-                            skeptic_params_overrides = str(sk.get("params_overrides", ""))
-
-                    st = llm.get("statistician")
-                    if isinstance(st, dict):
-                        try:
-                            statistician_remove_names = json.dumps(st.get("remove_names", []), ensure_ascii=False)
-                        except Exception:
-                            statistician_remove_names = str(st.get("remove_names", ""))
-                        try:
-                            statistician_add_names = json.dumps(st.get("add_names", []), ensure_ascii=False)
-                        except Exception:
-                            statistician_add_names = str(st.get("add_names", ""))
-                        try:
-                            statistician_params_overrides = json.dumps(st.get("params_overrides", {}), ensure_ascii=False)
-                        except Exception:
-                            statistician_params_overrides = str(st.get("params_overrides", ""))
-
-                # Best strategy + final prediction debug trace
-                try:
-                    b = desc_obj.get("best")
-                    if isinstance(b, dict):
-                        best_strategy_name = str(b.get("name") or "")
-                        params = b.get("params")
-                        if isinstance(params, dict):
-                            best_strategy_method = str(params.get("method") or "")
-                            try:
-                                best_strategy_params = json.dumps(params, ensure_ascii=False)
-                            except Exception:
-                                best_strategy_params = str(params)
-                except Exception:
-                    pass
-
-                try:
-                    pdg = desc_obj.get("predict_debug")
-                    if isinstance(pdg, dict):
-                        try:
-                            predict_debug_csv = json.dumps(pdg, ensure_ascii=False)
-                        except Exception:
-                            predict_debug_csv = str(pdg)
-
-                        # Collect which base models were selected/used
-                        selected = set()
-                        if isinstance(pdg.get("chosen_model"), str):
-                            selected.add(pdg.get("chosen_model"))
-                        if isinstance(pdg.get("chosen_model_by_horizon"), list):
-                            for m in pdg.get("chosen_model_by_horizon"):
-                                if isinstance(m, str) and m:
-                                    selected.add(m)
-                        if isinstance(pdg.get("chosen_models_by_horizon"), list):
-                            for lst in pdg.get("chosen_models_by_horizon"):
-                                if isinstance(lst, list):
-                                    for m in lst:
-                                        if isinstance(m, str) and m:
-                                            selected.add(m)
-
-                        # For weighted methods, also derive selected models from weights
-                        wb = pdg.get("weights_by_horizon")
-                        if isinstance(wb, dict):
-                            for _, wmap in wb.items():
-                                if isinstance(wmap, dict):
-                                    for m, w in wmap.items():
-                                        try:
-                                            if float(w) > 0:
-                                                selected.add(str(m))
-                                        except Exception:
-                                            continue
-                            try:
-                                weights_by_horizon = json.dumps(wb, ensure_ascii=False)
-                            except Exception:
-                                weights_by_horizon = str(wb)
-
-                        if selected:
-                            selected_base_models = json.dumps(sorted(selected), ensure_ascii=False)
-                except Exception:
-                    pass
-
-            # Final candidates after proposal/debate: from deterministic evaluation ranking.
-            try:
-                ev = result.get("eval") if isinstance(result, dict) else None
-                if isinstance(ev, dict):
-                    rk = ev.get("ranking", [])
-                    if isinstance(rk, list):
-                        names = []
-                        for r in rk:
-                            if isinstance(r, dict) and r.get("name"):
-                                names.append(str(r.get("name")))
-                        final_candidate_count = int(len(names))
-                        final_candidate_names = json.dumps(names, ensure_ascii=False)
-            except Exception:
-                pass
-
-        print("Description: ", description)
-        print("Predictions: ", preds_real)
-
-        # In LLM mode, any failure is a hard-stop (no static fallback).
-        hard_stop = bool(use_llm and (not result.get("success", False)))
-
-        if preds_real is None:
-            preds_real = []
-
-        if hard_stop:
-            # Pipeline failed — reset everything
-            smape_result = np.nan
-            rmse_result = np.nan
-            msmape_result = np.nan
-            mae_result = np.nan
-            mape_result = np.nan
-            pocid_result = np.nan
-            preds_real = []
-            test_arr = np.array([])
-        else:
-            # Pipeline succeeded — always save preds_real; metrics need test data
-            test_arr = np.array(test, dtype=float) if test is not None and len(test) > 0 else np.array([])
-            preds_arr = np.array(preds_real, dtype=float) if preds_real else np.array([])
-
-            min_len = min(len(test_arr), len(preds_arr))
-            if min_len == 0:
-                smape_result = np.nan
-                rmse_result = np.nan
-                msmape_result = np.nan
-                mae_result = np.nan
-                mape_result = np.nan
-                pocid_result = np.nan
-            else:
-                test_cut = test_arr[:min_len]
-                preds_cut = preds_arr[:min_len]
-
-                smape_result = calculate_smape(preds_cut.reshape(1, -1), test_cut.reshape(1, -1))
-                rmse_result = calculate_rmse(preds_cut.reshape(1, -1), test_cut.reshape(1, -1))
-                msmape_result = calculate_msmape(preds_cut.reshape(1, -1), test_cut.reshape(1, -1))
-                mae_result = calculate_mae(preds_cut.reshape(1, -1), test_cut.reshape(1, -1))
-                mape_result = mape(test_cut, preds_cut)
-                pocid_result = pocid(test_cut, preds_cut)
-
-        data_serie = {
-            "dataset_index": f"{i}",
-            "horizon": horizon,
-            "regressor": exp_name,
-            "mape": mape_result,
-            "pocid": pocid_result,
-            "smape": smape_result,
-            "rmse": rmse_result,
-            "msmape": msmape_result,
-            "mae": mae_result,
-            "test": [test_arr.tolist()],
-            "predictions": [list(preds_real) if isinstance(preds_real, (list, np.ndarray)) and len(preds_real) > 0 else []],
-            "start_test": "INICIO",
-            "final_test": final_test,
-            "description": description,
-            "debate_ran": debate_ran,
-            "debate_trigger": debate_trigger,
-            "approach_pre_debate": approach_pre,
-            "approach_post_debate": approach_post,
-            "debate_explanation": debate_explanation,
-            "selection_explanation": selection_explanation,
-            "when_good": when_good,
-            "decision_report": decision_report,
-            "llm_artifacts_path": llm_artifacts_path,
-            "score_preset": score_preset,
-            "tool_missing": tool_missing,
-            "tools_called": tools_called_csv,
-            "proposer_selected_names": proposer_selected_names,
-            "proposer_params_overrides": proposer_params_overrides,
-            "proposer_force_debate": proposer_force_debate,
-            "proposer_debate_margin": proposer_debate_margin,
-            "final_candidate_names": final_candidate_names,
-            "final_candidate_count": final_candidate_count,
-            "skeptic_remove_names": skeptic_remove_names,
-                "skeptic_add_names": skeptic_add_names,
-            "skeptic_params_overrides": skeptic_params_overrides,
-            "statistician_remove_names": statistician_remove_names,
-                "statistician_add_names": statistician_add_names,
-            "statistician_params_overrides": statistician_params_overrides,
-
-            "best_strategy_name": best_strategy_name,
-            "best_strategy_method": best_strategy_method,
-            "best_strategy_params": best_strategy_params,
-            "predict_debug": predict_debug_csv,
-            "selected_base_models": selected_base_models,
-            "weights_by_horizon": weights_by_horizon,
-            "proposer_think": proposer_think,
-            "skeptic_think": skeptic_think,
-            "statistician_think": statistician_think,
-            "pattern_analyst_think": pattern_analyst_think,
-            "pattern_analyst_trend_champion": pattern_analyst_trend_champion,
-            "pattern_analyst_seas_champion": pattern_analyst_seas_champion,
-            "pattern_analyst_method_hint": pattern_analyst_method_hint,
-            "pattern_analyst_narrative": pattern_analyst_narrative,
-        }
-
-        df_new = pd.DataFrame(data_serie)
-        df_new = df_new.reindex(columns=COLS_SERIE)
-        df_new.to_csv(path_csv, sep=";", mode="a", header=False, index=False)
-
-        if hard_stop:
-            raise RuntimeError(f"LLM run failed at dataset_index={i}. See CSV row description for details.")
-
-import orchestrator.utils as _utils
 if __name__ == "__main__":
-    models = [
-        "ARIMA",
-        "ETS",
-        "THETA",
-        #"ridge",
-        "rf",
-        "catboost",
-        #"CWT_ridge",
-        #"DWT_ridge",
-        #"FT_ridge",
-        "CWT_rf",
-        "DWT_rf",
-        "FT_rf",
-        "CWT_catboost",
-        "DWT_catboost",
-        "FT_catboost",
-        "ONLY_CWT_catboost",
-        "ONLY_CWT_rf",
-        #"ONLY_CWT_ridge",
-        "ONLY_DWT_catboost",
-        "ONLY_DWT_rf",
-        #"ONLY_DWT_ridge",
-        "ONLY_FT_catboost",
-        "ONLY_FT_rf",
-        #"ONLY_FT_ridge",
-        "NaiveSeasonal",
-        "NaiveMovingAverage",
-    ]
+    models = DEFAULT_MODELS
 
     dataset = "ETTH1"
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
+        source_file="ETTh1.tsf",
         use_llm=True,
-        proposer_model=_utils.ModelConfig(model="gemma4:26b", temperature=0.7),
-        skeptic_model=_utils.ModelConfig(model="gpt-oss:20b", temperature=0.3),
-        statistician_model=_utils.ModelConfig(model="qwen3:14b", temperature=0.2),
-        pattern_analyst_model=_utils.ModelConfig(model="qwen3.5:27b-q4_K_M", temperature=0.2),
-        debug=False,
-        rolling="expanding",
-        train_window=3,
+        combinator_model=LLMRole(model="gpt-oss:20b", temperature=0.2),
+        # diagnostician_model=LLMRole(model="qwen3:8b"),   # ablation 2: Phase 1 with an LLM
+        # reporter_model=LLMRole(model="qwen3:8b"),        # Phase 5: prose justification
+        n_windows=3,
+        max_iterations=8,
         llm_logs=True,
-        # start_index=0,
-        # end_index=182,
+        version="react_v1",
     )
