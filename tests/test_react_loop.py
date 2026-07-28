@@ -814,5 +814,91 @@ def test_the_observation_names_the_leader_when_you_lose():
     assert "leader is" not in P.summarize_observation("evaluate_strategy", True, leading)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# handle identity: same thing, same name
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_an_identical_weight_recipe_reuses_its_handle():
+    """Two handles for the same numbers would put numerical twins in the ranking."""
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    first = T.weights_inverse_error(s, pool="pool1", metric="rmse")
+    second = T.weights_inverse_error(s, pool="pool1", metric="rmse")
+    assert first["weights"] == second["weights"] == "w1"
+    assert first["reused"] is False and second["reused"] is True
+    assert len(s.weights) == 1
+
+
+def test_a_different_recipe_gets_its_own_handle():
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    a = T.weights_inverse_error(s, pool="pool1", shrinkage=0.0)["weights"]
+    b = T.weights_inverse_error(s, pool="pool1", shrinkage=0.5)["weights"]
+    c = T.weights_softmax_neg_error(s, pool="pool1")["weights"]
+    assert len({a, b, c}) == 3
+
+
+def test_reuse_is_announced_to_the_agent():
+    """Selecting every model returns pool_full; the agent must be told, not guess."""
+    s, series, pool = prepared()
+    everything = T.select_top_k(s, k=s.n_models)
+    assert everything["pool"] == FULL_POOL
+    assert everything["reused"] is True
+    assert "identical to an existing pool" in everything["note"]
+
+    fresh = T.select_top_k(s, k=3)
+    assert fresh["pool"] == "pool1" and fresh["reused"] is False
+
+
+def test_a_no_op_prune_reports_reuse():
+    s, series, pool = prepared()
+    top = T.select_top_k(s, k=2)
+    again = T.prune_redundant(s, pool=top["pool"], corr_threshold=0.999)
+    if again["n_before"] == again["n_after"]:
+        assert again["pool"] == top["pool"]
+        assert again["reused"] is True
+
+
+def test_a_twin_runner_up_is_skipped_in_the_confidence_test():
+    """Comparing the winner against a copy of itself says nothing about the data.
+
+    The margin collapses to zero and both tests accept, yielding a spurious
+    "indistinguishable". The comparison must reach the first genuinely different
+    attempt instead.
+    """
+    s, series, pool = prepared()
+    # a strategy and an exact numerical twin of it, via a second identical pool
+    top = T.select_top_k(s, k=3)
+    T.evaluate_strategy(s, {"combine": "mean", "pool": top["pool"]})
+    twin = s.register_pool(s.get_pool(top["pool"]) + [], origin="manual")
+    assert twin == top["pool"], "an identical index set must reuse the handle"
+
+    # build a real twin: same forecasts, different spec
+    trimmed = T.evaluate_strategy(
+        s, {"combine": "trimmed_mean", "pool": top["pool"], "trim_pct": 0.0}
+    )
+    ranked = s.ranked_attempts()
+    conf = s.selection_confidence()
+    twins = [
+        a for a in ranked[1:]
+        if len(a.residuals) == len(ranked[0].residuals)
+        and np.allclose(a.residuals, ranked[0].residuals, atol=1e-9)
+    ]
+    if twins:
+        assert conf["twins_skipped"] >= 1
+        assert conf["runner_up"] not in {t.attempt_id for t in twins}
+
+
+def test_confidence_reports_when_no_distinct_alternative_exists():
+    s = make_state()
+    POOL.seed_baselines(s, methods=("mean",))
+    # trimmed_mean with trim 0 is arithmetically the mean: an exact twin
+    T.evaluate_strategy(s, {"combine": "trimmed_mean", "pool": FULL_POOL, "trim_pct": 0.0})
+    conf = s.selection_confidence()
+    assert conf["verdict"] == "no_distinct_alternative"
+    assert conf["twins_skipped"] == 1
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

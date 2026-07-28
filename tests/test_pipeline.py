@@ -200,6 +200,8 @@ EXPECTED_FIELDS = {
     "description", "decision_report", "score_preset", "tool_missing", "tools_called",
     "best_strategy_name", "best_strategy_method", "best_strategy_params",
     "predict_debug", "selected_base_models", "weights_by_horizon",
+    "n_tool_calls", "n_evaluate_calls", "provenance_ok",
+    "weights_concentration", "equivalent_to_pool_mean", "pool_mean_relative_diff",
     "n_pool_models", "effective_models", "n_effective_models",
     "final_candidate_names", "final_candidate_count",
     # new (Section 4.4)
@@ -375,6 +377,66 @@ def test_bootstrap_is_marked_unreliable_with_three_windows():
     dm = conf["dm_pvalue"]
     if dm is not None:
         assert conf["verdict"] == ("separated" if dm < 0.10 else "indistinguishable")
+
+
+def test_near_uniform_weights_are_flagged_as_equivalent_to_the_mean():
+    """Real NN5 case: inverse-error weights over five models landed on
+    0.2056 / 0.2080 / 0.1964 / 0.1945 / 0.1955, within 4% of the 0.200 equal
+    weight. Calling that a weighted combination overstates the weighting."""
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    top = T.select_top_k(s, k=4)
+    handle = T.weights_inverse_error(s, pool=top["pool"], shrinkage=0.95)["weights"]
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": top["pool"], "weights": handle})
+    from orchestrator_react.react_loop import ReactResult
+
+    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
+                           config=s.config, react=ReactResult(final_attempt=attempt))
+    red = out.reducibility()
+    assert red["equivalent_to_pool_mean"] is True
+    assert red["pool_mean_relative_diff"] < 0.01
+    assert red["weights_concentration"] is not None
+
+
+def test_a_genuinely_concentrated_weighting_is_not_equivalent():
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    top = T.select_top_k(s, k=4)
+    handle = T.weights_softmax_neg_error(s, pool=top["pool"], eta=20.0)["weights"]
+    recipe = s.get_weights_recipe(handle)
+    recipe.resolved = np.array([0.97, 0.01, 0.01, 0.01])
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": top["pool"], "weights": handle})
+    from orchestrator_react.react_loop import ReactResult
+
+    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
+                           config=s.config, react=ReactResult(final_attempt=attempt))
+    red = out.reducibility()
+    assert red["equivalent_to_pool_mean"] is False
+    assert red["pool_mean_relative_diff"] > 0.01
+
+
+def test_the_plain_mean_is_trivially_equivalent_to_itself():
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    attempt = [a for a in s.attempts if a.spec["combine"] == "mean"][0]
+    from orchestrator_react.react_loop import ReactResult
+
+    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
+                           config=s.config, react=ReactResult(final_attempt=attempt))
+    red = out.reducibility()
+    assert red["equivalent_to_pool_mean"] is True
+    assert red["pool_mean_relative_diff"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_best_single_is_never_called_equivalent_to_a_mean():
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    attempt, _ = s.evaluate({"combine": "best_single", "model": "good_a"})
+    from orchestrator_react.react_loop import ReactResult
+
+    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
+                           config=s.config, react=ReactResult(final_attempt=attempt))
+    assert out.reducibility()["equivalent_to_pool_mean"] is False
 
 
 # ══════════════════════════════════════════════════════════════════════════════

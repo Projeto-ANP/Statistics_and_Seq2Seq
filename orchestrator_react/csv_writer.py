@@ -52,6 +52,9 @@ KEPT_COLUMNS: List[str] = [
     "score_preset",
     "tool_missing",
     "tools_called",
+    "n_tool_calls",
+    "n_evaluate_calls",
+    "provenance_ok",
     "final_candidate_names",
     "final_candidate_count",
     "best_strategy_name",
@@ -62,6 +65,12 @@ KEPT_COLUMNS: List[str] = [
     "n_pool_models",
     "effective_models",
     "n_effective_models",
+    # Did the weighting actually do anything? With three validation windows fitted
+    # weights land within a few percent of uniform, which makes a "weighted
+    # combination" arithmetically the mean of its own pool.
+    "weights_concentration",
+    "equivalent_to_pool_mean",
+    "pool_mean_relative_diff",
     "weights_by_horizon",
 ]
 

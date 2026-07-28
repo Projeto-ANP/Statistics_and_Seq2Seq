@@ -344,12 +344,14 @@ def select_top_k(
 
     err = per_model_error(state.y_true[win], state.y_preds[win], metric=metric)
     chosen = np.argsort(err)[:k]
+    existed = set(state.pools)
     handle = state.register_pool(chosen, origin="top_k_error", metric=metric, windows=win, k=k)
     return {
         "pool": handle,
         "k": int(k),
         "criterion": f"lowest {metric}",
         "models": [state.model_names[int(j)] for j in chosen],
+        **_handle_note(handle, existed),
     }
 
 
@@ -371,9 +373,11 @@ def select_stable(state: ReactState, k: int, metric: str = "rmse") -> Dict[str, 
 
     penalised = ranks.mean(axis=0) + ranks.std(axis=0)
     chosen = np.argsort(penalised)[:k]
+    existed = set(state.pools)
     handle = state.register_pool(chosen, origin="top_k_stable", metric=metric, k=k)
     return {
         "pool": handle,
+        **_handle_note(handle, existed),
         "k": int(k),
         "criterion": "mean rank + std across windows",
         "models": [
@@ -416,11 +420,13 @@ def prune_redundant(
     if not keep_idx:
         raise ValueError("pruning would remove every model; raise corr_threshold")
 
+    existed = set(state.pools)
     handle = state.register_pool(
         keep_idx, origin="pruned", base=pool, corr_threshold=float(corr_threshold)
     )
     return {
         "pool": handle,
+        **_handle_note(handle, existed),
         "base": pool,
         "corr_threshold": float(corr_threshold),
         "n_before": len(idx),
@@ -434,6 +440,20 @@ def prune_redundant(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _handle_note(handle: str, existed_before: set) -> Dict[str, Any]:
+    """Tells the agent when it got back a handle it already had.
+
+    An identical selection reuses its handle rather than minting a duplicate, so
+    the name that comes back is not always a new one. Saying so removes the guess.
+    """
+    if handle not in existed_before:
+        return {"reused": False}
+    return {
+        "reused": True,
+        "note": f"this selection is identical to an existing pool; use {handle!r}",
+    }
+
+
 def _register(
     state: ReactState, method: str, pool: str, windows, per_horizon: bool, **params: Any
 ) -> Dict[str, Any]:
@@ -444,9 +464,11 @@ def _register(
         per_horizon=bool(per_horizon),
         params=params,
     )
+    existed = set(state.weights)
     handle = state.register_weights(recipe)
     return {
         "weights": handle,
+        "reused": handle in existed,
         "method": method,
         "pool": str(pool),
         "summary": state.weights_summary(handle),

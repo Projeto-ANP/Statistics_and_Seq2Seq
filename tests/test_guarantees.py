@@ -27,6 +27,7 @@ from orchestrator_react import pool as POOL
 from orchestrator_react import registry as R
 from orchestrator_react import tools as T
 from orchestrator_react.config import LLMRole, ReactConfig
+from typing import List
 from orchestrator_react.data_source import (
     SeriesAlignmentError,
     load_series_source,
@@ -36,6 +37,7 @@ from orchestrator_react.data_source import (
 from orchestrator_react.llm import ScriptedLLM
 from orchestrator_react.react_loop import run_react_loop
 from orchestrator_react.state import FULL_POOL, ReactState
+from orchestrator_react.config import LLMRole as _LLMRole
 
 from test_ingest_and_pool import HORIZON, MODELS, N_SERIES, N_WINDOWS, _series, fake_repo  # noqa
 from test_orchestrator_react import make_state  # noqa: E402
@@ -426,6 +428,206 @@ def test_frequency_comes_from_the_file_not_from_a_guess():
         path = os.path.join(REAL_SOURCE, tsf)
         if os.path.exists(path):
             assert parse_tsf(path).frequency == expected
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. NOTHING FROM THE TEST PERIOD REACHES THE AGENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class PromptRecorder:
+    """An LLM stand-in that keeps every prompt it was ever given."""
+
+    name = "recorder"
+
+    def __init__(self, script=None):
+        self.prompts: List[str] = []
+        self.script = list(script or [])
+        self.calls = 0
+
+    def complete(self, system: str, user: str) -> str:
+        self.prompts.append(system + "\n" + user)
+        self.calls += 1
+        if self.calls <= len(self.script):
+            return self.script[self.calls - 1]
+        return 'Thought: done\nAction: accept\nAction Input: {"attempt_id": "a1"}'
+
+    def everything(self) -> str:
+        return "\n".join(self.prompts)
+
+
+def _run_recorded(fake_repo, monkeypatch, script=None):
+    import orchestrator_react.pipeline as PLmod
+
+    recorder = PromptRecorder(script)
+    monkeypatch.setattr(PLmod, "build_client", lambda role: recorder if role.enabled else None)
+    out = PL.run_series(
+        MODELS, "FAKE", 0,
+        config=ReactConfig(combinator=LLMRole(model="fake"), max_iterations=6),
+        source_file="fake.tsf", source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+    )
+    return out, recorder
+
+
+def test_no_test_period_value_ever_appears_in_a_prompt(fake_repo, monkeypatch):
+    """The blind window's actuals must not be visible to the agent, in any form."""
+    script = [
+        step("select_top_k", {"k": 2}),
+        step("evaluate_strategy", {"combine": "mean", "pool": "pool1"}),
+        step("accept", {"attempt_id": "a1"}),
+    ]
+    out, recorder = _run_recorded(fake_repo, monkeypatch, script)
+    assert recorder.prompts, "the agent must actually have been called"
+    text = recorder.everything()
+
+    for value in out.test_values:
+        for rendering in (f"{value:.6f}", f"{value:.4f}", f"{value:.2f}", repr(round(value, 3))):
+            assert rendering not in text, f"test actual {value} leaked as {rendering!r}"
+
+
+def test_no_external_baseline_metric_appears_in_a_prompt(fake_repo, monkeypatch):
+    """`baseline_results_json` carries TEST-period metrics of mean/median/dba/ADE/FFORMA.
+
+    Those are computed on the blind window. Showing them to the agent would tell it
+    how well each combiner scores on the very period it is forecasting.
+    """
+    out, recorder = _run_recorded(fake_repo, monkeypatch)
+    text = recorder.everything()
+
+    leaked = []
+    for name, stats in (out.external_baselines or {}).items():
+        if not isinstance(stats, dict) or not stats.get("available"):
+            continue
+        for metric, value in stats.items():
+            if not isinstance(value, float):
+                continue
+            for rendering in (f"{value:.6f}", f"{value:.4f}", f"{value:.3f}"):
+                if rendering in text:
+                    leaked.append(f"{name}.{metric}={rendering}")
+    assert not leaked, f"external test metrics leaked into the prompt: {leaked}"
+
+
+def test_external_baselines_are_read_only_after_the_decision(fake_repo, monkeypatch):
+    """Ordering proof: they cannot influence a choice that was already made."""
+    import orchestrator_react.ingest as ingest_mod
+    import orchestrator_react.pipeline as PLmod
+
+    order: List[str] = []
+    real_reader = ingest_mod.read_external_baselines
+
+    def spy(*args, **kwargs):
+        order.append("read_external_baselines")
+        return real_reader(*args, **kwargs)
+
+    monkeypatch.setattr(PLmod.ingest_mod, "read_external_baselines", spy)
+
+    recorder = PromptRecorder()
+    original_complete = recorder.complete
+
+    def watched(system, user):
+        order.append("llm_call")
+        return original_complete(system, user)
+
+    recorder.complete = watched  # type: ignore[method-assign]
+    monkeypatch.setattr(PLmod, "build_client", lambda role: recorder if role.enabled else None)
+
+    PL.run_series(
+        MODELS, "FAKE", 0,
+        config=ReactConfig(combinator=LLMRole(model="fake"), max_iterations=3),
+        source_file="fake.tsf", source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+    )
+    assert "read_external_baselines" in order
+    assert "llm_call" in order
+    assert order.index("read_external_baselines") > order.index("llm_call"), (
+        "the baselines were read before the agent finished deciding"
+    )
+
+
+def test_only_forecasts_of_the_test_window_are_used(fake_repo):
+    """The agent gets the models' test FORECASTS, never the test ACTUALS."""
+    ing = I.load_series(
+        MODELS, "FAKE", 0, source_file="fake.tsf",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+    )
+    state = ing.state
+    frames = I.read_model_predictions(MODELS[0], "FAKE", fake_repo["results_dir"])
+    last = frames[frames["dataset_index"] == 0].sort_values("start_test").iloc[-1]
+
+    assert state.test_preds[0] == pytest.approx(I.extract_values(last["predictions"]))
+    actual = np.asarray(I.extract_values(last["test"]), dtype=float)
+    for name, value in vars(state).items():
+        if isinstance(value, np.ndarray) and value.size >= actual.size:
+            flat = value.reshape(-1)
+            for start in range(flat.size - actual.size + 1):
+                assert not np.allclose(flat[start : start + actual.size], actual, atol=1e-9), (
+                    f"the test actuals are reachable through ReactState.{name}"
+                )
+
+
+def test_the_dataset_summary_is_computed_after_every_decision(fake_repo):
+    """The cross-baseline comparison is reporting, not an input.
+
+    It runs on the finished outcomes, so there is no path by which it could inform
+    any series' choice — including a later series, since state is per series.
+    """
+    import run_tsf_orchestrator as R
+
+    summary = R._external_summary([])
+    assert summary == {}, "with no outcomes there is nothing to summarise"
+
+    out = PL.run_series(
+        MODELS, "FAKE", 0, config=ReactConfig(combinator=LLMRole(model=None)),
+        source_file="fake.tsf", source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+    )
+    means = R._external_summary([out])
+    assert "mean" in means and means["mean"]["rmse"] > 0
+    # nothing about it is stored back on the state the agent reads
+    assert not hasattr(out.state, "external_baselines")
+
+
+def test_every_tool_call_is_recorded_in_the_csv_column(fake_repo, monkeypatch):
+    """`tools_called` must list each call with its arguments and outcome."""
+    # k=2 of 3 models, so a genuinely new pool handle is created. Asking for all
+    # three would return `pool_full`, because an identical selection reuses its
+    # handle rather than minting a duplicate.
+    script = [
+        step("select_stable", {"k": 2}),
+        step("weights_inverse_error", {"pool": "pool1"}),
+        step("evaluate_strategy", {"combine": "weighted", "pool": "pool1", "weights": "w1"}),
+        step("not_a_real_tool", {}),
+        step("accept", {"attempt_id": "a4"}),
+    ]
+    out, _ = _run_recorded(fake_repo, monkeypatch, script)
+    recorded = json.loads(out.csv_fields()["tools_called"])
+
+    assert [c["tool"] for c in recorded] == [
+        "select_stable", "weights_inverse_error", "evaluate_strategy", "not_a_real_tool",
+    ]
+    assert [c["ok"] for c in recorded] == [True, True, True, False]
+    assert recorded[0]["args"] == {"k": 2}
+    fields = out.csv_fields()
+    assert fields["n_tool_calls"] == 4
+    assert fields["n_evaluate_calls"] == 1
+    assert fields["tool_missing"] is True  # the invented tool was caught
+    assert fields["provenance_ok"] is True  # and the real work still checks out
+
+
+def test_an_identical_selection_reuses_its_handle():
+    """Selecting every model returns `pool_full` instead of minting a duplicate.
+
+    The observation always reports the handle that was actually created, so the
+    agent can read it; what it must not do is assume a new name appeared.
+    """
+    s = make_state()
+    everything = T.select_top_k(s, k=s.n_models)
+    assert everything["pool"] == FULL_POOL
+    subset = T.select_top_k(s, k=3)
+    assert subset["pool"] == "pool1"
+    again = T.select_top_k(s, k=3)
+    assert again["pool"] == "pool1", "the same subset must not create a second handle"
 
 
 if __name__ == "__main__":

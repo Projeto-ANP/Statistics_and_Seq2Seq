@@ -88,6 +88,13 @@ def _canonical(spec: Dict[str, Any]) -> str:
     return json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
 
 
+def _numerically_identical(a: Sequence[float], b: Sequence[float], tol: float = 1e-9) -> bool:
+    """Do two attempts produce the same forecasts, to within numerical noise?"""
+    if not a or not b or len(a) != len(b):
+        return False
+    return bool(np.allclose(np.asarray(a), np.asarray(b), rtol=tol, atol=tol))
+
+
 class ReactState:
     """Owner of the data and of the evaluation protocol.
 
@@ -130,6 +137,7 @@ class ReactState:
             FULL_POOL: {"origin": "full", "k": self.n_models}
         }
         self.weights: Dict[str, WeightsRecipe] = {}
+        self._weights_by_spec: Dict[str, str] = {}
         self._pool_seq = 0
         self._weight_seq = 0
 
@@ -240,15 +248,31 @@ class ReactState:
     # ── weight handles ───────────────────────────────────────────────────────
 
     def register_weights(self, recipe: WeightsRecipe) -> str:
+        """Computes the weights and returns a handle, reusing an identical recipe.
+
+        Deduplication matters beyond tidiness. Two handles for the same numbers make
+        `{"weights": "w1"}` and `{"weights": "w2"}` different specs for the same
+        strategy, so the attempt history would hold numerical twins — and
+        `selection_confidence` compares the winner against the runner-up, which
+        would then be a copy of itself. The margin would be zero and the verdict
+        "indistinguishable" for a reason that has nothing to do with the data.
+        """
         self.get_pool(recipe.pool_handle)  # validates
-        self._weight_seq += 1
-        handle = f"w{self._weight_seq}"
+        key = _canonical(recipe.spec())
+        existing = self._weights_by_spec.get(key)
+        if existing is not None:
+            return existing
+
         idx = self.get_pool(recipe.pool_handle)
         fit = self._fit_windows(recipe.fit_windows, exclude=None)
         resolved, meta = resolve_recipe(recipe, self.y_true[fit], self.y_preds[np.ix_(fit, idx)])
         recipe.resolved = np.asarray(resolved, dtype=float)
         recipe.meta = {**meta, "fit_windows": [int(i) for i in fit]}
+
+        self._weight_seq += 1
+        handle = f"w{self._weight_seq}"
         self.weights[handle] = recipe
+        self._weights_by_spec[key] = handle
         return handle
 
     def get_weights_recipe(self, handle: str) -> WeightsRecipe:
@@ -545,7 +569,23 @@ class ReactState:
         if len(ranked) < 2:
             return out
 
-        best, second = ranked[0], ranked[1]
+        # A runner-up whose forecasts are numerically identical to the winner's
+        # makes the comparison vacuous: the margin collapses to zero and both tests
+        # accept, producing "indistinguishable" for a reason that says nothing about
+        # the data. Walk past any such twin to the first genuinely different attempt.
+        best = ranked[0]
+        second = None
+        skipped = 0
+        for candidate in ranked[1:]:
+            if _numerically_identical(best.residuals, candidate.residuals):
+                skipped += 1
+                continue
+            second = candidate
+            break
+        out["twins_skipped"] = skipped
+        if second is None:
+            out["verdict"] = "no_distinct_alternative"
+            return out
         out["runner_up"] = second.attempt_id
         if np.isfinite(best.score) and np.isfinite(second.score):
             scale = abs(best.score) or 1.0
@@ -596,6 +636,55 @@ class ReactState:
         else:
             out["verdict"] = "weak"
         return out
+
+    # ── provenance: did the agent really work, or just talk? ────────────────
+
+    def verify_provenance(self) -> Dict[str, Any]:
+        """Checks that every result was produced by an executed tool.
+
+        The agent cannot fabricate a number — every figure comes from this state,
+        and the applied strategy is always `best_attempt()`, which only enters the
+        history through a real backtest. What was missing was the audit trail
+        proving it, so a reader of the CSV can tell "the agent explored and
+        concluded the baseline was best" apart from "the agent did nothing".
+
+        Three independent checks:
+
+            agent_called_tools    at least one successful catalog call
+            evaluated_via_tool    every agent-origin attempt has a matching
+                                  successful `evaluate_strategy` in the trace
+            all_backtested        every attempt carries per-window evidence of the
+                                  right shape, i.e. the backtest actually ran
+        """
+        successful = [c for c in self.tools_called if c.get("ok")]
+        evaluate_calls = sum(1 for c in successful if c.get("tool") == "evaluate_strategy")
+        agent_attempts = [a for a in self.attempts if a.origin == "agent"]
+        expected = self.n_windows * self.horizon
+
+        all_backtested = all(
+            len(a.residuals) == expected and len(a.per_window_scores) == self.n_windows
+            for a in self.attempts
+        )
+        # Deduplicated re-submissions mean calls >= attempts, never fewer.
+        evaluated_via_tool = evaluate_calls >= len(agent_attempts)
+
+        checks = {
+            "n_tool_calls": len(self.tools_called),
+            "n_successful": len(successful),
+            "n_failed": len(self.tools_called) - len(successful),
+            "n_evaluate_calls": evaluate_calls,
+            "n_agent_attempts": len(agent_attempts),
+            "n_baseline_attempts": len(self.attempts) - len(agent_attempts),
+            "agent_called_tools": bool(successful),
+            "evaluated_via_tool": evaluated_via_tool,
+            "all_backtested": all_backtested,
+        }
+        checks["provenance_ok"] = bool(
+            checks["all_backtested"]
+            and checks["evaluated_via_tool"]
+            and (checks["agent_called_tools"] or not agent_attempts)
+        )
+        return checks
 
     # ── tool trace ───────────────────────────────────────────────────────────
 

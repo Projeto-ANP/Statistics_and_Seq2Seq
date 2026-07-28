@@ -73,7 +73,7 @@ def test_new_columns_are_all_present():
 
 
 def test_schema_has_no_duplicates():
-    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 50
+    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 56
 
 
 # ══════════════════════════════════════════════════════════════════════════════

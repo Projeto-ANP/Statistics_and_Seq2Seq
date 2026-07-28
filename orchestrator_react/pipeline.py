@@ -199,6 +199,7 @@ class SeriesOutcome:
             "origin": attempt.origin,
             "models": self.selected_models(),
             "effective_models": self.effective_models(),
+            "reducibility": self.reducibility(),
             "weights": weights_block,
             "validation": {
                 "score": _round(attempt.score),
@@ -208,6 +209,7 @@ class SeriesOutcome:
                 "n_windows": state.n_windows,
             },
             "loop": self.react.summary(),
+            "provenance": state.verify_provenance(),
             "selection_confidence": state.selection_confidence(),
             "diagnosis": self.diagnosis or None,
             "config": {
@@ -233,6 +235,49 @@ class SeriesOutcome:
             return []
         first = weights[next(iter(weights))]
         return sorted(name for name, value in first.items() if abs(float(value)) > threshold)
+
+    def reducibility(self, tolerance: float = 0.01) -> Dict[str, Any]:
+        """Is the winning strategy just a simpler one wearing a fancier label?
+
+        Fitted weights on three validation windows come out close to uniform: on
+        real NN5 series, inverse-error weights over five models landed between
+        0.195 and 0.208, within 4% of the 0.200 equal weight. A strategy like that
+        is arithmetically the mean of its pool, and calling it a weighted
+        combination overstates what the weighting contributed.
+
+        This compares the winning forecast against the plain mean of the *same*
+        pool and reports the largest relative difference. It isolates the question
+        that matters for the claim: did the weighting do anything, or is the whole
+        gain in the choice of subset?
+        """
+        blank = {
+            "equivalent_to_pool_mean": None,
+            "pool_mean_relative_diff": None,
+            "weights_concentration": None,
+        }
+        if self.state is None or not self.react or not self.react.final_attempt:
+            return blank
+        spec = self.react.final_attempt.spec
+        if spec["combine"] == "best_single":
+            return {**blank, "equivalent_to_pool_mean": False}
+
+        concentration = None
+        if spec["combine"] == "weighted":
+            concentration = self.state.weights_summary(spec["weights"]).get("concentration")
+
+        try:
+            chosen, _ = self.state.apply_to_test(spec)
+            plain, _ = self.state.apply_to_test({"combine": "mean", "pool": spec["pool"]})
+        except Exception:
+            return {**blank, "weights_concentration": concentration}
+
+        scale = float(np.nanmax(np.abs(plain))) or 1.0
+        diff = float(np.nanmax(np.abs(chosen - plain))) / scale
+        return {
+            "equivalent_to_pool_mean": bool(diff <= tolerance),
+            "pool_mean_relative_diff": round(diff, 6),
+            "weights_concentration": concentration,
+        }
 
     def selected_models(self) -> List[str]:
         if not self.react or not self.react.final_attempt or self.state is None:
@@ -299,6 +344,7 @@ class SeriesOutcome:
             "score_preset": cfg.score_preset,
             "tool_missing": bool(tools.get("tool_missing", False)),
             "tools_called": _dumps(tools.get("tools_called", [])),
+            **_provenance_columns(self.state),
             # Re-pointed: used to be the post-debate candidate ranking, now the
             # ranked attempt history, which plays the same role.
             "final_candidate_names": _dumps(
@@ -319,6 +365,7 @@ class SeriesOutcome:
             "n_pool_models": len(self.selected_models()),
             "effective_models": _dumps(self.effective_models()),
             "n_effective_models": len(self.effective_models()),
+            **self.reducibility(),
             "weights_by_horizon": _dumps(weights_map.get("weights", {})),
             # -- new, Section 4.4 -----------------------------------------------
             "series_profile_json": _dumps(self.series_card),
@@ -530,6 +577,18 @@ def run_dataset(
 # ──────────────────────────────────────────────────────────────────────────────
 # helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _provenance_columns(state: Optional[ReactState]) -> Dict[str, Any]:
+    """Audit trail proving the numbers came from executed tools, not from text."""
+    if state is None:
+        return {"n_tool_calls": 0, "n_evaluate_calls": 0, "provenance_ok": False}
+    checks = state.verify_provenance()
+    return {
+        "n_tool_calls": checks["n_tool_calls"],
+        "n_evaluate_calls": checks["n_evaluate_calls"],
+        "provenance_ok": checks["provenance_ok"],
+    }
 
 
 def _selection_columns(state: Optional[ReactState]) -> Dict[str, Any]:

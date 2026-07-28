@@ -73,7 +73,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from orchestrator_react import pipeline as _pipeline
 from orchestrator_react.config import LLMRole, ReactConfig
-from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter
+from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter, compute_metrics
 from orchestrator_react.data_source import DEFAULT_SOURCE_DIR, SeriesAlignmentError
 from orchestrator_react.ingest import DEFAULT_RESULTS_DIR, count_series
 from orchestrator_react.llm import build_client, check_client
@@ -351,6 +351,7 @@ def exec_dataset_orchestrator(
 
     started = time.perf_counter()
     outcomes: List[Any] = []
+    per_series: List[Dict[str, float]] = []
     ok = failed = llm_failures = 0
     failures: List[str] = []
 
@@ -368,11 +369,34 @@ def exec_dataset_orchestrator(
         if outcome.success:
             ok += 1
             attempt = outcome.react.final_attempt
+            metrics = compute_metrics(outcome.forecast, outcome.test_values)
+            per_series.append(metrics)
+            prov = outcome.state.verify_provenance() if outcome.state else {}
             log(
                 f"[{outcome.dataset_index:>4}] {attempt.spec['combine']:<14}"
                 f" score={attempt.score:7.4f} origin={attempt.origin:<8}"
                 f" iters={outcome.react.iterations_used} stop={outcome.react.stop_reason}"
             )
+            log(
+                f"         TEST  smape={metrics['smape']:.4f}  rmse={metrics['rmse']:.4f}"
+                f"  pocid={metrics['pocid']:.2f}  mape={metrics['mape']:.4f}"
+            )
+            log(f"         FORECAST {[round(v, 3) for v in outcome.forecast]}")
+            log(
+                f"         PROVENANCE tools={prov.get('n_tool_calls', 0)}"
+                f" evaluate_calls={prov.get('n_evaluate_calls', 0)}"
+                f" pool={len(outcome.selected_models())}"
+                f" effective={len(outcome.effective_models())}"
+                f" ok={prov.get('provenance_ok')}"
+            )
+            red = outcome.reducibility()
+            if red.get("equivalent_to_pool_mean"):
+                log(
+                    "         NOTE this strategy is numerically the MEAN of its own pool"
+                    f" (max relative difference {red['pool_mean_relative_diff']})"
+                )
+            if not prov.get("provenance_ok", True):
+                log("         WARNING: provenance check FAILED for this series")
             if outcome.react.stop_reason == "llm_error":
                 llm_failures += 1
                 detail = outcome.react.errors[-1] if outcome.react.errors else "no detail recorded"
@@ -403,6 +427,34 @@ def exec_dataset_orchestrator(
     elapsed = time.perf_counter() - started
     log("-" * 74)
     log(f"done in {elapsed:.1f}s | ok: {ok} | failed: {failed}")
+
+    summary_metrics = _summarise(per_series)
+    if summary_metrics:
+        log("")
+        log(f"DATASET SUMMARY over {len(per_series)} series (mean across series):")
+        log(
+            f"  this run   smape={summary_metrics['smape']:.4f}"
+            f"  rmse={summary_metrics['rmse']:.4f}"
+            f"  pocid={summary_metrics['pocid']:.2f}"
+            f"  mape={summary_metrics['mape']:.4f}"
+            f"  mae={summary_metrics['mae']:.4f}"
+        )
+        for name, stats in _external_summary(outcomes).items():
+            better = "  <- this run is better" if stats["rmse"] > summary_metrics["rmse"] else ""
+            log(
+                f"  {name:<10} smape={stats['smape']:.4f}  rmse={stats['rmse']:.4f}"
+                f"  pocid={stats['pocid']:.2f}  mape={stats['mape']:.4f}{better}"
+            )
+        wins = sum(1 for o in outcomes if o.success and o.react
+                   and o.react.final_attempt and o.react.final_attempt.origin == "agent")
+        log(f"  strategy chosen by the agent in {wins}/{ok} series")
+        verdicts: Dict[str, int] = {}
+        for o in outcomes:
+            if o.success and o.state:
+                v = o.state.selection_confidence().get("verdict", "?")
+                verdicts[v] = verdicts.get(v, 0) + 1
+        if verdicts:
+            log(f"  selection verdict: {verdicts}")
     if llm_failures:
         log(
             f"WARNING: the agent failed on {llm_failures}/{ok + failed} series; those rows "
@@ -434,6 +486,31 @@ def exec_dataset_orchestrator(
 # ──────────────────────────────────────────────────────────────────────────────
 # command line
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _summarise(rows: Sequence[Dict[str, float]]) -> Dict[str, float]:
+    """Mean of each metric across series, ignoring the ones that could not be computed."""
+    if not rows:
+        return {}
+    keys = ("mape", "pocid", "smape", "rmse", "msmape", "mae")
+    out: Dict[str, float] = {}
+    for key in keys:
+        values = [r[key] for r in rows if r.get(key) is not None and r[key] == r[key]]
+        out[key] = float(sum(values) / len(values)) if values else float("nan")
+    return out
+
+
+def _external_summary(outcomes: Sequence[Any]) -> Dict[str, Dict[str, float]]:
+    """The same means for the baselines already on disk, over the same series.
+
+    Comparable because every method is evaluated on the identical blind window.
+    """
+    collected: Dict[str, List[Dict[str, float]]] = {}
+    for outcome in outcomes:
+        for name, stats in (outcome.external_baselines or {}).items():
+            if isinstance(stats, dict) and stats.get("available"):
+                collected.setdefault(name, []).append(stats)
+    return {name: _summarise(rows) for name, rows in collected.items() if rows}
 
 
 def build_parser() -> argparse.ArgumentParser:
