@@ -525,7 +525,8 @@ def _strategy(state: ReactState, spec: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "strategy": norm,
         "n_models": n,
-        "next_step": "pass this strategy to evaluate_strategy",
+        "next_step": "call evaluate_strategy with exactly this Action Input",
+        "next_action_input": {"strategy": norm, "rationale": "<why this should work>"},
     }
 
 
@@ -568,20 +569,61 @@ def combine_best_single(state: ReactState, model_id: str) -> Dict[str, Any]:
 
 def evaluate_strategy(
     state: ReactState,
-    strategy: Dict[str, Any],
+    strategy: Any = None,
+    combine: Optional[str] = None,
+    pool: Optional[str] = None,
+    weights: Optional[str] = None,
+    trim_pct: Optional[float] = None,
+    model: Optional[str] = None,
     rationale: str = "",
     iteration: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Core loop tool: backtests over the windows and ranks the result.
+    """Core loop tool: builds the strategy, backtests it, and ranks the result.
 
-    The strategy enters the history along with its rationale. Re-submitting an
-    already tested strategy creates no new entry — the response carries
-    `already_tested=True`.
+    Accepts every shape an agent naturally reaches for, because a rejected call
+    costs an iteration and teaches nothing:
+
+        {"combine": "weighted", "pool": "pool1", "weights": "w1"}   flat
+        {"strategy": {"combine": "weighted", "pool": "pool1", ...}} nested
+        {"strategy": "weighted", "pool": "pool1", "weights": "w1"}  method + siblings
+        {"strategy": <the whole dict combine_weighted returned>}    passthrough
+
+    So `combine_*` is optional sugar: this one call both assembles and scores.
+    The strategy enters the history with its rationale; re-submitting one already
+    tested creates no new entry and comes back with `already_tested=True`.
     """
+    spec: Dict[str, Any] = {}
+
     if isinstance(strategy, str):
-        strategy = json.loads(strategy)
-    if isinstance(strategy, dict) and "strategy" in strategy:
-        strategy = strategy["strategy"]
+        text = strategy.strip()
+        parsed = None
+        if text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+        if isinstance(parsed, dict):
+            spec = dict(parsed)
+        else:
+            # a bare method name, or the human-readable label from combine_*
+            spec = {"combine": text.split()[0].lower() if text else ""}
+    elif isinstance(strategy, dict):
+        spec = dict(strategy.get("strategy") if isinstance(strategy.get("strategy"), dict) else strategy)
+
+    # sibling arguments fill in whatever the nested form did not carry
+    for key, value in (
+        ("combine", combine), ("pool", pool), ("weights", weights),
+        ("trim_pct", trim_pct), ("model", model),
+    ):
+        if value is not None and not spec.get(key):
+            spec[key] = value
+
+    if not spec.get("combine"):
+        raise ValueError(
+            "no combination method given. Pass either "
+            '{"combine": "mean", "pool": "pool_full"} or the object a combine_* tool returned'
+        )
+    strategy = spec
 
     attempt, is_new = state.evaluate(
         strategy, rationale=str(rationale), origin="agent", iteration=iteration

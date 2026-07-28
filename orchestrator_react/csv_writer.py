@@ -207,6 +207,7 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
             "trajectory": outcome.react.trajectory if outcome.react else [],
             "summary": outcome.react.summary() if outcome.react else {},
             "errors": outcome.react.errors if outcome.react else [],
+            "parse_failures": outcome.react.parse_failures if outcome.react else [],
         },
         "predict_debug": outcome.predict_debug,
         "sanity": outcome.sanity,

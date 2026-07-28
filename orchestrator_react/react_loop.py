@@ -49,6 +49,11 @@ class ReactResult:
     elapsed_s: float = 0.0
     tools: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
+    #: Raw model output for every turn the parser could not read. Kept out of the
+    #: CSV, which would bloat `react_trajectory_json`, and written to the per-series
+    #: artifacts instead — that is where you look when a model keeps missing the
+    #: output format and you need to see what it actually said.
+    parse_failures: List[Dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -159,6 +164,9 @@ def run_react_loop(
                 error=step.parse_error, kind="invalid_action_input",
             )
             result.errors.append(f"iteration {iteration}: {step.parse_error}")
+            result.parse_failures.append(
+                {"iteration": iteration, "reason": step.parse_error, "raw": str(step.raw)[:4000]}
+            )
             result.trajectory.append(entry)
             scratchpad.append(entry)
             last_observation = observation

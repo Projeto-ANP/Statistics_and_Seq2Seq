@@ -316,6 +316,86 @@ def test_ingestion_rejects_too_few_windows(fake_repo):
         I.load_series(MODELS, "FAKE", 0, config=cfg, results_dir=fake_repo["results_dir"])
 
 
+def test_mislabelled_timestamps_warn_but_do_not_block(fake_repo):
+    """Timestamps may diverge between models; position is what defines a window.
+
+    This is the project's own convention, stated in
+    `combinations/ade.py::_check_windows_alignment`: the real dates may differ
+    between models, the relative position must not, and the first model's dates are
+    the canonical axis. The real ETTH1 case is six `ONLY_*` models that wrote their
+    index with freq="15min" on hourly data, so the identical 24 observations carry
+    2016-12-29 in those files and 2018-06-26 in the other thirteen.
+    """
+    path = os.path.join(fake_repo["results_dir"], "bad", "normal", "FAKE.csv")
+    df = pd.read_csv(path, sep=";")
+    for col in ("start_test", "final_test"):
+        df[col] = pd.to_datetime(df[col]) - pd.DateOffset(years=2)
+    df.to_csv(path, sep=";", index=False)
+
+    ing = I.load_series(
+        MODELS, "FAKE", 0, source_file="fake.tsf",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+    )
+    assert ing.state.n_models == len(MODELS), "no model was dropped over a label"
+    assert any("final_test timestamp" in w for w in ing.warnings)
+    # the reported date comes from the reference model, per the ADE convention
+    reference = pd.read_csv(
+        os.path.join(fake_repo["results_dir"], MODELS[0], "normal", "FAKE.csv"), sep=";"
+    )
+    reference["final_test"] = pd.to_datetime(reference["final_test"])
+    expected = reference[reference["dataset_index"] == 0]["final_test"].max()
+    assert ing.final_test == expected
+
+
+def test_different_actuals_on_the_test_window_are_fatal(fake_repo):
+    """Tolerating labels must not weaken the real guarantee.
+
+    No other component of the project checks this: `aux.get_predictions_models`
+    aligns positionally with no comparison at all, and ADE/FFORMA only compare
+    window COUNTS. Different values on the blind window mean the models forecast
+    different periods, and combining them would mix periods.
+    """
+    path = os.path.join(fake_repo["results_dir"], "bad", "normal", "FAKE.csv")
+    df = pd.read_csv(path, sep=";")
+    df["start_test"] = pd.to_datetime(df["start_test"])
+    last = df[df["dataset_index"] == 0].sort_values("start_test").index[-1]
+    df.loc[last, "test"] = str([777.0] * HORIZON)
+    df.to_csv(path, sep=";", index=False)
+
+    with pytest.raises(I.IngestionError, match="not the same window"):
+        I.load_series(MODELS, "FAKE", 0, results_dir=fake_repo["results_dir"])
+
+
+def test_models_with_extra_windows_align_from_the_end(fake_repo):
+    """A model run with a bigger budget still lines up: windows peel off the end.
+
+    ADE and FFORMA refuse this outright (they require identical window counts).
+    Here it is fine, because `run_tsf_normal_series` always peels the newest window
+    first, so the last N windows of a 30-window model are the last N of a 4-window
+    one.
+    """
+    path = os.path.join(fake_repo["results_dir"], "good", "normal", "FAKE.csv")
+    df = pd.read_csv(path, sep=";")
+    df["start_test"] = pd.to_datetime(df["start_test"])
+    df["final_test"] = pd.to_datetime(df["final_test"])
+    # invent two older windows for series 0, as if it had been run with more origins
+    oldest = df[df["dataset_index"] == 0].sort_values("start_test").iloc[0]
+    extra = []
+    for back in (1, 2):
+        row = oldest.copy()
+        row["start_test"] = oldest["start_test"] - pd.DateOffset(months=HORIZON * back)
+        row["final_test"] = oldest["final_test"] - pd.DateOffset(months=HORIZON * back)
+        row["test"] = str([-1.0] * HORIZON)
+        row["predictions"] = str([-1.0] * HORIZON)
+        extra.append(row)
+    pd.concat([df, pd.DataFrame(extra)]).to_csv(path, sep=";", index=False)
+
+    ing = I.load_series(MODELS, "FAKE", 0, results_dir=fake_repo["results_dir"])
+    # the invented old windows are simply not among the last 3 used
+    assert not np.any(ing.state.y_true == -1.0)
+    assert ing.state.n_windows == N_WINDOWS
+
+
 def test_ingestion_detects_misaligned_actuals(fake_repo, tmp_path):
     """If two models report different actuals, their windows are not the same."""
     path = os.path.join(fake_repo["results_dir"], "bad", "normal", "FAKE.csv")

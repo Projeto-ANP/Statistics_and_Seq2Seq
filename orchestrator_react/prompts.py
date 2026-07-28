@@ -50,11 +50,25 @@ def build_system_prompt(include_history_rules: bool = True) -> str:
         "2. Form a hypothesis about WHY a combination should work for THIS series,",
         "   grounded in what you observe: trend strength, seasonal strength, how stable",
         "   the model ranking is across windows, how redundant the models are.",
-        "3. Test it: build a pool (select_top_k / select_stable / prune_redundant),",
-        "   optionally compute weights (weights_*), assemble a strategy (combine_*),",
-        "   then call evaluate_strategy. Only evaluate_strategy scores anything.",
+        "3. Test it with evaluate_strategy. Only evaluate_strategy scores anything.",
         "4. Read the result against the attempt history and decide: test another",
         f"   hypothesis, or {TERMINAL_ACTION} the best attempt.",
+        "",
+        "EVALUATING A STRATEGY - one call, flat arguments:",
+        '  Action Input: {"combine": "mean", "pool": "pool_full", "rationale": "..."}',
+        '  Action Input: {"combine": "median", "pool": "pool1", "rationale": "..."}',
+        '  Action Input: {"combine": "trimmed_mean", "pool": "pool1", "trim_pct": 0.2}',
+        '  Action Input: {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
+        '  Action Input: {"combine": "best_single", "model": "<a model name>"}',
+        '  Action Input: {"combine": "dba", "pool": "pool1"}',
+        "  You do NOT need combine_* first. It only builds the same object, so going",
+        "  through it costs you an iteration for nothing.",
+        "",
+        "A TYPICAL SEQUENCE:",
+        '  select_stable      {"k": 5}                  -> pool1',
+        '  weights_inverse_error {"pool": "pool1"}      -> w1',
+        '  evaluate_strategy  {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
+        f'  {TERMINAL_ACTION}  {{"attempt_id": "aN", "confidence": 0.7, "justification": "..."}}',
         "",
         "RULES:",
         "- Prefer small structured comparisons over one sweeping decision. Pick a",
@@ -63,6 +77,8 @@ def build_system_prompt(include_history_rules: bool = True) -> str:
         "  combine_weighted; you will never see the numbers, and you do not need to.",
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
+        "- If a call is rejected, read the error: it lists the arguments that ARE",
+        "  accepted. Do not retry the same shape.",
         f"- When you {TERMINAL_ACTION}, justification must explain the choice in terms of",
         "  OBSERVABLE SERIES CHARACTERISTICS, not just 'it had the lowest error'.",
         "  Example: 'ranking is unstable across windows (tau=0.17) and the models are",
@@ -257,13 +273,21 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
             f"handle {observation.get('weights')} mode={observation.get('effective_mode')}"
             f" active={s.get('n_active')}/{s.get('n_models')} conc={s.get('concentration')}"
         )
-    if action.startswith("select_") or action == "prune_redundant":
+    if action == "prune_redundant":
+        return (
+            f"pool {observation.get('pool')} {observation.get('n_before')}->"
+            f"{observation.get('n_after')} models, dropped {observation.get('removed', [])[:4]}"
+        )
+    if action.startswith("select_"):
         models = observation.get("models", [])
         names = [m["model"] if isinstance(m, dict) else m for m in models][:5]
-        return f"pool {observation.get('pool')} k={observation.get('k', observation.get('n_after'))} {names}"
+        return f"pool {observation.get('pool')} k={observation.get('k')} {names}"
     if action.startswith("combine_"):
         strategy = observation.get("strategy", {})
-        return f"strategy {strategy.get('combine')} on {strategy.get('pool')} ({observation.get('n_models')} models)"
+        return (
+            f"strategy built: {json.dumps(strategy, separators=(',', ':'))}"
+            " -> pass it to evaluate_strategy"
+        )
     if action == "series_profile":
         return (
             f"trend={observation.get('trend_strength')} seasonal={observation.get('seasonal_strength')}"

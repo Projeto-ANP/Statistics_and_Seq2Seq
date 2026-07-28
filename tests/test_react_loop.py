@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from orchestrator_react import pool as POOL
 from orchestrator_react import prompts as P
+from orchestrator_react import registry as R
 from orchestrator_react import tools as T
 from orchestrator_react.config import ReactConfig
 from orchestrator_react.llm import (
@@ -486,6 +487,148 @@ def test_loop_is_deterministic_for_the_same_script():
     assert outs[0][0] == outs[1][0]
     assert outs[0][1] == outs[1][1]
     assert outs[0][2] == pytest.approx(outs[1][2])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# shapes gpt-oss:20b actually produced on the server
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+REAL_SHAPES = [
+    # flat, the form the model reaches for first
+    {"combine": "weighted", "pool": "pool1", "weights": "w1"},
+    # method name in `strategy`, arguments as siblings
+    {"strategy": "weighted", "pool": "pool1", "weights": "w1"},
+    # same plus a field the model invented
+    {"strategy": "weighted", "pool": "pool1", "weights": "w1", "origin": "combination"},
+    # nested, the documented form
+    {"strategy": {"combine": "weighted", "pool": "pool1", "weights": "w1"}},
+]
+
+
+@pytest.mark.parametrize("shape", REAL_SHAPES)
+def test_evaluate_strategy_accepts_every_shape_the_model_uses(shape):
+    """A rejected call costs an iteration and teaches the model nothing.
+
+    Every one of these came out of a real gpt-oss:20b run; three of the four used
+    to fail with `unknown_argument`, and the model then burned three more turns
+    retrying the same shape.
+    """
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    T.weights_inverse_error(s, pool="pool1")
+
+    ok, obs = R.call_tool(s, "evaluate_strategy", dict(shape))
+    assert ok, f"{shape} was rejected: {obs}"
+    assert obs["strategy"] == {"combine": "weighted", "pool": "pool1", "weights": "w1"}
+
+
+def test_evaluate_strategy_accepts_a_combine_tool_result_verbatim():
+    s, series, pool = prepared()
+    built = T.combine_median(s)
+    ok, obs = R.call_tool(s, "evaluate_strategy", {"strategy": built["strategy"]})
+    assert ok and obs["strategy"]["combine"] == "median"
+    # and the whole returned object, pasted as-is
+    ok2, obs2 = R.call_tool(s, "evaluate_strategy", {"strategy": built})
+    assert ok2 and obs2["already_tested"] is True
+
+
+def test_evaluate_strategy_reads_a_json_string():
+    s, series, pool = prepared()
+    ok, obs = R.call_tool(
+        s, "evaluate_strategy", {"strategy": '{"combine": "median", "pool": "pool_full"}'}
+    )
+    assert ok and obs["strategy"]["combine"] == "median"
+
+
+def test_evaluate_strategy_recovers_from_the_human_readable_label():
+    """The model once pasted back the observation text: 'weighted on pool2 (7 models)'."""
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    T.weights_inverse_error(s, pool="pool1")
+    ok, obs = R.call_tool(
+        s, "evaluate_strategy",
+        {"strategy": "weighted on pool1 (3 models)", "pool": "pool1", "weights": "w1"},
+    )
+    assert ok and obs["strategy"]["combine"] == "weighted"
+
+
+def test_evaluate_strategy_without_a_method_says_what_to_send():
+    s, series, pool = prepared()
+    ok, obs = R.call_tool(s, "evaluate_strategy", {"pool": "pool_full"})
+    assert not ok
+    assert "combine" in obs["detail"]
+
+
+def test_combine_tools_hand_back_a_ready_to_paste_call():
+    """The observation must show the exact Action Input for the next turn."""
+    s, series, pool = prepared()
+    built = T.combine_mean(s)
+    assert built["next_action_input"]["strategy"] == built["strategy"]
+    ok, _ = R.call_tool(s, "evaluate_strategy", built["next_action_input"])
+    assert ok
+
+
+def test_the_two_step_detour_is_no_longer_needed():
+    """One call now does what used to take two, saving an iteration per strategy."""
+    s, series, pool = prepared(ReactConfig(max_iterations=4))
+    llm = ScriptedLLM([
+        step("select_stable", {"k": 3}, "favour consistency"),
+        step("evaluate_strategy", {"combine": "mean", "pool": "pool1"}, "test the stable subset"),
+        step("accept", {"attempt_id": "a4", "justification": "unstable ranking"}),
+    ])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.stop_reason == "agent_accepted"
+    assert r.iterations_used == 3
+    assert not any("ERROR" in t["observation_summary"] for t in r.trajectory)
+
+
+def test_prune_redundant_summary_reports_what_it_dropped():
+    """It used to print `k=9 []` because that tool returns no `models` key."""
+    s, series, pool = prepared()
+    ok, obs = R.call_tool(s, "prune_redundant", {"corr_threshold": 0.8})
+    assert ok
+    line = P.summarize_observation("prune_redundant", True, obs)
+    assert "->" in line and "dropped" in line
+    assert "[]" not in line
+
+
+def test_a_descriptive_extra_field_does_not_cost_an_iteration():
+    """gpt-oss added `origin` to the call and lost the turn over it."""
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    T.weights_inverse_error(s, pool="pool1")
+    ok, obs = R.call_tool(
+        s, "evaluate_strategy",
+        {"combine": "weighted", "pool": "pool1", "weights": "w1", "origin": "combination"},
+    )
+    assert ok
+    assert obs["ignored_args"] == ["origin"], "the tolerance must be visible, not silent"
+
+
+def test_other_tools_stay_strict():
+    """Tolerance is only for the central tool; a wrong knob elsewhere is still an error."""
+    s, series, pool = prepared()
+    ok, obs = R.call_tool(s, "select_top_k", {"k": 3, "temperature": 0.7})
+    assert not ok and obs["error"] == "unknown_argument"
+
+
+def test_unparsed_turns_keep_the_raw_text_for_forensics():
+    """`ERROR parse: no 'Action:' line found` is useless without the actual answer."""
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    llm = ScriptedLLM([
+        "I will begin by reviewing the series characteristics before choosing.",
+        step("accept", {"attempt_id": "a1"}),
+    ])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert len(r.parse_failures) == 1
+    failure = r.parse_failures[0]
+    assert failure["iteration"] == 1
+    assert "Action:" in failure["reason"]
+    assert "I will begin by reviewing" in failure["raw"]
+    # and it must not bloat the CSV column
+    import json as _json
+    assert "I will begin" not in _json.dumps(r.trajectory)
 
 
 if __name__ == "__main__":

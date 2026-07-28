@@ -297,49 +297,102 @@ def test_agent_run_is_fully_traceable_from_the_csv(tmp_path, fake_repo):
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_cli_builds_the_config_from_flags():
-    import run_tsf_react as R
+def test_old_debate_parameters_raise_a_helpful_error():
+    """An old call pasted from a notebook must say what to use instead."""
+    import run_tsf_orchestrator as R
 
-    args = R.build_parser().parse_args([
-        "--dataset", "FAKE", "--version", "abl", "--windows", "3",
-        "--pool-mode", "top_k_stable", "--pool-k", "5", "--max-iterations", "6",
-        "--combinator", "qwen3:14b", "--diagnostic-llm",
-    ])
-    cfg = R.build_config(args)
-    assert cfg.name == "abl"
-    assert cfg.pool_mode == "top_k_stable" and cfg.pool_k == 5
-    assert cfg.max_iterations == 6
-    assert cfg.combinator.model == "qwen3:14b"
-    assert cfg.diagnostic_llm is True
+    for name in ("proposer_model", "skeptic_model", "statistician_model",
+                 "pattern_analyst_model", "train_window", "rolling", "debate"):
+        with pytest.raises(TypeError, match=name):
+            R.exec_dataset_orchestrator(MODELS, "FAKE", **{name: "x"})
 
 
-def test_cli_no_llm_disables_every_role():
-    import run_tsf_react as R
+def test_model_config_duck_typing():
+    """The old `ModelConfig(model=..., temperature=...)` still works."""
+    import run_tsf_orchestrator as R
+    from dataclasses import dataclass
 
-    args = R.build_parser().parse_args(
-        ["--dataset", "FAKE", "--no-llm", "--combinator", "gpt-oss:20b"]
+    @dataclass
+    class ModelConfig:
+        model: str
+        temperature: float
+
+    role = R._as_role(ModelConfig(model="qwen3:14b", temperature=0.7))
+    assert role.model == "qwen3:14b" and role.temperature == 0.7
+    assert R._as_role("gpt-oss:20b").model == "gpt-oss:20b"
+    assert R._as_role(None).model is None
+    assert R._as_role("none").model is None
+
+
+def test_exec_dataset_orchestrator_deterministic_arm(tmp_path, fake_repo):
+    """The programmatic call, exactly as it was used before."""
+    import run_tsf_orchestrator as R
+
+    summary = R.exec_dataset_orchestrator(
+        MODELS,
+        dataset="FAKE",
+        source_file="fake.tsf",
+        use_llm=False,
+        source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path),
+        version="prog",
+        llm_logs=False,
     )
-    cfg = R.build_config(args)
-    assert cfg.combinator.model is None
-    assert cfg.diagnostician.model is None
-    assert cfg.reporter.model is None
-    assert cfg.diagnostic_llm is False
+    assert summary["n_ok"] == N_SERIES and summary["n_failed"] == 0
+    assert summary["experiment"] == "orchestrator_react_prog"
+    df = pd.read_csv(summary["csv_path"], sep=";")
+    assert len(df) == N_SERIES
+    assert df.columns.tolist() == W.COLS_SERIE
 
 
-def test_cli_environment_overrides_the_flags(monkeypatch):
+def test_exec_dataset_orchestrator_with_an_agent(tmp_path, fake_repo, monkeypatch):
+    """A single combinator model drives the whole decision."""
+    import orchestrator_react.pipeline as PLmod
+    import run_tsf_orchestrator as R
+
+    script = ScriptedLLM([
+        'Thought: prune\nAction: select_top_k\nAction Input: {"k": 2}',
+        'Thought: test\nAction: evaluate_strategy\nAction Input: '
+        '{"strategy": {"combine": "mean", "pool": "pool1"}}',
+        'Thought: done\nAction: accept\nAction Input: '
+        '{"attempt_id": "a4", "confidence": 0.7, "justification": "lean pool"}',
+    ] * N_SERIES)
+    monkeypatch.setattr(PLmod, "build_client", lambda role: script if role.enabled else None)
+    # the preflight lives in the entry point and imports build_client directly
+    monkeypatch.setattr(R, "check_client", lambda client: (True, "OK"))
+
+    summary = R.exec_dataset_orchestrator(
+        MODELS, dataset="FAKE", source_file="fake.tsf",
+        combinator_model="gpt-oss:20b",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path), version="agent", llm_logs=False, indices=[0],
+    )
+    assert summary["n_ok"] == 1
+    row = pd.read_csv(summary["csv_path"], sep=";").iloc[0]
+    assert row["agent_model_combinator"] == "gpt-oss:20b"
+    assert row["react_iterations_used"] == 3
+    assert json.loads(row["react_trajectory_json"])[0]["action"] == "select_top_k"
+
+
+def test_cli_environment_overrides_the_flags(monkeypatch, tmp_path, fake_repo):
     """Section 3.5: swapping the model per role must not need a code change."""
-    import run_tsf_react as R
+    import run_tsf_orchestrator as R
 
-    monkeypatch.setenv("REACT_MODEL_COMBINATOR", "gemma4:26b")
-    args = R.build_parser().parse_args(
-        ["--dataset", "FAKE", "--combinator", "gpt-oss:20b"]
+    monkeypatch.setenv("REACT_MODEL_COMBINATOR", "none")
+    summary = R.exec_dataset_orchestrator(
+        MODELS, dataset="FAKE", source_file="fake.tsf",
+        combinator_model="gpt-oss:20b",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path), version="envtest", llm_logs=False, indices=[0],
     )
-    assert R.build_config(args).combinator.model == "gemma4:26b"
+    row = pd.read_csv(summary["csv_path"], sep=";").iloc[0]
+    assert row["agent_model_combinator"] == "none"
 
 
 def test_cli_separates_input_from_output(tmp_path, fake_repo):
     """A smoke run must be able to write outside the results tree."""
-    import run_tsf_react as R
+    import run_tsf_orchestrator as R
 
     R.main([
         "--dataset", "FAKE", "--source", "fake.tsf",
@@ -354,7 +407,7 @@ def test_cli_separates_input_from_output(tmp_path, fake_repo):
 
 
 def test_cli_runs_end_to_end(tmp_path, fake_repo, capsys):
-    import run_tsf_react as R
+    import run_tsf_orchestrator as R
 
     code = R.main([
         "--dataset", "FAKE",
@@ -378,7 +431,7 @@ def test_cli_runs_end_to_end(tmp_path, fake_repo, capsys):
 
 
 def test_cli_dry_run_writes_nothing(tmp_path, fake_repo):
-    import run_tsf_react as R
+    import run_tsf_orchestrator as R
 
     code = R.main([
         "--dataset", "FAKE", "--source", "fake.tsf",
@@ -391,7 +444,7 @@ def test_cli_dry_run_writes_nothing(tmp_path, fake_repo):
 
 
 def test_cli_reports_a_bad_tsf_clearly(tmp_path, fake_repo, capsys):
-    import run_tsf_react as R
+    import run_tsf_orchestrator as R
 
     (tmp_path / "tiny.tsf").write_text(
         "@relation T\n@attribute series_name string\n@frequency monthly\n@data\nA:1,2,3\n",

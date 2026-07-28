@@ -52,6 +52,13 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
 #: `Action: accept` and handled by the Phase 3 loop, not here.
 TERMINAL_ACTION = "accept"
 
+#: Tools where an unknown argument is dropped instead of rejected. Only the loop's
+#: central tool qualifies: models routinely decorate the call with a descriptive
+#: field ("origin", "note"), and failing the whole turn over one stray key costs an
+#: iteration and teaches nothing. What was dropped comes back in the observation, so
+#: the tolerance is visible rather than silent.
+PERMISSIVE_TOOLS = {"evaluate_strategy"}
+
 #: Failures meaning "the agent asked for something outside the catalog contract".
 #: These are the ones that switch on the `tool_missing` CSV field.
 SPEC_ERROR_KINDS = {
@@ -125,14 +132,19 @@ def call_tool(
     sig = inspect.signature(fn)
     accepted = {p for p in sig.parameters if p != "state"}
     unknown = [k for k in args if k not in accepted]
+    ignored: List[str] = []
     if unknown:
-        obs = {
-            "error": "unknown_argument",
-            "detail": f"{name} does not accept {unknown}",
-            "accepted": sorted(accepted),
-        }
-        state.log_tool(str(name), args, ok=False, error=obs["detail"], kind=obs["error"])
-        return False, obs
+        if str(name) in PERMISSIVE_TOOLS:
+            ignored = sorted(unknown)
+            args = {k: v for k, v in args.items() if k in accepted}
+        else:
+            obs = {
+                "error": "unknown_argument",
+                "detail": f"{name} does not accept {unknown}",
+                "accepted": sorted(accepted),
+            }
+            state.log_tool(str(name), args, ok=False, error=obs["detail"], kind=obs["error"])
+            return False, obs
 
     missing = [
         p
@@ -160,6 +172,8 @@ def call_tool(
         return False, obs
 
     state.log_tool(str(name), args, ok=True)
+    if ignored and isinstance(result, dict):
+        result = {**result, "ignored_args": ignored}
     return True, result
 
 
