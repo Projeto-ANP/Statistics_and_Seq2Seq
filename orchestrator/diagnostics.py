@@ -304,8 +304,10 @@ def diebold_mariano(
 
         p = 2.0 * (1.0 - float(tdist.cdf(abs(dm_hln), df=max(1, n - 1))))
     except Exception:
-        # Normal fallback
-        p = 2.0 * (1.0 - 0.5 * (1.0 + np.math.erf(abs(dm_hln) / np.sqrt(2))))
+        # Normal fallback (numpy >= 2 removeu np.math; usar a stdlib)
+        import math
+
+        p = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(dm_hln) / np.sqrt(2))))
     return {"dm_stat": float(dm_hln), "p_value": float(p), "n": n}
 
 
