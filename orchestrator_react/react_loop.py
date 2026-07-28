@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -74,6 +74,7 @@ def run_react_loop(
     config: Optional[ReactConfig] = None,
     skip_reason: str = "",
     diagnosis: Optional[Dict[str, Any]] = None,
+    on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
 ) -> ReactResult:
     """Runs the decision loop and returns the winning attempt plus the full trace.
 
@@ -85,6 +86,9 @@ def run_react_loop(
         pool_card: output of `pool.pool_report()`.
         skip_reason: set by the calibration gate to bypass the loop.
         diagnosis: the Phase 1 reading, injected into every turn when present.
+        on_step: called with `(dataset_index, trajectory_entry)` after every turn,
+            so a long run can show what the agent is doing instead of only what it
+            concluded.
     """
     config = config or state.config
     started = time.perf_counter()
@@ -158,6 +162,7 @@ def run_react_loop(
             result.trajectory.append(entry)
             scratchpad.append(entry)
             last_observation = observation
+            _emit(on_step, state, entry)
             continue
 
         # ── terminal action ──────────────────────────────────────────────────
@@ -170,6 +175,7 @@ def run_react_loop(
                                error=problem, kind="invalid_argument")
                 result.trajectory.append(entry)
                 scratchpad.append(entry)
+                _emit(on_step, state, entry)
                 continue
 
             result.agent_accepted_id = accepted.attempt_id
@@ -179,6 +185,7 @@ def run_react_loop(
                 f"accepted {accepted.attempt_id} (confidence={confidence})"
             )
             result.trajectory.append(entry)
+            _emit(on_step, state, entry)
             result.stop_reason = "agent_accepted"
             break
 
@@ -193,6 +200,7 @@ def run_react_loop(
         result.trajectory.append(entry)
         scratchpad.append(entry)
         last_observation = observation
+        _emit(on_step, state, entry)
 
         if not ok:
             result.errors.append(f"iteration {iteration}: {observation.get('detail', '')}")
@@ -236,6 +244,20 @@ def run_react_loop(
 # ──────────────────────────────────────────────────────────────────────────────
 # helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _emit(
+    on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]],
+    state: ReactState,
+    entry: Dict[str, Any],
+) -> None:
+    """Reporting must never break the run."""
+    if on_step is None:
+        return
+    try:
+        on_step(state.dataset_index, entry)
+    except Exception:
+        pass
 
 
 def _score(attempt: Optional[Attempt]) -> float:

@@ -335,6 +335,7 @@ def run_series(
     diagnosis_hook: DiagnosisHook = phases_mod.run_diagnosis,
     report_hook: ReportHook = phases_mod.run_report,
     read_external_baselines: bool = True,
+    on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
 ) -> SeriesOutcome:
     """Runs Phases 0 to 5 for one series.
 
@@ -405,6 +406,7 @@ def run_series(
         config=config,
         skip_reason=skip,
         diagnosis=outcome.diagnosis,
+        on_step=on_step,
     )
 
     # ── Phase 4 — deterministic application to the test forecasts ───────────

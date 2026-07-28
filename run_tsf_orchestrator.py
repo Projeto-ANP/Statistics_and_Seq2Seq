@@ -63,6 +63,7 @@ Command line:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -75,6 +76,7 @@ from orchestrator_react.config import LLMRole, ReactConfig
 from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter
 from orchestrator_react.data_source import DEFAULT_SOURCE_DIR, SeriesAlignmentError
 from orchestrator_react.ingest import DEFAULT_RESULTS_DIR, count_series
+from orchestrator_react.llm import build_client, check_client
 
 
 #: The 19 models used by the previous runs. Kept as the default so a call that only
@@ -177,7 +179,9 @@ def exec_dataset_orchestrator(
     indices: Optional[Sequence[int]] = None,
     limit: Optional[int] = None,
     llm_logs: bool = True,
+    log_agent_steps: bool = True,
     stop_on_error: bool = False,
+    allow_baseline_fallback: bool = False,
     save_artifacts: bool = True,
     dry_run: bool = False,
     version: str = "react_v1",
@@ -200,6 +204,16 @@ def exec_dataset_orchestrator(
         reporter_model: enables Phase 5.
         n_windows: validation windows. 3 matches the baselines already on disk.
         indices / limit: run a subset, for smoke runs.
+        log_agent_steps: print every Thought / Action / Observation as it happens.
+            A run with an agent is mostly waiting, and the interesting part is what
+            it decided to look at; without this the log only shows the conclusion.
+        allow_baseline_fallback: what to do when a configured agent does not answer.
+            Default False: raise, with the underlying error. The point of this
+            architecture is the agent, so a run that silently degrades to the
+            deterministic baseline is a run that answers a different question while
+            the log still reads `ok`. Set True only when you deliberately want the
+            baseline arm on an unreliable server; `use_llm=False` is the clean way
+            to ask for the deterministic arm.
         output_dir: write somewhere other than `results_dir`, so a smoke run does
             not touch the results tree.
         config: a fully built `ReactConfig`; the keyword arguments are applied on
@@ -279,6 +293,33 @@ def exec_dataset_orchestrator(
         log("dry run      : nothing will be written")
     log("-" * 74)
 
+    # ── preflight ────────────────────────────────────────────────────────────
+    # A server that is down, or a model that was never pulled, fails identically on
+    # every series. Catching it here costs one call; not catching it costs a whole
+    # run of silent deterministic fallback.
+    if cfg.combinator.enabled:
+        ok_llm, detail = check_client(build_client(cfg.combinator))
+        if ok_llm:
+            log(f"llm preflight: OK ({detail!r})")
+        else:
+            message = (
+                "THE COMBINATOR LLM DID NOT ANSWER\n"
+                f"  error    : {detail}\n"
+                f"  model    : {cfg.combinator.label()}\n"
+                f"  base_url : {cfg.combinator.base_url}\n"
+                "  check    : is ollama up?  curl " + cfg.combinator.base_url + "/api/tags\n"
+                f"             is the model pulled?  ollama list | grep {str(cfg.combinator.model).split(':')[0]}\n"
+                "             is the port right?  export REACT_OLLAMA_URL=http://127.0.0.1:11434\n"
+                "  note     : to run the deterministic arm on purpose use use_llm=False;\n"
+                "             to run anyway and fall back per series use allow_baseline_fallback=True."
+            )
+            # printed as well as raised, so it lands in a log redirected with `>` alone
+            print(message, flush=True)
+            if not allow_baseline_fallback:
+                raise RuntimeError(message)
+            log("WARNING: continuing with the deterministic baseline per series")
+        log("-" * 74)
+
     writer = (
         None
         if dry_run
@@ -290,9 +331,27 @@ def exec_dataset_orchestrator(
         )
     )
 
+    def on_step(index: Optional[int], entry: Dict[str, Any]) -> None:
+        """One line per Thought, one per Action, one per Observation."""
+        if not (llm_logs and log_agent_steps):
+            return
+        tag = f"[{index if index is not None else '?':>4}]"
+        args = entry.get("action_args") or {}
+        rendered = json.dumps(args, ensure_ascii=False, default=str)
+        if len(rendered) > 110:
+            rendered = rendered[:107] + "..."
+        thought = " ".join(str(entry.get("thought") or "").split())
+        if len(thought) > 200:
+            thought = thought[:197] + "..."
+
+        print(f"{tag}   iter {entry['iteration']} | {entry['action']} {rendered}", flush=True)
+        if thought:
+            print(f"{tag}     think: {thought}", flush=True)
+        print(f"{tag}     obs  : {entry.get('observation_summary', '')}", flush=True)
+
     started = time.perf_counter()
     outcomes: List[Any] = []
-    ok = failed = 0
+    ok = failed = llm_failures = 0
     failures: List[str] = []
 
     for outcome in _pipeline.run_dataset(
@@ -303,6 +362,7 @@ def exec_dataset_orchestrator(
         source_dir=source_dir,
         results_dir=results_dir,
         indices=todo,
+        on_step=on_step,
     ):
         outcomes.append(outcome)
         if outcome.success:
@@ -313,6 +373,20 @@ def exec_dataset_orchestrator(
                 f" score={attempt.score:7.4f} origin={attempt.origin:<8}"
                 f" iters={outcome.react.iterations_used} stop={outcome.react.stop_reason}"
             )
+            if outcome.react.stop_reason == "llm_error":
+                llm_failures += 1
+                detail = outcome.react.errors[-1] if outcome.react.errors else "no detail recorded"
+                message = (
+                    f"THE AGENT FAILED ON dataset_index={outcome.dataset_index} and the row "
+                    f"below is a DETERMINISTIC BASELINE, not an agent result.\n"
+                    f"  error: {detail}\n"
+                    f"  model: {cfg.combinator.label()} at {cfg.combinator.base_url}"
+                )
+                print(message, flush=True)
+                if not allow_baseline_fallback:
+                    if writer is not None:
+                        writer.write(outcome, regressor=experiment)
+                    raise RuntimeError(message)
         else:
             failed += 1
             failures.append(f"{outcome.dataset_index}: {outcome.error}")
@@ -329,6 +403,11 @@ def exec_dataset_orchestrator(
     elapsed = time.perf_counter() - started
     log("-" * 74)
     log(f"done in {elapsed:.1f}s | ok: {ok} | failed: {failed}")
+    if llm_failures:
+        log(
+            f"WARNING: the agent failed on {llm_failures}/{ok + failed} series; those rows "
+            "are deterministic baselines, not agent results."
+        )
     if writer is not None:
         log(f"csv: {writer.csv_path}")
         if save_artifacts:
@@ -342,6 +421,7 @@ def exec_dataset_orchestrator(
         "ablation_config": cfg.fingerprint(),
         "n_ok": ok,
         "n_failed": failed,
+        "n_llm_failures": llm_failures,
         "failures": failures,
         "csv_path": writer.csv_path if writer else None,
         "artifacts_dir": writer.artifacts_dir if (writer and save_artifacts) else None,
@@ -386,7 +466,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p.add_argument("--indices", nargs="+", type=int, default=None)
     p.add_argument("--limit", type=int, default=None, help="only the first N series")
+    p.add_argument("--quiet-agent", action="store_true",
+                   help="do not print the agent's Thought/Action/Observation per turn")
     p.add_argument("--stop-on-error", action="store_true")
+    p.add_argument("--allow-baseline-fallback", action="store_true",
+                   help="do not abort when the agent fails; fall back to the baseline "
+                        "per series (off by default: a silent fallback is worse than a crash)")
     p.add_argument("--no-artifacts", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     return p
@@ -417,7 +502,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             calibration_gate=args.calibration_gate,
             indices=args.indices,
             limit=args.limit,
+            log_agent_steps=not args.quiet_agent,
             stop_on_error=args.stop_on_error,
+            allow_baseline_fallback=args.allow_baseline_fallback,
             save_artifacts=not args.no_artifacts,
             dry_run=args.dry_run,
             version=args.version,
@@ -435,11 +522,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 if __name__ == "__main__":
     models = DEFAULT_MODELS
 
-    dataset = "ETTH1"
+    dataset = "NN5_WEEKLY_DATASET"
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
-        source_file="ETTh1.tsf",
+        source_file="nn5_weekly_dataset.tsf",
         use_llm=True,
         combinator_model=LLMRole(model="gpt-oss:20b", temperature=0.2),
         # diagnostician_model=LLMRole(model="qwen3:8b"),   # ablation 2: Phase 1 with an LLM

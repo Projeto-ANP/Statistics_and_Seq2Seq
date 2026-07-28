@@ -177,14 +177,26 @@ def load_series(
     final_row = ref_rows.iloc[-1]
     final_test, start_test = final_row.get("final_test"), final_row.get("start_test")
 
-    # All models must describe the same test window, otherwise the windows are
-    # misaligned and combining them would mix different periods.
-    for m, rows in per_model.items():
-        other = rows.iloc[-1].get("final_test")
-        if pd.notna(final_test) and pd.notna(other) and other != final_test:
-            raise IngestionError(
-                f"model {m!r} ends at final_test={other} while {reference!r} ends at {final_test}"
-            )
+    # Timestamp disagreement is a WARNING, not an error. What defines a window is
+    # the data in it, not the label: the ETTH1 results are a real case where six
+    # `ONLY_*` models wrote their index with freq="15min" instead of hourly, so the
+    # same 24 observations are labelled 2016-12-29 in one file and 2018-06-26 in
+    # another. The values are identical. Rejecting on the label would throw away a
+    # perfectly usable pool; the hard gate is the value comparison below.
+    timestamp_mismatch = [
+        f"{m} ends at {rows.iloc[-1].get('final_test')}"
+        for m, rows in per_model.items()
+        if pd.notna(final_test)
+        and pd.notna(rows.iloc[-1].get("final_test"))
+        and rows.iloc[-1].get("final_test") != final_test
+    ]
+    if timestamp_mismatch:
+        warnings.append(
+            f"{len(timestamp_mismatch)} model(s) disagree with {reference!r} on the "
+            f"final_test timestamp while holding identical data (a frequency-labelling "
+            f"bug in those result files): {timestamp_mismatch[:4]}. "
+            f"The reported final_test comes from {reference!r}."
+        )
 
     # ── horizon: shortest common length across windows and models ────────────
     window_rows = list(range(-(n_windows + 1), 0))  # oldest validation .. test
@@ -222,10 +234,20 @@ def load_series(
                 )
             y_preds[w, j, :] = np.asarray(extract_values(row["predictions"]), dtype=float)[:horizon]
 
+    ref_test_actual = np.asarray(extract_values(final_row["test"]), dtype=float)[:horizon]
     for j, m in enumerate(models):
-        test_preds[j, :] = np.asarray(
-            extract_values(per_model[m].iloc[-1]["predictions"]), dtype=float
-        )[:horizon]
+        row = per_model[m].iloc[-1]
+        actual = np.asarray(extract_values(row["test"]), dtype=float)[:horizon]
+        # The blind window must be the same one for everybody. This is the check the
+        # timestamp comparison used to stand in for, done on the data itself.
+        if actual.size == horizon and not np.allclose(
+            actual, ref_test_actual, rtol=1e-4, atol=1e-4, equal_nan=True
+        ):
+            raise IngestionError(
+                f"model {m!r} reports different actuals than {reference!r} on the test "
+                f"window of dataset_index={dataset_index}: these are not the same window"
+            )
+        test_preds[j, :] = np.asarray(extract_values(row["predictions"]), dtype=float)[:horizon]
 
     # ── historical series from the .tsf, with the alignment guardrail ────────
     train_series: Optional[np.ndarray] = None

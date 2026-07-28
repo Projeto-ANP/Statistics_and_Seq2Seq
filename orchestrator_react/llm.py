@@ -107,6 +107,30 @@ def build_client(role: LLMRole) -> Optional[LLMClient]:
     return OllamaClient(role=role) if role.enabled else None
 
 
+def check_client(client: Optional[LLMClient]) -> tuple[bool, str]:
+    """Preflight: one trivial call, to fail in seconds instead of per series.
+
+    An unreachable server or a model that was never pulled fails identically on
+    every series. Without this the whole dataset runs on the deterministic
+    fallback and the log says `ok`, which is the worst possible outcome: a run
+    that looks successful and answers a different question.
+    """
+    if client is None:
+        return True, "no client configured"
+    try:
+        reply = client.complete(
+            "Reply with the single word OK.", "Say OK."
+        )
+    except LLMError as exc:
+        return False, str(exc)
+    except Exception as exc:  # pragma: no cover - environment dependent
+        return False, f"{type(exc).__name__}: {exc}"
+    text = str(reply).strip()
+    if not text:
+        return False, "the model answered with an empty string"
+    return True, text[:120]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # parsing
 # ──────────────────────────────────────────────────────────────────────────────
