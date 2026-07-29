@@ -40,6 +40,25 @@ from orchestrator_react.state import Attempt, ReactState
 #: How many times to re-ask when the model returns nothing at all.
 EMPTY_RESPONSE_RETRIES = 2
 
+#: How many times to re-ask when the API call itself fails transiently.
+#:
+#: Observed cause on a real run: Ollama's chat template for gpt-oss recognises a
+#: "tool call" channel in the model's own harmony format and tries to parse it
+#: JSON-side, server-side, before the response ever reaches this client. When the
+#: model writes plain text into that channel instead of JSON — e.g. it wrote
+#: "We need to output exactly three lines: Thought, Action, Action Input." —
+#: Ollama's own parser fails and returns an error instead of the text. That is a
+#: sampling hiccup on one turn, not evidence the server or model is broken: the
+#: preflight already ran before the loop opened, and the same server had answered
+#: every prior turn correctly. Retrying costs a call, exactly like the empty-
+#: response case, and for the same reason: spending one of `max_iterations` on it
+#: would charge the series for a glitch instead of a decision. Exhausting the
+#: retries still sets `stop_reason="llm_error"` and still lets
+#: `exec_dataset_orchestrator` raise under `allow_baseline_fallback=False` — this
+#: only removes the false positives where one bad token would have killed an
+#: otherwise-healthy run.
+LLM_ERROR_RETRIES = 2
+
 
 @dataclass
 class ReactResult:
@@ -61,6 +80,9 @@ class ReactResult:
     #: Generations that came back empty and were re-asked rather than charged to
     #: the iteration budget.
     empty_responses: int = 0
+    #: Transient API-level failures (see `LLM_ERROR_RETRIES`) that were re-asked
+    #: and recovered from, rather than immediately ending the loop.
+    llm_error_retries: int = 0
     #: Catalog entries this run could not support, mapped to the reason. Recorded
     #: so a row states which action space produced it.
     withheld_tools: Dict[str, str] = field(default_factory=dict)
@@ -87,6 +109,7 @@ class ReactResult:
             "llm_model": self.llm_model,
             "n_trajectory_steps": len(self.trajectory),
             "empty_responses": self.empty_responses,
+            "llm_error_retries": self.llm_error_retries,
             "withheld_tools": dict(self.withheld_tools),
             "elapsed_s": round(self.elapsed_s, 2),
         }
@@ -160,30 +183,54 @@ def run_react_loop(
             diagnosis=diagnosis,
         )
 
-        # An EMPTY answer is a failed generation, not a decision: gpt-oss emits a
-        # <think> block and sometimes stops before writing anything after it.
-        # Retrying costs a call; spending one of eight iterations on it costs a
-        # hypothesis. A malformed but non-empty answer is different — that one goes
-        # back to the agent as an observation, because it can learn from it.
+        # Two different things can go wrong asking for one turn, and both are
+        # failed generations, not decisions — retrying costs a call; spending one
+        # of `max_iterations` on either would charge the series for a glitch:
+        #   - EMPTY answer: gpt-oss emits a <think> block and sometimes stops
+        #     before writing anything after it.
+        #   - LLMError: the API call itself failed (see `LLM_ERROR_RETRIES` for
+        #     the observed cause). Unlike the empty case there is no `raw` text to
+        #     fall back to, so exhausting these retries ends the whole loop, same
+        #     as before this retry existed.
+        # A malformed but non-empty PARSED answer is different from both: that one
+        # goes back to the agent as an observation, because it can learn from it.
         raw = ""
         step = None
-        for attempt_no in range(1, EMPTY_RESPONSE_RETRIES + 2):
+        llm_error: Optional[LLMError] = None
+        empty_left = EMPTY_RESPONSE_RETRIES
+        error_left = LLM_ERROR_RETRIES
+        while True:
             try:
                 raw = client.complete(system, user)
+                llm_error = None
             except LLMError as exc:
-                result.errors.append(str(exc))
-                result.stop_reason = "llm_error"
-                step = None
-                break
+                llm_error = exc
+                if error_left <= 0:
+                    result.errors.append(str(exc))
+                    result.stop_reason = "llm_error"
+                    step = None
+                    break
+                error_left -= 1
+                result.llm_error_retries += 1
+                result.errors.append(
+                    f"iteration {iteration}: transient LLM error, retrying "
+                    f"({LLM_ERROR_RETRIES - error_left}/{LLM_ERROR_RETRIES}): {exc}"
+                )
+                continue
+
             step = parse_agent_step(raw)
             if step.ok or step.parse_error != "empty response":
                 break
+            if empty_left <= 0:
+                break
+            empty_left -= 1
             result.empty_responses += 1
-            if attempt_no <= EMPTY_RESPONSE_RETRIES:
-                result.errors.append(
-                    f"iteration {iteration}: empty response, retrying "
-                    f"({attempt_no}/{EMPTY_RESPONSE_RETRIES})"
-                )
+            result.errors.append(
+                f"iteration {iteration}: empty response, retrying "
+                f"({EMPTY_RESPONSE_RETRIES - empty_left}/{EMPTY_RESPONSE_RETRIES})"
+            )
+        if llm_error is not None:
+            break
         if step is None:
             break
         entry: Dict[str, Any] = {

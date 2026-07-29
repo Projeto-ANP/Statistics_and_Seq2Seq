@@ -33,7 +33,7 @@ from orchestrator_react.llm import (
     parse_agent_step,
     split_think,
 )
-from orchestrator_react.react_loop import run_react_loop
+from orchestrator_react.react_loop import LLM_ERROR_RETRIES, run_react_loop
 from orchestrator_react.state import FULL_POOL
 
 from test_orchestrator_react import HORIZON, N_WINDOWS, make_state  # noqa: E402
@@ -682,6 +682,78 @@ def test_a_persistently_empty_model_still_terminates():
     r = run_react_loop(s, ScriptedLLM([""] * 20), series, pool, s.config)
     assert r.iterations_used == 2
     assert r.final_attempt is not None
+
+
+class FlakyLLM:
+    """Raises `LLMError` on the first `n_failures` calls, then answers normally.
+
+    Models the real failure this is regression-testing: Ollama's own chat
+    template misreading a gpt-oss turn as an attempted tool call and returning a
+    server-side JSON parse error instead of the model's text. That is a transport
+    failure, not something `parse_agent_step` ever sees.
+    """
+
+    def __init__(self, n_failures: int, then: list[str]):
+        self.n_failures = n_failures
+        self.then = then
+        self.calls = 0
+
+    def complete(self, system: str, user: str) -> str:
+        self.calls += 1
+        if self.calls <= self.n_failures:
+            raise LLMError(
+                "error parsing tool call: raw='We need to output exactly three "
+                "lines: Thought, Action, Action Input.', err=invalid character "
+                "'W' looking for beginning of value (status code: -1)"
+            )
+        return self.then[self.calls - self.n_failures - 1]
+
+
+def test_a_transient_llm_error_is_retried_not_charged():
+    """The exact failure from a real run: reproduced verbatim to pin the fix."""
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    llm = FlakyLLM(1, [
+        step("evaluate_strategy", {"combine": "median", "pool": FULL_POOL}, "test it"),
+        step("accept", {"attempt_id": "a2"}),
+    ])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.llm_error_retries == 1
+    assert r.iterations_used == 2, "the transient failure cost no iteration"
+    assert r.stop_reason == "agent_accepted"
+    assert any("transient LLM error, retrying" in e for e in r.errors)
+
+
+def test_a_persistent_llm_error_still_ends_the_loop():
+    """Retries are bounded: a genuinely dead server must still surface, not hang."""
+    s, series, pool = prepared(ReactConfig(max_iterations=4))
+    llm = FlakyLLM(99, [step("accept", {"attempt_id": "a1"})])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.stop_reason == "llm_error"
+    assert r.llm_error_retries == LLM_ERROR_RETRIES
+    assert r.final_attempt is not None, "the run must still fall back to the best baseline"
+    assert llm.calls == LLM_ERROR_RETRIES + 1, "no more calls than the bounded retry allows"
+
+
+def test_llm_error_retries_and_empty_response_retries_have_independent_budgets():
+    """One turn hitting both failure modes must not let one budget eat the other's."""
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    calls = {"n": 0}
+
+    def flaky_then_empty_then_ok(system: str, user: str) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise LLMError("transient")
+        if calls["n"] == 2:
+            return ""  # empty, not a transport error
+        return step("accept", {"attempt_id": "a1"})
+
+    class Client:
+        complete = staticmethod(flaky_then_empty_then_ok)
+
+    r = run_react_loop(s, Client(), series, pool, s.config)
+    assert r.llm_error_retries == 1
+    assert r.empty_responses == 1
+    assert r.iterations_used == 1, "neither retry is charged to the iteration budget"
 
 
 def test_a_malformed_answer_is_still_shown_to_the_agent():
