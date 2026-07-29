@@ -1,7 +1,16 @@
 """
-conda activate metrics
-cd Statistics_and_Seq2Seq
-python -m combinations.multi_comparison_matrix
+First time on a machine (env `metrics` does not exist yet):
+    conda env create -f metrics_environment.yml
+
+Every run:
+    conda activate metrics
+    cd Statistics_and_Seq2Seq
+    python -m combinations.multi_comparison_matrix
+
+`metrics` is deliberately a separate env from `agno`: multi_comp_matrix pins
+numpy/pandas/scipy with `==`, not `>=`, and installing it inside `agno` would
+downgrade the versions the rest of the project (byte-identical metrics, the
+ReAct agent) relies on.
 """
 import os
 import warnings
@@ -13,20 +22,34 @@ from multi_comp_matrix import MCM
 # Configuração: adicione/remova métodos e datasets aqui
 # ---------------------------------------------------------------------------
 
-BASE = "/home/anp/Documents/lucas_mestrado/Statistics_and_Seq2Seq/timeseries/mestrado/resultados"
+# Relative to the repo root, like every other results path in this project
+# (`DEFAULT_RESULTS_DIR` in orchestrator_react/ingest.py) — was previously
+# hardcoded to a path on a different machine (/home/anp/...), which only ever
+# worked on that one server. Override with the RESULTS_BASE env var if a run
+# needs to point elsewhere without editing this file.
+import os as _os
+BASE = _os.environ.get(
+    "RESULTS_BASE",
+    _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                  "timeseries", "mestrado", "resultados"),
+)
 
 METHODS = {
     "dba":          f"{BASE}/dba",
     "mean":         f"{BASE}/mean",
     "median":       f"{BASE}/median",
-    # "orchestrator_v1": f"{BASE}/orchestrator_llm_v1_pattern",
-    "orchestrator_v3": f"{BASE}/orchestrator_llm_v3_pruning",
+    # Update this to whichever orchestrator_react_react_vN is the run you want
+    # to compare — v3 is the latest present on disk as of this comparison.
+    "orchestrator_react_v3": f"{BASE}/orchestrator_react_react_v3",
     "FFORMA":       f"{BASE}/FFORMA",
-    "ADE":        f"{BASE}/ADE",
-    
+    "ADE":          f"{BASE}/ADE",
 }
 
-DATASETS = ["NN5_WEEKLY_DATASET", "ETTH1", "ETTH2", "ETTM1", "ETTM2", "ANP_MONTHLY"]
+DATASETS = [
+    "NN5_WEEKLY_DATASET", 
+            # "ETTH1", "ETTH2", "ETTM1", "ETTM2",
+            # "ANP_MONTHLY"
+            ]
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
