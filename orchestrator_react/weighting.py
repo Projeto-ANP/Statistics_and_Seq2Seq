@@ -20,7 +20,13 @@ import numpy as np
 
 
 EPS = 1e-12
-WEIGHT_METHODS = ("inverse_error", "softmax_neg_error", "ols", "feature_based")
+WEIGHT_METHODS = (
+    "inverse_error",
+    "softmax_neg_error",
+    "error_trend",
+    "ols",
+    "feature_based",
+)
 ERROR_METRICS = ("rmse", "mae", "smape")
 
 
@@ -151,6 +157,129 @@ def weights_softmax_neg_error(
     if err.ndim == 1:
         return _soft(err)
     return np.stack([_soft(err[:, h]) for h in range(err.shape[1])], axis=1)
+
+
+def weights_error_trend(
+    y_true: np.ndarray,
+    y_pool: np.ndarray,
+    metric: str = "mae",
+    eta: float = 1.0,
+    damping: Optional[float] = None,
+    eps: float = 1e-8,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """w proportional to exp(-eta * *extrapolated* error — where each model is
+    heading, not where it has been on average.
+
+    The other recipes collapse each validation window into one number, which on a
+    three-window protocol leaves three observations per model. This one keeps the
+    pointwise error grid `(n_fit, horizon)` — 24 numbers on NN5 — and asks a
+    different question: is this model getting better or worse over the windows?
+
+    Two confounders have to be separated, or the answer is meaningless:
+
+    * **The horizon profile.** Step 8 is harder than step 1 for everyone. Fitting a
+      slope over the concatenated error series would read that ramp as degradation.
+      So a slope is fitted *per horizon step*, across windows, and the model-level
+      slope is the median of those — which is also what turns `horizon` noisy
+      three-point fits into one usable estimate.
+    * **Slope noise.** Three windows make any single slope unreliable. `damping`
+      scales the extrapolation; left at `None` it is derived from how much the
+      per-step slopes agree on a direction (all agree -> 1.0, coin flip -> 0.0),
+      so a trend is only trusted to the extent the data shows one.
+
+    Returns `(weights, meta)`; `meta["mode"]` says which regime actually ran.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pool = np.asarray(y_pool, dtype=float)
+    n_fit, n_pool, horizon = y_pool.shape
+
+    # Fewer than three windows cannot support a slope and an intercept with any
+    # residual left to judge them by: fall back rather than extrapolate noise.
+    if n_fit < 3:
+        w = weights_softmax_neg_error(y_true, y_pool, metric=metric, eta=eta)
+        return w, {
+            "mode": "softmax_neg_error_fallback",
+            "reason": f"needs at least 3 windows to fit a trend, got {n_fit}",
+        }
+
+    grid = _pointwise_error_grid(y_true, y_pool, metric)  # (n_fit, n_pool, horizon)
+
+    w_index = np.arange(n_fit, dtype=float)
+    centred = w_index - w_index.mean()
+    denom = float(np.sum(centred**2)) or 1.0
+
+    # slopes[m, h]: least squares slope of that model's error at horizon step h
+    # across the windows. NaNs (a metric can leave them) propagate as 0 slope.
+    with np.errstate(invalid="ignore"):
+        slopes = np.einsum("w,wmh->mh", centred, np.nan_to_num(grid, nan=0.0)) / denom
+
+    model_slope = np.nanmedian(slopes, axis=1)  # (n_pool,)
+
+    # Level = the most recent window, not the average: the point of the recipe is
+    # to start from where the model *is* and move along its own trend.
+    with np.errstate(invalid="ignore"):
+        level = np.nanmean(grid[-1], axis=1)  # (n_pool,)
+
+    if damping is None:
+        # Adaptive: how much do the per-step slopes agree on a direction? A model
+        # whose slopes are half up and half down has no trend worth extrapolating.
+        sign = np.sign(slopes)
+        with np.errstate(invalid="ignore"):
+            agree = np.nanmean(sign == np.sign(model_slope)[:, None], axis=1)
+        damp = np.clip(2.0 * (agree - 0.5), 0.0, 1.0)
+        damp_mode = "adaptive"
+    else:
+        damp = np.full(n_pool, float(np.clip(damping, 0.0, 1.0)))
+        damp_mode = "fixed"
+
+    predicted = level + damp * model_slope
+    # An extrapolated error may go negative; a negative error is not a stronger
+    # claim than a near-zero one, so floor it at a small share of the level.
+    floor = 0.05 * np.nanmax(np.abs(level)) if np.any(np.isfinite(level)) else eps
+    predicted = np.maximum(predicted, max(float(floor), eps))
+    predicted = np.where(np.isfinite(predicted), predicted, np.inf)
+
+    if not np.any(np.isfinite(predicted)):
+        return _uniform(n_pool), {"mode": "uniform_no_finite_error"}
+
+    scale = float(np.nanmedian(predicted[np.isfinite(predicted)])) or 1.0
+    z = -float(eta) * (predicted / scale)
+    z = np.where(np.isfinite(z), z, -np.inf)
+    z = z - np.max(z[np.isfinite(z)], initial=0.0)
+    e = np.exp(z)
+    s = e.sum()
+    w = e / s if s > 0 else _uniform(n_pool)
+
+    finite_slope = model_slope[np.isfinite(model_slope)]
+    return project_simplex(w), {
+        "mode": "error_trend",
+        "damping": damp_mode,
+        "mean_damping": round(float(np.nanmean(damp)), 3),
+        "n_worsening": int(np.sum(finite_slope > 0)),
+        "n_improving": int(np.sum(finite_slope < 0)),
+        "n_points_per_model": int(n_fit * horizon),
+    }
+
+
+def _pointwise_error_grid(
+    y_true: np.ndarray, y_pool: np.ndarray, metric: str
+) -> np.ndarray:
+    """`(n_fit, n_pool, horizon)` of pointwise error, un-aggregated.
+
+    `per_model_error` reduces over windows and horizon; the trend recipe needs the
+    grid before that reduction, which is the whole information advantage.
+    """
+    diff = y_pool - y_true[:, None, :]
+    metric = str(metric).lower()
+    if metric == "smape":
+        denom = np.abs(y_pool) + np.abs(y_true[:, None, :])
+        denom = np.where(denom == 0, np.nan, denom)
+        return 2.0 * np.abs(diff) / denom
+    if metric in ("mae", "rmse"):
+        # Absolute error in both cases: squaring before a slope fit would let one
+        # bad point in one window dictate the direction.
+        return np.abs(diff)
+    raise ValueError(f"unknown error metric: {metric!r} (valid: {ERROR_METRICS})")
 
 
 def weights_ols(
@@ -350,6 +479,14 @@ def resolve_recipe(
             per_horizon=recipe.per_horizon,
         )
         return w, {"mode": "softmax_neg_error"}
+
+    if method == "error_trend":
+        return weights_error_trend(
+            y_true, y_pool,
+            metric=p.get("metric", "mae"),
+            eta=float(p.get("eta", 1.0)),
+            damping=p.get("damping", None),
+        )
 
     if method == "ols":
         w = weights_ols(

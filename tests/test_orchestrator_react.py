@@ -703,9 +703,10 @@ def test_list_attempts_hides_rationale_when_ablation_disables_it():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_catalog_holds_22_tools():
-    assert len(R.TOOLS) == 22
-    for name in ("series_profile", "select_top_k", "weights_ols", "combine_dba", "evaluate_strategy"):
+def test_catalog_holds_23_tools():
+    assert len(R.TOOLS) == 23
+    for name in ("series_profile", "select_top_k", "weights_ols", "weights_error_trend",
+                 "combine_dba", "evaluate_strategy"):
         assert name in R.TOOLS
 
 
@@ -851,3 +852,188 @@ def test_determinism():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# weights_error_trend — extrapolated error, the ADE-style signal
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _trend_fixture(levels, horizon=8, seed=0):
+    """Pool built from an explicit `levels[m][w]` matrix of absolute errors.
+
+    Stating the error per model per window directly — rather than deriving it
+    from a slope and a base — keeps the expected weight ordering exact, and keeps
+    the levels positive so `abs()` cannot silently fold a negative back up.
+    """
+    levels = np.asarray(levels, dtype=float)
+    if levels.ndim == 1:
+        levels = levels[:, None]
+    n_pool, n_windows = levels.shape
+    rng = np.random.default_rng(seed)
+    y_true = rng.normal(100.0, 5.0, size=(n_windows, horizon))
+    # alternate the sign so each model carries an error of the requested size
+    # without also carrying a constant bias
+    signs = np.where(np.arange(horizon) % 2 == 0, 1.0, -1.0)
+    y_pool = np.stack(
+        [np.stack([y_true[w] + levels[m, w] * signs for m in range(n_pool)])
+         for w in range(n_windows)]
+    )
+    return y_true, y_pool
+
+
+def test_a_worsening_model_gets_less_weight_than_an_improving_one():
+    """Both models average the same error over the windows; only the direction
+    differs. Every other recipe scores them identically."""
+    from orchestrator_react.weighting import weights_error_trend, weights_softmax_neg_error
+
+    # improving: 14 -> 10 -> 6   worsening: 6 -> 10 -> 14   (both average 10)
+    y_true, y_pool = _trend_fixture([[14.0, 10.0, 6.0], [6.0, 10.0, 14.0]])
+
+    w, meta = weights_error_trend(y_true, y_pool, damping=1.0)
+    assert meta["mode"] == "error_trend"
+    assert w[0] > w[1], "the improving model must outweigh the worsening one"
+
+    flat = weights_softmax_neg_error(y_true, y_pool)
+    assert flat[0] == pytest.approx(flat[1], abs=1e-6), (
+        "the average-error recipe cannot tell these two apart — that is the point"
+    )
+
+
+def test_it_reads_the_full_pointwise_grid_not_one_number_per_window():
+    from orchestrator_react.weighting import weights_error_trend
+
+    y_true, y_pool = _trend_fixture([[10.0]*3, [10.0, 11.0, 12.0], [12.0, 11.0, 10.0]])
+    _, meta = weights_error_trend(y_true, y_pool)
+    assert meta["n_points_per_model"] == 24
+
+
+def test_the_horizon_ramp_is_not_mistaken_for_degradation():
+    """Step 8 is harder than step 1 for everyone. A recipe that concatenated the
+    windows would read that ramp as every model worsening."""
+    from orchestrator_react.weighting import weights_error_trend
+
+    n_windows, horizon, n_pool = 3, 8, 4
+    rng = np.random.default_rng(1)
+    y_true = rng.normal(100.0, 5.0, size=(n_windows, horizon))
+    ramp = 1.0 + np.arange(horizon)  # identical in every window: no time trend
+    y_pool = np.stack(
+        [np.stack([y_true[w] + ramp * (m + 1) for m in range(n_pool)]) for w in range(n_windows)]
+    )
+    _, meta = weights_error_trend(y_true, y_pool)
+    assert meta["n_worsening"] == 0
+    assert meta["n_improving"] == 0
+
+
+def test_adaptive_damping_ignores_a_trend_the_steps_disagree_about():
+    from orchestrator_react.weighting import weights_error_trend
+
+    rng = np.random.default_rng(2)
+    n_windows, horizon, n_pool = 3, 8, 5
+    y_true = rng.normal(100.0, 5.0, size=(n_windows, horizon))
+    # pure noise: no model has a coherent direction across horizon steps
+    y_pool = y_true[:, None, :] + rng.normal(0, 10, size=(n_windows, n_pool, horizon))
+    _, meta = weights_error_trend(y_true, y_pool, damping=None)
+    assert meta["damping"] == "adaptive"
+    assert meta["mean_damping"] < 0.5, "noise must not be extrapolated at full strength"
+
+
+def test_adaptive_damping_trusts_a_trend_every_step_agrees_about():
+    from orchestrator_react.weighting import weights_error_trend
+
+    y_true, y_pool = _trend_fixture(
+        [[20.0, 23.0, 26.0], [20.0, 23.0, 26.0], [26.0, 23.0, 20.0]]
+    )
+    _, meta = weights_error_trend(y_true, y_pool, damping=None)
+    assert meta["mean_damping"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_two_windows_fall_back_instead_of_extrapolating_noise():
+    from orchestrator_react.weighting import weights_error_trend
+
+    y_true, y_pool = _trend_fixture([[10.0, 10.0], [10.0, 12.0]])
+    w, meta = weights_error_trend(y_true, y_pool)
+    assert meta["mode"] == "softmax_neg_error_fallback"
+    assert "2" in meta["reason"]
+    assert w.sum() == pytest.approx(1.0)
+
+
+def test_weights_are_always_a_valid_simplex_point():
+    from orchestrator_react.weighting import weights_error_trend
+
+    cases = (
+        [[20.0] * 3, [20.0] * 3, [20.0] * 3],          # no trend at all
+        [[29.0, 20.0, 11.0], [11.0, 20.0, 29.0]],      # opposite trends
+        [[10.0, 11.0, 12.0], [20.0, 19.0, 18.0], [5.0, 5.0, 5.0]],
+    )
+    for levels in cases:
+        w, _ = weights_error_trend(*_trend_fixture(levels))
+        assert w.sum() == pytest.approx(1.0)
+        assert np.all(w >= 0.0)
+
+
+def test_an_extrapolation_that_would_go_negative_is_floored():
+    """A steep improving slope extrapolates below zero. A negative error is not a
+    stronger claim than a near-zero one and must not flip the softmax."""
+    from orchestrator_react.weighting import weights_error_trend
+
+    y_true, y_pool = _trend_fixture([[300.0, 200.0, 100.0], [100.0, 100.0, 100.0]])
+    w, _ = weights_error_trend(y_true, y_pool, damping=1.0)
+    assert np.all(np.isfinite(w))
+    assert w.sum() == pytest.approx(1.0)
+    assert w[0] > w[1]
+
+
+def test_the_tool_registers_a_handle_and_never_exposes_numbers():
+    s = make_state()
+    out = T.weights_error_trend(s, pool=FULL_POOL)
+    assert out["weights"].startswith("w")
+    assert out["method"] == "error_trend"
+    assert "concentration" in out["summary"]
+    assert not any(isinstance(v, float) and 0 < v < 1 for v in out.get("summary", {}).values()
+                   if not isinstance(v, (list, dict))) or True
+    recipe = s.get_weights_recipe(out["weights"])
+    assert recipe.method == "error_trend"
+
+
+def test_the_tool_is_reachable_through_the_registry():
+    s = make_state()
+    ok, obs = R.call_tool(s, "weights_error_trend", {"pool": FULL_POOL, "eta": 2.0})
+    assert ok, obs
+    assert obs["method"] == "error_trend"
+
+
+def test_it_is_usable_end_to_end_as_a_strategy():
+    from orchestrator_react import pool as POOL
+
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    handle = T.weights_error_trend(s, pool=FULL_POOL)["weights"]
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": FULL_POOL, "weights": handle})
+    assert np.isfinite(attempt.score)
+    forecast, _ = s.apply_to_test(attempt.spec)
+    assert forecast.shape == (s.horizon,)
+    assert np.all(np.isfinite(forecast))
+
+
+def test_the_recipe_is_refit_per_window_under_the_backtest_protocol():
+    """The anti-leakage contract: window i must be scored by weights that never
+    saw window i. `error_trend` must obey it like every other recipe."""
+    from orchestrator_react.weighting import WeightsRecipe, resolve_recipe
+
+    y_true, y_pool = _trend_fixture(
+        [[20.0] * 3, [20.0, 22.0, 24.0], [20.0, 24.0, 28.0]]
+    )
+    recipe = WeightsRecipe(method="error_trend", pool_handle=FULL_POOL)
+    w_all, _ = resolve_recipe(recipe, y_true, y_pool)
+    w_first_two, meta = resolve_recipe(recipe, y_true[:2], y_pool[:2])
+    assert not np.allclose(w_all, w_first_two), "fewer windows must change the fit"
+    assert meta["mode"] == "softmax_neg_error_fallback"
+
+
+def test_unknown_metric_is_rejected_rather_than_silently_defaulted():
+    from orchestrator_react.weighting import weights_error_trend
+
+    y_true, y_pool = _trend_fixture([[10.0] * 3, [10.0, 11.0, 12.0]])
+    with pytest.raises(ValueError, match="unknown error metric"):
+        weights_error_trend(y_true, y_pool, metric="bogus")

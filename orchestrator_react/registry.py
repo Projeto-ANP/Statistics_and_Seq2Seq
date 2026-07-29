@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from orchestrator_react import tools as T
 from orchestrator_react.state import ReactState
@@ -33,6 +33,7 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
     # 3.4.3 weights
     "weights_inverse_error": T.weights_inverse_error,
     "weights_softmax_neg_error": T.weights_softmax_neg_error,
+    "weights_error_trend": T.weights_error_trend,
     "weights_ols": T.weights_ols,
     "weights_feature_based": T.weights_feature_based,
     # 3.4.4 combination
@@ -69,14 +70,39 @@ SPEC_ERROR_KINDS = {
 }
 
 
-def tool_names() -> List[str]:
-    return list(TOOLS)
+#: Tools that need more validation windows than the protocol always provides.
+#: The value is the config field holding that tool's minimum.
+WINDOW_GATED_TOOLS: Dict[str, str] = {"weights_ols": "min_windows_for_ols"}
 
 
-def describe_tools() -> List[Dict[str, Any]]:
+def withheld_tools(config: Any, n_windows: int) -> Dict[str, str]:
+    """Catalog entries unavailable for this run, mapped to the reason why.
+
+    A tool that cannot produce a trustworthy answer is removed from the catalog
+    instead of being offered and then failing: the agent never sees it, so it
+    cannot spend an iteration on it, and the prompt stays honest about what the
+    action space actually is.
+    """
+    out: Dict[str, str] = {}
+    for name, field_name in WINDOW_GATED_TOOLS.items():
+        minimum = int(getattr(config, field_name, 0) or 0)
+        if int(n_windows) < minimum:
+            out[name] = (
+                f"needs at least {minimum} validation windows, this run has {int(n_windows)}"
+            )
+    return out
+
+
+def tool_names(withheld: Optional[Dict[str, str]] = None) -> List[str]:
+    return [n for n in TOOLS if not withheld or n not in withheld]
+
+
+def describe_tools(withheld: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     """Compact signatures to inject into the system prompt."""
     out: List[Dict[str, Any]] = []
     for name, fn in TOOLS.items():
+        if withheld and name in withheld:
+            continue
         sig = inspect.signature(fn)
         params = []
         for pname, p in sig.parameters.items():
@@ -92,7 +118,8 @@ def describe_tools() -> List[Dict[str, Any]]:
 
 
 def call_tool(
-    state: ReactState, name: str, args: Any = None
+    state: ReactState, name: str, args: Any = None,
+    withheld: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """Runs a catalog tool. Returns `(ok, observation)`.
 
@@ -120,11 +147,16 @@ def call_tool(
         return False, obs
 
     fn = TOOLS.get(str(name))
-    if fn is None:
+    if fn is None or (withheld and str(name) in withheld):
+        detail = (
+            f"{name!r} is unavailable for this run: {withheld[str(name)]}"
+            if withheld and str(name) in withheld
+            else f"{name!r} is not in the catalog"
+        )
         obs = {
             "error": "unknown_tool",
-            "detail": f"{name!r} is not in the catalog",
-            "available": tool_names(),
+            "detail": detail,
+            "available": tool_names(withheld),
         }
         state.log_tool(str(name), args, ok=False, error=obs["detail"], kind=obs["error"])
         return False, obs

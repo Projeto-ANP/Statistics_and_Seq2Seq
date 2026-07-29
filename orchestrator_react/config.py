@@ -37,6 +37,11 @@ class LLMRole:
     model: Optional[str] = None
     temperature: float = 0.2
     base_url: str = "http://127.0.0.1:11434"
+    #: Sampling seed handed to Ollama. Without it the same series can be given the
+    #: same prompt twice and produce two different strategies — measured on the
+    #: three duplicate NN5 series (T1/T47, T11/T50, T79/T111), where the agent
+    #: chose a different combination all three times. `None` leaves sampling free.
+    seed: Optional[int] = 7
 
     @property
     def enabled(self) -> bool:
@@ -76,6 +81,14 @@ class ReactConfig:
 
     # -- deterministic protocol (not an ablation: the evaluation contract) -------
     backtest_mode: BacktestMode = "expanding"
+    #: Re-choose pool membership inside each backtest fold instead of once over all
+    #: windows. Without it the same windows that pick the models also score them,
+    #: and the validation score stops predicting the test window: ranking sixteen
+    #: fixed rules on 111 NN5 series gives Spearman -0.718 between in-sample
+    #: validation and blind test, against +0.288 with nesting on. Kept as a flag
+    #: because the off state is the protocol every earlier result was produced
+    #: under, and `ablation_config` has to be able to say which one ran.
+    nested_selection: bool = True
     score_preset: str = "balanced"
     n_validation_windows: int = 3
     seasonal_period: Optional[int] = None  # None => inferred from the frequency
@@ -83,6 +96,13 @@ class ReactConfig:
     mape_epsilon: float = 1e-8
 
     # -- guardrails --------------------------------------------------------------
+    # Granger-Ramanathan least squares needs more independent equations than a
+    # 3-window backtest provides. Below this many windows the simplex projection
+    # lands on a vertex, so `weights_ols` silently degenerates into a model
+    # *selection* whose winner need not be the lowest-error model (that is what
+    # `select_top_k`/`best_single` are for). Under the threshold the tool is
+    # withheld from the catalog rather than left to mislead the agent.
+    min_windows_for_ols: int = 5
     calibration_gate: bool = False  # skip the loop when the ranking is already stable
     calibration_gate_kendall: float = 0.85
     sanity_check_tolerance: float = 3.0  # multiples of the historical std

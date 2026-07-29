@@ -24,10 +24,18 @@ def _compact(payload: Any, limit: int = 1800) -> str:
     return text if len(text) <= limit else text[:limit] + " ...[truncated]"
 
 
-def build_system_prompt(include_history_rules: bool = True) -> str:
-    """System prompt: the role, the closed action space and the output contract."""
+def build_system_prompt(
+    include_history_rules: bool = True,
+    withheld_tools: Optional[Dict[str, str]] = None,
+) -> str:
+    """System prompt: the role, the closed action space and the output contract.
+
+    `withheld_tools` drops entries from the advertised catalog. A tool the run
+    cannot support is never shown, so the agent cannot waste an iteration on it.
+    """
     catalog = "\n".join(
-        f"  {t['name']}({', '.join(t['args'])}) - {t['description']}" for t in describe_tools()
+        f"  {t['name']}({', '.join(t['args'])}) - {t['description']}"
+        for t in describe_tools(withheld_tools)
     )
     rules = [
         "You are a forecast COMBINATION AGENT.",

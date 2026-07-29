@@ -19,6 +19,7 @@ import numpy as np
 from orchestrator_react import metrics as M
 from orchestrator_react.combiners import COMBINE_METHODS, apply_combination
 from orchestrator_react.config import ReactConfig
+from orchestrator_react.selection import PoolRecipe, resolve_pool_recipe
 from orchestrator_react.weighting import WeightsRecipe, resolve_recipe, summarize_weights
 
 
@@ -136,10 +137,15 @@ class ReactState:
         self.pool_meta: Dict[str, Dict[str, Any]] = {
             FULL_POOL: {"origin": "full", "k": self.n_models}
         }
+        self.pool_recipes: Dict[str, PoolRecipe] = {}
         self.weights: Dict[str, WeightsRecipe] = {}
         self._weights_by_spec: Dict[str, str] = {}
         self._pool_seq = 0
         self._weight_seq = 0
+        #: Cache of per-fold pool membership under nested selection. Keyed by
+        #: `(handle, excluded window)`; re-resolving a recipe for every attempt on
+        #: every window is pure repeated work, the inputs never change.
+        self._nested_pool_cache: Dict[Tuple[str, Optional[int]], List[int]] = {}
 
         # history and trace
         self.attempts: List[Attempt] = []
@@ -220,22 +226,127 @@ class ReactState:
 
     # ── pool handles ─────────────────────────────────────────────────────────
 
-    def register_pool(self, indices: Sequence[int], origin: str, **meta: Any) -> str:
+    def register_pool(
+        self,
+        indices: Sequence[int],
+        origin: str,
+        recipe: Optional[PoolRecipe] = None,
+        **meta: Any,
+    ) -> str:
+        """Registers a pool and, when given, the recipe that produced it.
+
+        `indices` is the membership fit on all windows — what the agent is told and
+        what `apply_to_test` applies. `recipe` is what lets the backtest re-choose
+        the membership per fold under nested selection; without one the pool is
+        constant across folds, which is correct for a list the agent named itself.
+        """
         idx = sorted({int(i) for i in indices})
         if not idx:
             raise ValueError("empty pool")
         bad = [i for i in idx if not (0 <= i < self.n_models)]
         if bad:
             raise ValueError(f"model indices out of range: {bad}")
-        # Reuse an identical handle so the name space does not blow up.
+        # Reuse an identical handle so the name space does not blow up. Equality of
+        # the all-window membership is no longer sufficient: two pools that agree
+        # over all windows can still disagree inside a fold, and merging them would
+        # silently swap one recipe for the other. Interchangeable means "resolves
+        # the same on every fold", which is what the signature compares.
+        signature = self._pool_signature(idx, recipe)
         for handle, existing in self.pools.items():
-            if existing == idx:
+            if existing == idx and self._pool_signature(
+                existing, self.pool_recipes.get(handle)
+            ) == signature:
                 return handle
         self._pool_seq += 1
         handle = f"pool{self._pool_seq}"
         self.pools[handle] = idx
         self.pool_meta[handle] = {"origin": origin, "k": len(idx), **meta}
+        if recipe is not None:
+            recipe.resolved = tuple(idx)
+            self.pool_recipes[handle] = recipe
         return handle
+
+    def _selection_windows(self, exclude: Optional[int]) -> List[int]:
+        """Windows admissible for re-choosing pool membership on fold `exclude`.
+
+        Deliberately leave-one-out, and deliberately **not** `_fit_windows`, which
+        follows `backtest_mode`. The two steps are different problems:
+
+        * Fitting *weights* is a forward-looking estimate, so `expanding` mimics
+          deployment: only the past may inform the number applied to the future.
+        * Choosing *which models to compare* is model selection, where leave-one-out
+          is the standard protocol and the efficient use of three windows.
+
+        Following `expanding` here would also leave a hole rather than close one:
+        window 0 has no prior window, so the fold would fall back to the all-window
+        membership — the very leak nesting exists to remove — on a third of the
+        folds. Measured on 111 NN5 series that is the difference between a
+        validation score that ranks strategies at Spearman +0.05 against the test
+        window and one that ranks them at +0.55. Nothing here ever reads the test
+        window; every fold stays inside the validation block.
+        """
+        if exclude is None:
+            return list(range(self.n_windows))
+        return [i for i in range(self.n_windows) if i != exclude]
+
+    def _pool_signature(
+        self, indices: Sequence[int], recipe: Optional[PoolRecipe]
+    ) -> Tuple[Tuple[int, ...], ...]:
+        """Membership on every fold — the identity that matters for reuse.
+
+        A pool with no recipe, or one nesting cannot re-fit, is constant, so its
+        signature is the same tuple repeated. `select_top_k(k=n_models)` is
+        constant too even though it *has* a recipe, and this is what lets it keep
+        collapsing onto `pool_full` rather than minting a near-duplicate handle.
+        """
+        base = tuple(int(i) for i in indices)
+        if recipe is None or not recipe.refittable or not self.config.nested_selection:
+            return (base,)
+        folds = [base]
+        for w in range(self.n_windows):
+            fit = self._selection_windows(w)
+            if not fit:
+                folds.append(base)
+                continue
+            resolved = resolve_pool_recipe(recipe, self.y_true[fit], self.y_preds[fit])
+            folds.append(tuple(sorted(int(i) for i in resolved)) or base)
+        # A recipe that resolves the same on every fold *is* a constant pool, and
+        # must compare equal to one registered without a recipe at all — otherwise
+        # `select_top_k(k=n_models)` stops collapsing onto `pool_full`.
+        return (base,) if len(set(folds)) == 1 else tuple(folds)
+
+    def pool_for_window(self, handle: str, exclude_window: Optional[int]) -> List[int]:
+        """Pool membership to use when scoring window `exclude_window`.
+
+        This is the fix for the leak that made the validation score anti-predictive:
+        with `nested_selection` on, a pool built by a re-fittable recipe is
+        re-chosen from the windows the protocol admits, so the window being scored
+        never took part in choosing the models scored on it. Falls back to the
+        all-window membership whenever a fold has too little history to select
+        from — one window cannot rank models by consistency.
+        """
+        if exclude_window is None or not self.config.nested_selection:
+            return self.get_pool(handle)
+        recipe = self.pool_recipes.get(handle)
+        if recipe is None or not recipe.refittable:
+            return self.get_pool(handle)
+
+        key = (handle, exclude_window)
+        cached = self._nested_pool_cache.get(key)
+        if cached is not None:
+            return list(cached)
+
+        fit = self._selection_windows(exclude_window)
+        if not fit:
+            idx = self.get_pool(handle)
+        else:
+            idx = sorted(
+                int(i)
+                for i in resolve_pool_recipe(recipe, self.y_true[fit], self.y_preds[fit])
+            )
+            idx = idx or self.get_pool(handle)
+        self._nested_pool_cache[key] = list(idx)
+        return list(idx)
 
     def get_pool(self, handle: str) -> List[int]:
         if handle not in self.pools:
@@ -366,9 +477,18 @@ class ReactState:
         return out
 
     def _combine_window(
-        self, spec: Dict[str, Any], preds: np.ndarray, exclude_window: Optional[int]
+        self,
+        spec: Dict[str, Any],
+        preds: np.ndarray,
+        exclude_window: Optional[int],
+        pool_idx: Optional[Sequence[int]] = None,
     ) -> np.ndarray:
-        """Applies the strategy to one `(n_pool, horizon)` window matrix."""
+        """Applies the strategy to one `(n_pool, horizon)` window matrix.
+
+        `pool_idx` is the membership `preds` was sliced with. Weights must be fit
+        over exactly those models or the vector and the matrix disagree — which is
+        possible once nested selection lets membership vary per fold.
+        """
         method = spec["combine"]
         if method == "best_single":
             return apply_combination(preds, "best_single", model_pos=0)
@@ -376,7 +496,11 @@ class ReactState:
         weights = None
         if method == "weighted":
             recipe = self.get_weights_recipe(spec["weights"])
-            idx = self.get_pool(recipe.pool_handle)
+            idx = (
+                list(pool_idx)
+                if pool_idx is not None
+                else self.pool_for_window(recipe.pool_handle, exclude_window)
+            )
             fit = self._fit_windows(recipe.fit_windows, exclude=exclude_window)
             if not fit:
                 # No admissible history (window 0 in expanding mode): uniform weights.
@@ -396,15 +520,20 @@ class ReactState:
     def backtest(self, spec: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Runs the strategy over the validation windows. Returns `(n_windows, horizon)`."""
         spec = self.normalize_spec(spec)
-        idx = (
-            [self.model_index(spec["model"])]
-            if spec["combine"] == "best_single"
-            else self.get_pool(spec["pool"])
-        )
+        single = spec["combine"] == "best_single"
         out = np.full((self.n_windows, self.horizon), np.nan, dtype=float)
         for i in range(self.n_windows):
+            # Membership is resolved per window, not once: under nested selection
+            # window i is scored by a pool chosen without it.
+            idx = (
+                [self.model_index(spec["model"])]
+                if single
+                else self.pool_for_window(spec["pool"], exclude_window=i)
+            )
             window_preds = self.y_preds[i][idx, :]
-            out[i, :] = self._combine_window(spec, window_preds, exclude_window=i)
+            out[i, :] = self._combine_window(
+                spec, window_preds, exclude_window=i, pool_idx=idx
+            )
         return out, spec
 
     def apply_to_test(self, spec: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:

@@ -463,3 +463,48 @@ def test_cli_reports_a_bad_tsf_clearly(tmp_path, fake_repo, capsys):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_nested_selection_and_ols_gate_are_exposed_and_reach_the_config(tmp_path, fake_repo):
+    """These two protocol flags are the correctness fix from the nested-selection
+    work: `nested_selection` must default True, and both must be settable from the
+    CLI-level function rather than only by hand-building a `ReactConfig`."""
+    import run_tsf_orchestrator as R
+
+    summary = R.exec_dataset_orchestrator(
+        MODELS,
+        dataset="FAKE",
+        source_file="fake.tsf",
+        use_llm=False,
+        source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path),
+        version="protocol_default",
+        llm_logs=False,
+    )
+    assert summary["n_ok"] == N_SERIES
+
+    summary_off = R.exec_dataset_orchestrator(
+        MODELS,
+        dataset="FAKE",
+        source_file="fake.tsf",
+        use_llm=False,
+        source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path),
+        version="protocol_off",
+        nested_selection=False,
+        min_windows_for_ols=1,
+        llm_logs=False,
+    )
+    assert summary_off["n_ok"] == N_SERIES
+    off_cfg = summary_off["outcomes"][0].config
+    assert off_cfg.nested_selection is False
+    assert off_cfg.min_windows_for_ols == 1
+    # the fingerprint must actually change with the protocol, or ablation_config
+    # cannot tell two runs apart
+    assert summary["ablation_config"] != summary_off["ablation_config"]
+
+    default_cfg = summary["outcomes"][0].config
+    assert default_cfg.nested_selection is True
+    assert default_cfg.min_windows_for_ols == 5

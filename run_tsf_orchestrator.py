@@ -169,6 +169,8 @@ def exec_dataset_orchestrator(
     output_dir: Optional[str] = None,
     n_windows: int = 3,
     backtest_mode: str = "expanding",
+    nested_selection: bool = True,
+    min_windows_for_ols: int = 5,
     max_iterations: int = 8,
     early_stop_patience: int = 2,
     pool_mode: str = "full",
@@ -203,6 +205,22 @@ def exec_dataset_orchestrator(
         diagnostician_model: enables Phase 1 with an LLM (ablation 2).
         reporter_model: enables Phase 5.
         n_windows: validation windows. 3 matches the baselines already on disk.
+        nested_selection: re-chooses pool membership (select_top_k / select_stable /
+            prune_redundant) inside each backtest fold instead of once over all
+            windows. Default True. Measured on 111 NN5 series: with this off, the
+            validation score is *anti-predictive* of the blind test (Spearman
+            -0.468 between in-sample validation rank and test rank across 16 fixed
+            rules); with it on, Spearman is +0.547. Leave this on for every run
+            that will be reported; the off state exists for the ablation itself,
+            not as an alternative default. See `orchestrator_react/ARQUITETURA.md`
+            section 2.1.
+        min_windows_for_ols: `weights_ols` needs more independent equations than a
+            3-window backtest gives it — below this threshold the simplex
+            projection collapses to a vertex, i.e. `weights_ols` silently turns
+            into model *selection* whose winner need not be the lowest-error
+            model. Below the threshold the tool is withheld from the catalog
+            before the prompt is built, so the agent never spends an iteration on
+            it. See `orchestrator_react/ARQUITETURA.md` section 4.1.
         indices / limit: run a subset, for smoke runs.
         log_agent_steps: print every Thought / Action / Observation as it happens.
             A run with an agent is mostly waiting, and the interesting part is what
@@ -240,6 +258,8 @@ def exec_dataset_orchestrator(
     cfg.name = version
     cfg.n_validation_windows = int(n_windows)
     cfg.backtest_mode = backtest_mode
+    cfg.nested_selection = bool(nested_selection)
+    cfg.min_windows_for_ols = int(min_windows_for_ols)
     cfg.max_iterations = int(max_iterations)
     cfg.early_stop_patience = int(early_stop_patience)
     cfg.pool_mode = pool_mode
@@ -283,6 +303,11 @@ def exec_dataset_orchestrator(
     log(
         f"pool mode    : {cfg.pool_mode} | windows: {cfg.n_validation_windows}"
         f" | backtest: {cfg.backtest_mode}"
+    )
+    log(
+        f"protocol     : nested_selection={cfg.nested_selection}"
+        f" | min_windows_for_ols={cfg.min_windows_for_ols}"
+        f"{' (weights_ols WITHHELD this run)' if cfg.n_validation_windows < cfg.min_windows_for_ols else ''}"
     )
     log(
         f"llm          : combinator={cfg.combinator.label()} "
@@ -529,6 +554,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--config", default=None, help="JSON file with a ReactConfig")
     p.add_argument("--windows", type=int, default=3, help="validation windows (default 3)")
     p.add_argument("--backtest-mode", choices=["expanding", "loo"], default="expanding")
+    p.add_argument("--no-nested-selection", action="store_true",
+                   help="ablation only: disable per-fold pool re-selection. Leaving this "
+                        "on (the default) is what makes the validation score predictive "
+                        "of the test window; see ARQUITETURA.md section 2.1")
+    p.add_argument("--min-windows-for-ols", type=int, default=5,
+                   help="weights_ols is withheld from the catalog below this many "
+                        "validation windows (default 5; --windows 3 withholds it)")
     p.add_argument("--max-iterations", type=int, default=8)
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
@@ -571,6 +603,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             output_dir=args.output_dir,
             n_windows=args.windows,
             backtest_mode=args.backtest_mode,
+            nested_selection=not args.no_nested_selection,
+            min_windows_for_ols=args.min_windows_for_ols,
             max_iterations=args.max_iterations,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,

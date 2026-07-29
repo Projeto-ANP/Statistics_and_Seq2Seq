@@ -14,6 +14,8 @@ import json
 import os
 import sys
 
+import types
+
 import numpy as np
 import pytest
 
@@ -868,11 +870,15 @@ def test_a_twin_runner_up_is_skipped_in_the_confidence_test():
     attempt instead.
     """
     s, series, pool = prepared()
-    # a strategy and an exact numerical twin of it, via a second identical pool
+    # Handle reuse is what makes two specs land on the same members. Under nested
+    # selection a recipe pool and a hand-written index list are NOT interchangeable
+    # — they can diverge inside a fold — so the twin is built from two static
+    # registrations, which is the case where reuse still applies.
+    s.config.nested_selection = False
     top = T.select_top_k(s, k=3)
     T.evaluate_strategy(s, {"combine": "mean", "pool": top["pool"]})
     twin = s.register_pool(s.get_pool(top["pool"]) + [], origin="manual")
-    assert twin == top["pool"], "an identical index set must reuse the handle"
+    assert twin == top["pool"], "an identical static index set must reuse the handle"
 
     # build a real twin: same forecasts, different spec
     trimmed = T.evaluate_strategy(
@@ -902,3 +908,151 @@ def test_confidence_reports_when_no_distinct_alternative_exists():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# weights_ols is gated on the number of validation windows
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_weights_ols_is_withheld_when_there_are_too_few_windows():
+    """Granger-Ramanathan on 3 windows lands on a simplex vertex, which turns a
+    weighting tool into a model selector whose winner is not the lowest-error
+    model. Under the threshold the tool is not offered at all."""
+    from orchestrator_react import registry as R
+    from orchestrator_react.config import ReactConfig
+
+    cfg = ReactConfig(min_windows_for_ols=5)
+    assert "weights_ols" in R.withheld_tools(cfg, n_windows=3)
+    assert "weights_ols" in R.withheld_tools(cfg, n_windows=4)
+    assert R.withheld_tools(cfg, n_windows=5) == {}
+    assert R.withheld_tools(cfg, n_windows=8) == {}
+
+
+def test_the_reason_names_the_threshold_and_the_actual_count():
+    from orchestrator_react import registry as R
+    from orchestrator_react.config import ReactConfig
+
+    reason = R.withheld_tools(ReactConfig(min_windows_for_ols=5), 3)["weights_ols"]
+    assert "5" in reason and "3" in reason
+
+
+def test_a_withheld_tool_never_reaches_the_prompt():
+    from orchestrator_react import prompts as P
+    from orchestrator_react import registry as R
+    from orchestrator_react.config import ReactConfig
+
+    withheld = R.withheld_tools(ReactConfig(min_windows_for_ols=5), 3)
+    assert "weights_ols" not in P.build_system_prompt(withheld_tools=withheld)
+    # every other weighting tool survives
+    for name in ("weights_inverse_error", "weights_softmax_neg_error", "weights_feature_based"):
+        assert name in P.build_system_prompt(withheld_tools=withheld)
+    assert "weights_ols" in P.build_system_prompt()
+
+
+def test_calling_a_withheld_tool_anyway_is_refused_not_executed():
+    from orchestrator_react import registry as R
+    from orchestrator_react.config import ReactConfig
+
+    s = make_state()
+    withheld = R.withheld_tools(ReactConfig(min_windows_for_ols=5), 3)
+    ok, obs = R.call_tool(s, "weights_ols", {"pool": "pool_full"}, withheld=withheld)
+    assert ok is False
+    assert obs["error"] == "unknown_tool"
+    assert "weights_ols" not in obs["available"]
+    assert not s.weights  # nothing was registered
+
+
+def test_the_gate_is_off_by_default_for_a_run_with_enough_windows():
+    from orchestrator_react import registry as R
+    from orchestrator_react.config import ReactConfig
+
+    s = make_state()
+    withheld = R.withheld_tools(ReactConfig(min_windows_for_ols=2), s.n_windows)
+    ok, obs = R.call_tool(s, "weights_ols", {"pool": "pool_full"}, withheld=withheld)
+    assert ok is True
+    assert obs["method"] == "ols"
+
+
+def test_the_run_records_which_tools_were_withheld():
+    from orchestrator_react.config import ReactConfig
+
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    cfg = ReactConfig(min_windows_for_ols=99)
+    cfg.combinator.model = "scripted"
+    res = run_react_loop(
+        s,
+        ScriptedLLM(["Thought: t\nAction: accept\nAction Input: {}"]),
+        series_card={}, pool_card={}, config=cfg,
+    )
+    assert "weights_ols" in res.withheld_tools
+    assert "weights_ols" in res.summary()["withheld_tools"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# reproducibility of the agent's sampling
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_a_seed_is_configured_by_default():
+    """NN5 ships three duplicate series (T1/T47, T11/T50, T79/T111). The agent
+    picked a different combination on all three pairs, which is run-to-run
+    sampling noise, not a decision. A seed makes the run reproducible."""
+    from orchestrator_react.config import LLMRole
+
+    assert LLMRole().seed is not None
+
+
+def test_the_seed_reaches_the_ollama_client():
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    captured = {}
+
+    class FakeChat:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    import orchestrator_react.llm as L
+
+    client = OllamaClient(role=LLMRole(model="m", seed=123))
+    mod = types.ModuleType("langchain_ollama")
+    mod.ChatOllama = FakeChat
+    sys.modules["langchain_ollama"] = mod
+    try:
+        client._client()
+    finally:
+        sys.modules.pop("langchain_ollama", None)
+    assert captured["seed"] == 123
+    assert captured["model"] == "m"
+
+
+def test_seed_none_is_omitted_rather_than_passed_as_none():
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    captured = {}
+
+    class FakeChat:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    mod = types.ModuleType("langchain_ollama")
+    mod.ChatOllama = FakeChat
+    sys.modules["langchain_ollama"] = mod
+    try:
+        OllamaClient(role=LLMRole(model="m", seed=None))._client()
+    finally:
+        sys.modules.pop("langchain_ollama", None)
+    assert "seed" not in captured
+
+
+def test_the_seed_is_part_of_the_run_fingerprint():
+    """Two runs that differ only by seed must not claim the same ablation id."""
+    from orchestrator_react.config import ReactConfig
+
+    a = ReactConfig()
+    b = ReactConfig()
+    b.combinator.seed = 999
+    assert a.fingerprint() != b.fingerprint()

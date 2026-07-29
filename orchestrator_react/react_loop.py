@@ -28,7 +28,12 @@ import numpy as np
 from orchestrator_react import prompts as P
 from orchestrator_react.config import ReactConfig
 from orchestrator_react.llm import AgentStep, LLMClient, LLMError, parse_agent_step
-from orchestrator_react.registry import TERMINAL_ACTION, call_tool, tools_called_summary
+from orchestrator_react.registry import (
+    TERMINAL_ACTION,
+    call_tool,
+    tools_called_summary,
+    withheld_tools,
+)
 from orchestrator_react.state import Attempt, ReactState
 
 
@@ -56,6 +61,9 @@ class ReactResult:
     #: Generations that came back empty and were re-asked rather than charged to
     #: the iteration budget.
     empty_responses: int = 0
+    #: Catalog entries this run could not support, mapped to the reason. Recorded
+    #: so a row states which action space produced it.
+    withheld_tools: Dict[str, str] = field(default_factory=dict)
     #: Raw model output for every turn the parser could not read. Kept out of the
     #: CSV, which it would bloat, and written to the per-series artifacts instead —
     #: that is where to look when a model keeps missing the output format.
@@ -79,6 +87,7 @@ class ReactResult:
             "llm_model": self.llm_model,
             "n_trajectory_steps": len(self.trajectory),
             "empty_responses": self.empty_responses,
+            "withheld_tools": dict(self.withheld_tools),
             "elapsed_s": round(self.elapsed_s, 2),
         }
 
@@ -125,7 +134,11 @@ def run_react_loop(
         result.tools = tools_called_summary(state)
         return result
 
-    system = P.build_system_prompt(include_history_rules=config.show_attempt_history)
+    withheld = withheld_tools(config, state.n_windows)
+    result.withheld_tools = dict(withheld)
+    system = P.build_system_prompt(
+        include_history_rules=config.show_attempt_history, withheld_tools=withheld
+    )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
     best_score = _score(state.best_attempt())
@@ -233,7 +246,7 @@ def run_react_loop(
             args.setdefault("rationale", step.thought or "")
             args["iteration"] = iteration
 
-        ok, observation = call_tool(state, step.action, args)
+        ok, observation = call_tool(state, step.action, args, withheld=withheld)
         entry["observation_summary"] = P.summarize_observation(step.action, ok, observation)
         result.trajectory.append(entry)
         scratchpad.append(entry)

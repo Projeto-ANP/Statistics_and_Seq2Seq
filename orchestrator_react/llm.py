@@ -77,12 +77,17 @@ class OllamaClient:
                 raise LLMError(
                     "langchain-ollama is not installed; see EXTRA_DEPENDENCIES.txt"
                 ) from exc
-            self._chat = ChatOllama(
-                model=self.role.model,
-                temperature=float(self.role.temperature),
-                base_url=self.role.base_url,
-                num_ctx=int(self.num_ctx),
-            )
+            kwargs: Dict[str, Any] = {
+                "model": self.role.model,
+                "temperature": float(self.role.temperature),
+                "base_url": self.role.base_url,
+                "num_ctx": int(self.num_ctx),
+            }
+            # Only pass the seed when one is configured: `seed=None` is not the
+            # same as omitting it for every Ollama build.
+            if getattr(self.role, "seed", None) is not None:
+                kwargs["seed"] = int(self.role.seed)
+            self._chat = ChatOllama(**kwargs)
         return self._chat
 
     def complete(self, system: str, user: str) -> str:

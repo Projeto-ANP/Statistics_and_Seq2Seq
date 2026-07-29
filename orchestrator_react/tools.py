@@ -17,6 +17,12 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from orchestrator_react import features as F
+from orchestrator_react.selection import (
+    PoolRecipe,
+    rank_table,
+    stable_indices,
+    top_k_indices,
+)
 from orchestrator_react.state import FULL_POOL, ReactState
 from orchestrator_react.weighting import ERROR_METRICS, WeightsRecipe, per_model_error
 
@@ -342,10 +348,14 @@ def select_top_k(
     if bad:
         raise ValueError(f"windows {bad} outside range [0, {state.n_windows - 1}]")
 
-    err = per_model_error(state.y_true[win], state.y_preds[win], metric=metric)
-    chosen = np.argsort(err)[:k]
+    chosen = top_k_indices(state.y_true[win], state.y_preds[win], k, metric)
     existed = set(state.pools)
-    handle = state.register_pool(chosen, origin="top_k_error", metric=metric, windows=win, k=k)
+    handle = state.register_pool(
+        chosen, origin="top_k_error", metric=metric, windows=win, k=k,
+        # Re-fittable: under nested selection each fold re-picks its own k lowest,
+        # so the window being scored never voted on who is in the pool.
+        recipe=PoolRecipe(method="top_k", params={"k": k, "metric": str(metric)}),
+    )
     return {
         "pool": handle,
         "k": int(k),
@@ -366,15 +376,13 @@ def select_stable(state: ReactState, k: int, metric: str = "rmse") -> Dict[str, 
     if state.n_windows < 2:
         return select_top_k(state, k=k, metric=metric)
 
-    ranks = np.zeros((state.n_windows, state.n_models))
-    for i in range(state.n_windows):
-        err = per_model_error(state.y_true[i : i + 1], state.y_preds[i : i + 1], metric=metric)
-        ranks[i] = np.argsort(np.argsort(err)) + 1
-
-    penalised = ranks.mean(axis=0) + ranks.std(axis=0)
-    chosen = np.argsort(penalised)[:k]
+    ranks = rank_table(state.y_true, state.y_preds, metric=metric)
+    chosen = stable_indices(state.y_true, state.y_preds, k, metric)
     existed = set(state.pools)
-    handle = state.register_pool(chosen, origin="top_k_stable", metric=metric, k=k)
+    handle = state.register_pool(
+        chosen, origin="top_k_stable", metric=metric, k=k,
+        recipe=PoolRecipe(method="stable", params={"k": k, "metric": str(metric)}),
+    )
     return {
         "pool": handle,
         **_handle_note(handle, existed),
@@ -422,7 +430,12 @@ def prune_redundant(
 
     existed = set(state.pools)
     handle = state.register_pool(
-        keep_idx, origin="pruned", base=pool, corr_threshold=float(corr_threshold)
+        keep_idx, origin="pruned", base=pool, corr_threshold=float(corr_threshold),
+        recipe=PoolRecipe(
+            method="prune_redundant",
+            params={"corr_threshold": float(corr_threshold), "metric": str(metric)},
+            base=tuple(int(i) for i in idx),
+        ),
     )
     return {
         "pool": handle,
@@ -504,6 +517,25 @@ def weights_softmax_neg_error(
     return _register(
         state, "softmax_neg_error", pool, windows, per_horizon,
         metric=str(metric), eta=float(np.clip(eta, 0.01, 20.0)),
+    )
+
+
+def weights_error_trend(
+    state: ReactState,
+    pool: str = FULL_POOL,
+    windows: Optional[Sequence[int]] = None,
+    metric: str = "mae",
+    eta: float = 1.0,
+    damping: Optional[float] = None,
+) -> Dict[str, Any]:
+    """w from where each model's error is HEADING, not its average. Uses the
+    pointwise error grid, so it reads n_windows*horizon numbers per model instead
+    of one. `damping=None` trusts the trend only as far as it is consistent."""
+    return _register(
+        state, "error_trend", pool, windows, False,
+        metric=str(metric),
+        eta=float(np.clip(eta, 0.01, 20.0)),
+        damping=None if damping is None else float(np.clip(damping, 0.0, 1.0)),
     )
 
 
