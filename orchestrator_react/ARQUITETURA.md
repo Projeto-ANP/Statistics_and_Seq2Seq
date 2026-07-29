@@ -99,6 +99,68 @@ Três garantias, cada uma com teste dedicado:
    (`test_selection_never_reads_the_test_window`).
 3. **Prompt** — nenhum valor de teste nem métrica de baseline externa aparece em
    qualquer prompt; as externas são lidas só **depois** da última chamada ao LLM.
+### 2.4 Sementes de estabilidade — `seed_stable_pools` 📊
+
+**O maior lever medido de todos.** O piso de toda a arquitetura é a melhor baseline
+semeada: quando nada que o agente propõe bate esse piso, é ele que é aplicado. Na
+rodada v2, isso aconteceu em **68 de 111 séries** — ou seja, para a maioria do
+dataset o resultado reportado *era* o conjunto de sementes. E o conjunto era três
+combinações de pool completo, que não são boas.
+
+Semear também combinações selecionadas por estabilidade (`SEED_STABLE_POOLS`):
+
+| configuração | sMAPE médio (braço determinístico, sem LLM) |
+|---|---|
+| v2: só pool completo | 0.120362 |
+| **+ sementes de estabilidade** | **0.115361** |
+
+Passa o ADE (0.11780), a média (0.11994), a mediana (0.12013) e o DBA (0.12256).
+
+**Por que `select_stable` e não `select_top_k`.** `select_top_k` ranqueia modelos
+pelo mesmo erro que a estratégia depois é pontuada — ajusta o ruído da validação
+duas vezes. `select_stable` ranqueia por consistência entre janelas, uma estatística
+diferente. É o mesmo argumento de duplo-mergulho que motivou o `nested_selection`.
+Trocar `stable` por `top_k` devolve quase todo o ganho (0.11738).
+
+**Por que três valores de k.** Não há como saber o subconjunto certo com 3 janelas,
+então a escolha deliberadamente não é feita: todo k em {3,5,7,9,11} cai dentro de
+0.0009 dos outros. É uma varredura de escala, não uma constante calibrada.
+
+### 2.5 Ensemble de estratégias — implementado, medido, **não** é o default 📊
+
+A ideia: em vez de aplicar a estratégia de menor score, fazer média ponderada
+`softmax(-eta*score)` das top-M. O raciocínio é sólido — o score de 3 janelas ordena
+estratégias contra a janela cega a apenas Spearman +0.33, e 98 de 111 séries não
+separam o 1º do 2º.
+
+E funciona, **contra o conjunto de sementes antigo**: 0.12036 → 0.11948.
+
+Mas esse é o *mesmo* ganho que `seed_stable_pools` entrega, e não sobrevive ao lado
+dele:
+
+| | argmin | ensemble | p |
+|---|---|---|---|
+| braço determinístico + sementes novas | 0.115361 | 0.115954 | 0.62 |
+| trajetórias reais do agente + sementes novas | 0.116012 | 0.116445 | 0.58 |
+
+Ambas as direções estão dentro do ruído. **O contrato mais simples fica como
+default** (`final_strategy="argmin"`) e o ensemble permanece como braço de ablação
+implementado e testado (`ReactState.apply_ensemble`).
+
+Isto é um resultado, não uma sobra: mostra que o ganho vem de *ampliar o espaço de
+candidatos*, não de mudar a regra de decisão sobre ele.
+
+### 2.6 Convergência do agente com as sementes
+
+Com sementes mais ricas, o agente frequentemente propõe uma estratégia que a Fase 2
+já havia semeado — **42 séries** na reprodução das trajetórias v2. Antes isso era
+descartado em silêncio: a tentativa já existia, então a justificativa do agente era
+perdida e o `origin` continuava `baseline`.
+
+`Attempt.agent_converged` e `Attempt.agent_rationale` registram esses casos. A
+distinção importa para o paper: "o agente não acrescentou nada" e "o agente chegou
+independentemente à mesma conclusão" são afirmações diferentes.
+
 
 ---
 
@@ -211,6 +273,14 @@ O NN5 contém **3 pares de séries idênticas** na fonte (T1≡T47, T11≡T50, T
 O agente rodou cada uma independentemente e **escolheu estratégia diferente nas
 três** — dispersão de sMAPE entre 3% e 11%. É uma medida gratuita e rigorosa da
 variância run-to-run.
+
+**Segunda fonte, encontrada na análise do v2 e corrigida:** `combine_dba` não
+passava `random_state` para `tslearn.dtw_barycenter_averaging`, que então sorteia o
+centroide inicial do **estado global do numpy**. Duas séries idênticas que ambas
+escolheram `dba` no mesmo pool produziram previsões diferentes (diferença máxima
+0.79, sMAPE 0.1199 vs 0.1217) — não porque a entrada mudou, mas porque um número
+diferente de chamadas aleatórias não relacionadas havia ocorrido no processo até
+cada uma chegar naquela linha. Agora `combine_dba(..., random_state=7)`.
 
 `LLMRole.seed = 7` é passado ao Ollama. Entrada igual passa a dar saída igual, sem
 tirar liberdade nenhuma do agente. O seed entra no `fingerprint()`.

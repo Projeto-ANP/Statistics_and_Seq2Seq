@@ -44,6 +44,13 @@ class Attempt:
     per_window_scores: List[float] = field(default_factory=list)
     #: Flattened (forecast - actual) across every window, for Diebold-Mariano.
     residuals: List[float] = field(default_factory=list)
+    #: Set when the agent independently proposed a strategy Phase 2 had already
+    #: seeded. The attempt keeps `origin="baseline"` — it was scored before the
+    #: loop opened — but the analysis can still separate "the agent added nothing"
+    #: from "the agent reached the same conclusion".
+    agent_converged: bool = False
+    #: The agent's reasoning for such a proposal, which would otherwise be lost.
+    agent_rationale: str = ""
 
     def brief(self, include_rationale: bool = True) -> Dict[str, Any]:
         """Compact history row, exactly as the agent sees it."""
@@ -515,6 +522,7 @@ class ReactState:
             weights=weights,
             trim_pct=float(spec.get("trim_pct", 0.2)),
             dba_max_iter=int(spec.get("dba_max_iter", 30)),
+            dba_random_state=int(spec.get("dba_random_state", 7)),
         )
 
     def backtest(self, spec: Dict[str, Any]) -> Tuple[np.ndarray, Dict[str, Any]]:
@@ -616,7 +624,18 @@ class ReactState:
         combined, norm = self.backtest(spec)
         key = _canonical(norm)
         if key in self._attempt_by_spec:
-            return self._attempt_by_spec[key], False
+            existing = self._attempt_by_spec[key]
+            # The agent reaching a strategy Phase 2 had already seeded is a real
+            # event, not a no-op: dropping it on the floor would credit the seed
+            # set for a conclusion the agent arrived at independently, and would
+            # discard the only reasoning recorded for it. Keep the single scored
+            # entry — re-scoring is wasted work and would corrupt the history —
+            # but record that the agent converged on it, and keep its rationale.
+            if origin == "agent" and existing.origin == "baseline":
+                existing.agent_converged = True
+                if rationale and not existing.agent_rationale:
+                    existing.agent_rationale = rationale
+            return existing, False
 
         agg, per_window = self._score_metrics(combined)
         weights = self.config.score_weights()
@@ -660,6 +679,68 @@ class ReactState:
 
     def rank_of(self, attempt: Attempt) -> int:
         return self.ranked_attempts().index(attempt) + 1
+
+    def apply_ensemble(
+        self, top_m: int = 3, eta: float = 5.0
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """Phase 4 alternative: combine the best strategies instead of picking one.
+
+        Taking the argmin of the validation score commits the whole series to one
+        strategy on the strength of a three-window estimate. Measured on the 111
+        NN5 series, that estimate ranks strategies against the blind test at
+        Spearman +0.33 even with nesting on — informative, but far from a reliable
+        ordering, and the gap between the best and second-best is usually inside
+        the noise (98 of 111 series are `indistinguishable`).
+
+        So this applies the same logic the architecture already applies to models,
+        one level up: when a ranking is noisy, average over it rather than bet on
+        its top entry. Weights are `softmax(-eta * score / median(score))` over the
+        top `top_m` attempts, which is the same scale-free form used by
+        `weights_softmax_neg_error`.
+
+        Nothing here reads the test actuals — the weights come from validation
+        scores and the forecasts come from applying each strategy to the blind
+        window, exactly as the single-strategy path does.
+        """
+        ranked = [a for a in self.ranked_attempts() if np.isfinite(a.score)]
+        if not ranked:
+            raise ValueError("no finite-scoring attempt to apply")
+
+        chosen = ranked[: max(1, int(top_m))]
+        forecasts, debugs = [], []
+        for attempt in chosen:
+            fc, dbg = self.apply_to_test(attempt.spec)
+            forecasts.append(np.asarray(fc, dtype=float))
+            debugs.append(dbg)
+        stacked = np.vstack(forecasts)
+
+        scores = np.array([a.score for a in chosen], dtype=float)
+        scale = float(np.median(scores))
+        if not np.isfinite(scale) or scale <= 0:
+            scale = 1.0
+        z = -float(eta) * (scores / scale)
+        z -= z.max()
+        w = np.exp(z)
+        w = w / w.sum() if w.sum() > 0 else np.ones(len(chosen)) / len(chosen)
+
+        combined = np.tensordot(w, stacked, axes=1)
+        debug: Dict[str, Any] = {
+            "method": "ensemble",
+            "top_m": len(chosen),
+            "eta": float(eta),
+            "members": [
+                {
+                    "attempt_id": a.attempt_id,
+                    "strategy": _spec_label(a.spec),
+                    "origin": a.origin,
+                    "score": round(float(a.score), 5),
+                    "share_pct": round(100.0 * float(wi), 1),
+                }
+                for a, wi in zip(chosen, w)
+            ],
+            "member_debug": debugs,
+        }
+        return combined, debug
 
     # ── is the winner actually separable from the runner-up? ────────────────
 

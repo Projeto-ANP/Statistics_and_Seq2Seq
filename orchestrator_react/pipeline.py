@@ -266,9 +266,18 @@ class SeriesOutcome:
             concentration = self.state.weights_summary(spec["weights"]).get("concentration")
 
         try:
-            chosen, _ = self.state.apply_to_test(spec)
+            # Compare what was actually reported, not what the winner alone would
+            # have produced: under `final_strategy="ensemble"` those differ, and
+            # measuring the winner would answer a question nobody asked.
+            chosen = (
+                np.asarray(self.forecast, dtype=float)
+                if self.forecast
+                else self.state.apply_to_test(spec)[0]
+            )
             plain, _ = self.state.apply_to_test({"combine": "mean", "pool": spec["pool"]})
         except Exception:
+            return {**blank, "weights_concentration": concentration}
+        if chosen.shape != plain.shape:
             return {**blank, "weights_concentration": concentration}
 
         scale = float(np.nanmax(np.abs(plain))) or 1.0
@@ -490,7 +499,12 @@ def run_series(
         outcome.error = "no strategy was selected"
         return outcome
 
-    forecast, debug = state.apply_to_test(attempt.spec)
+    if config.final_strategy == "ensemble":
+        forecast, debug = state.apply_ensemble(
+            top_m=config.final_top_m, eta=config.final_eta
+        )
+    else:
+        forecast, debug = state.apply_to_test(attempt.spec)
     if forecast.size != state.horizon or not np.all(np.isfinite(forecast)):
         outcome.warnings.append(
             f"final forecast has {int(np.sum(~np.isfinite(forecast)))} non-finite points"
@@ -639,5 +653,11 @@ def _strategy_name(attempt: Any) -> str:
 
 
 def _slim_debug(debug: Dict[str, Any]) -> Dict[str, Any]:
-    """Drops the bulky resolved-weights block; it has its own CSV column."""
-    return {k: v for k, v in debug.items() if k != "weights_resolved"}
+    """Drops the bulky resolved-weights block; it has its own CSV column.
+
+    For an ensemble the per-member debug blocks are dropped too: the members and
+    their shares are kept, which is what makes the row auditable, but their
+    individual weight vectors would multiply the column size by `final_top_m`.
+    """
+    slim = {k: v for k, v in debug.items() if k not in ("weights_resolved", "member_debug")}
+    return slim

@@ -158,9 +158,58 @@ def test_run_series_with_a_scripted_agent(fake_repo):
     assert "disagrees" in out.csv_fields()["justificativa_final"]
 
 
-def test_phase4_matches_the_selected_strategy(fake_repo):
-    """Phase 4 must apply exactly the strategy Phase 3 chose, via the same code."""
-    out = run(fake_repo, config=ReactConfig(combinator=LLMRole(model=None)))
+def test_phase4_argmin_matches_the_selected_strategy(fake_repo):
+    """Under `final_strategy="argmin"` Phase 4 must apply exactly the strategy
+    Phase 3 chose, via the same code."""
+    out = run(fake_repo, config=ReactConfig(
+        combinator=LLMRole(model=None), final_strategy="argmin"))
+    direct, _ = out.state.apply_to_test(out.react.final_attempt.spec)
+    assert out.forecast == pytest.approx(direct)
+
+
+def test_phase4_ensemble_combines_the_top_strategies(fake_repo):
+    """Under the default `final_strategy="ensemble"` the forecast is a weighted
+    average of the top-M attempts, not the single winner.
+
+    A three-window score orders strategies against the blind window at only
+    Spearman +0.33, and almost every series is `indistinguishable` from its
+    runner-up, so betting the series on the argmin discards usable information.
+    """
+    cfg = ReactConfig(combinator=LLMRole(model=None), final_strategy="ensemble",
+                      final_top_m=3, final_eta=5.0)
+    out = run(fake_repo, config=cfg)
+    winner_only, _ = out.state.apply_to_test(out.react.final_attempt.spec)
+
+    assert out.predict_debug.get("method") == "ensemble"
+    assert len(out.forecast) == HORIZON
+    assert all(np.isfinite(out.forecast))
+    # it must actually differ from the single winner, or the mode is a no-op
+    assert out.forecast != pytest.approx(winner_only)
+
+    members = out.predict_debug["members"]
+    assert len(members) == 3
+    assert sum(m["share_pct"] for m in members) == pytest.approx(100.0, abs=0.5)
+    # the best-scoring attempt must carry the largest share
+    assert members[0]["attempt_id"] == out.react.final_attempt.attempt_id
+    assert members[0]["share_pct"] == max(m["share_pct"] for m in members)
+
+
+def test_the_ensemble_forecast_stays_inside_the_hull_of_its_members(fake_repo):
+    """A convex combination cannot land outside the values it averages. This is
+    what separates the ensemble from an extrapolation."""
+    cfg = ReactConfig(combinator=LLMRole(model=None), final_strategy="ensemble")
+    out = run(fake_repo, config=cfg)
+    ranked = [a for a in out.state.ranked_attempts() if np.isfinite(a.score)][:3]
+    stack = np.vstack([out.state.apply_to_test(a.spec)[0] for a in ranked])
+    fc = np.asarray(out.forecast)
+    assert np.all(fc >= stack.min(axis=0) - 1e-9)
+    assert np.all(fc <= stack.max(axis=0) + 1e-9)
+
+
+def test_a_single_attempt_ensemble_degenerates_to_that_attempt(fake_repo):
+    cfg = ReactConfig(combinator=LLMRole(model=None), final_strategy="ensemble",
+                      final_top_m=1)
+    out = run(fake_repo, config=cfg)
     direct, _ = out.state.apply_to_test(out.react.final_attempt.spec)
     assert out.forecast == pytest.approx(direct)
 

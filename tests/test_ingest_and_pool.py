@@ -523,7 +523,10 @@ def test_calibration_gate_fires_on_a_stable_ranking(state):
 def test_run_phase2_end_to_end(state):
     out = P.run_phase2(state, ReactConfig(pool_mode="full"))
     assert out["pool_composition_mode"] == "full"
-    assert out["attempts_seeded"] == len(P.SEED_BASELINES)
+    expected = len(P.SEED_BASELINES) + sum(
+        1 for k, _ in P.SEED_STABLE_POOLS if k < state.n_models
+    )
+    assert out["attempts_seeded"] == expected
     assert out["best_baseline"] is not None
     assert "error_table" in out["report"]
     assert out["calibration_gate"]["enabled"] is False
@@ -584,7 +587,12 @@ def test_real_anp_ingestion_and_phase2():
         assert ing.state.train_series.size == 419 - 12
 
         out = P.run_phase2(ing.state, ReactConfig(pool_mode="full"))
-        assert out["attempts_seeded"] == 3
+        # the three full-pool baselines plus one entry per stability pool whose k
+        # is smaller than the pool itself
+        expected = len(P.SEED_BASELINES) + sum(
+            1 for k, _ in P.SEED_STABLE_POOLS if k < ing.state.n_models
+        )
+        assert out["attempts_seeded"] == expected
         assert out["best_baseline"] is not None
 
         from orchestrator_react import tools as T

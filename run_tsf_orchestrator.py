@@ -171,8 +171,11 @@ def exec_dataset_orchestrator(
     backtest_mode: str = "expanding",
     nested_selection: bool = True,
     min_windows_for_ols: int = 5,
-    max_iterations: int = 8,
-    early_stop_patience: int = 2,
+    max_iterations: int = 12,
+    early_stop_patience: int = 4,
+    final_strategy: str = "argmin",
+    final_top_m: int = 3,
+    seed_stable_pools: bool = True,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -214,6 +217,20 @@ def exec_dataset_orchestrator(
             that will be reported; the off state exists for the ablation itself,
             not as an alternative default. See `orchestrator_react/ARQUITETURA.md`
             section 2.1.
+        max_iterations / early_stop_patience: the loop budget. Raised from 8/2 to
+            12/4 because the v2 run stopped early in 83 of 111 series and the agent
+            beat the seeded floor in only 43 — with a richer seed set the bar is
+            higher, so it needs more room to clear it before giving up.
+        final_strategy: how the attempt history becomes one forecast. "argmin"
+            (default) applies the single best-scoring attempt; "ensemble"
+            softmax-averages the top `final_top_m`. The ensemble is implemented and
+            tested but is not the default: its gain overlaps `seed_stable_pools`
+            and does not survive alongside it (0.11536 -> 0.11595, p=0.62). Kept
+            as an ablation arm.
+        seed_stable_pools: seed stability-selected combinations alongside the three
+            full-pool baselines. This is the single largest measured lever — the
+            deterministic floor goes from 0.12036 to 0.11500 mean sMAPE on NN5,
+            past ADE (0.11780). False restores the pre-v3 seed set for the ablation.
         min_windows_for_ols: `weights_ols` needs more independent equations than a
             3-window backtest gives it — below this threshold the simplex
             projection collapses to a vertex, i.e. `weights_ols` silently turns
@@ -262,6 +279,9 @@ def exec_dataset_orchestrator(
     cfg.min_windows_for_ols = int(min_windows_for_ols)
     cfg.max_iterations = int(max_iterations)
     cfg.early_stop_patience = int(early_stop_patience)
+    cfg.final_strategy = final_strategy
+    cfg.final_top_m = int(final_top_m)
+    cfg.seed_stable_pools = bool(seed_stable_pools)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -303,6 +323,12 @@ def exec_dataset_orchestrator(
     log(
         f"pool mode    : {cfg.pool_mode} | windows: {cfg.n_validation_windows}"
         f" | backtest: {cfg.backtest_mode}"
+    )
+    log(
+        f"final        : {cfg.final_strategy}"
+        f"{' top_m=' + str(cfg.final_top_m) if cfg.final_strategy == 'ensemble' else ''}"
+        f" | stable seeds: {cfg.seed_stable_pools}"
+        f" | budget: {cfg.max_iterations} iters, patience {cfg.early_stop_patience}"
     )
     log(
         f"protocol     : nested_selection={cfg.nested_selection}"
@@ -561,7 +587,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-windows-for-ols", type=int, default=5,
                    help="weights_ols is withheld from the catalog below this many "
                         "validation windows (default 5; --windows 3 withholds it)")
-    p.add_argument("--max-iterations", type=int, default=8)
+    p.add_argument("--max-iterations", type=int, default=12)
+    p.add_argument("--early-stop-patience", type=int, default=4)
+    p.add_argument("--final-strategy", choices=["argmin", "ensemble"], default="argmin",
+                   help="argmin (default) applies the best-scoring attempt; ensemble "
+                        "averages the top --final-top-m (ablation arm)")
+    p.add_argument("--final-top-m", type=int, default=3)
+    p.add_argument("--no-stable-seeds", action="store_true",
+                   help="ablation: seed only the three full-pool baselines")
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
     p.add_argument("--score-preset", default="balanced")
@@ -606,6 +639,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             nested_selection=not args.no_nested_selection,
             min_windows_for_ols=args.min_windows_for_ols,
             max_iterations=args.max_iterations,
+            early_stop_patience=args.early_stop_patience,
+            final_strategy=args.final_strategy,
+            final_top_m=args.final_top_m,
+            seed_stable_pools=not args.no_stable_seeds,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,

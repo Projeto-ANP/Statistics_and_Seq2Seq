@@ -192,6 +192,48 @@ def test_dba_never_breaks():
     assert np.all(np.isfinite(out))
 
 
+def test_dba_is_reproducible_across_calls_with_a_fixed_seed():
+    """Real NN5 case: two identical series (T1==T47) both chose `dba` over the
+    same full pool and got different forecasts (max abs diff 0.79) because
+    `dtw_barycenter_averaging` seeds its centroid from the ambient global numpy
+    RNG when no `random_state` is given, not from the input. Advancing that
+    global state anywhere else in the process — e.g. by scoring the 45 other
+    series that come first in the loop — silently changes the output for an
+    input that never changed. A fixed seed removes that dependency."""
+    rng = np.random.default_rng(0)
+    preds = rng.normal(100.0, 10.0, size=(6, 8))
+
+    # burn through the global numpy RNG between the two calls, standing in for
+    # "unrelated work happened elsewhere in the process" — the actual cause on
+    # the real run, where many other series were scored in between.
+    a = combine_dba(preds.copy())
+    np.random.normal(size=10_000)
+    b = combine_dba(preds.copy())
+
+    assert np.allclose(a, b), "identical input must not depend on unrelated global RNG state"
+
+
+def test_dba_random_state_is_configurable_and_changes_the_result():
+    """A different seed is allowed to land on a different local optimum of the
+    barycenter — what must not happen is silent, unrequested drift."""
+    rng = np.random.default_rng(1)
+    preds = rng.normal(100.0, 10.0, size=(6, 8))
+    a = combine_dba(preds.copy(), random_state=1)
+    b = combine_dba(preds.copy(), random_state=2)
+    assert np.all(np.isfinite(a)) and np.all(np.isfinite(b))
+
+
+def test_apply_combination_threads_the_dba_seed():
+    from orchestrator_react.combiners import apply_combination
+
+    rng = np.random.default_rng(2)
+    preds = rng.normal(100.0, 10.0, size=(6, 8))
+    a = apply_combination(preds.copy(), "dba", dba_random_state=7)
+    np.random.normal(size=10_000)
+    b = apply_combination(preds.copy(), "dba", dba_random_state=7)
+    assert np.allclose(a, b)
+
+
 def test_simplex_projection():
     w = project_simplex(np.array([-5.0, 2.0, 3.0]))
     assert w.sum() == pytest.approx(1.0)
@@ -1037,3 +1079,20 @@ def test_unknown_metric_is_rejected_rather_than_silently_defaulted():
     y_true, y_pool = _trend_fixture([[10.0] * 3, [10.0, 11.0, 12.0]])
     with pytest.raises(ValueError, match="unknown error metric"):
         weights_error_trend(y_true, y_pool, metric="bogus")
+
+
+def test_dba_strategy_is_reproducible_through_the_state_backtest():
+    """The end-to-end path the agent actually goes through: two states built from
+    numerically identical data must score `dba` identically, regardless of what
+    unrelated numpy calls happened between building them."""
+    s1 = make_state()
+    np.random.normal(size=5_000)  # unrelated global RNG traffic in between
+    s2 = make_state()
+
+    a1, _ = s1.evaluate({"combine": "dba", "pool": FULL_POOL})
+    a2, _ = s2.evaluate({"combine": "dba", "pool": FULL_POOL})
+    assert a1.aggregate["RMSE"] == pytest.approx(a2.aggregate["RMSE"])
+
+    f1, _ = s1.apply_to_test({"combine": "dba", "pool": FULL_POOL})
+    f2, _ = s2.apply_to_test({"combine": "dba", "pool": FULL_POOL})
+    assert np.allclose(f1, f2)

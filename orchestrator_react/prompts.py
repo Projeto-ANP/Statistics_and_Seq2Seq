@@ -152,12 +152,22 @@ def build_turn_prompt(
     handles = _handles_summary(state)
     parts.append("")
     if handles:
-        parts.append("HANDLES YOU HAVE CREATED:")
+        # Not all of these are the agent's doing: Phase 2 seeds stability pools
+        # before the loop opens, so they are already registered on iteration 1.
+        # Calling them "yours" invited the model to assume a matching `w1` had
+        # been created alongside them, which is how the "unknown weights handle"
+        # errors started.
+        parts.append("HANDLES AVAILABLE (seeded by Phase 2, plus anything you create):")
         parts.append(_compact(handles, limit=600))
+        if not state.weights:
+            parts.append(
+                "  no weight handles exist yet - create one with a weights_* tool "
+                "before any combine='weighted' strategy"
+            )
     else:
         # Saying "none" matters: handles reset per series, and a model that just
         # finished another one will otherwise reach for a `w1` that does not exist.
-        parts.append("HANDLES YOU HAVE CREATED: none yet (pools and weights start empty)")
+        parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
 
     if scratchpad:
         parts.append("")

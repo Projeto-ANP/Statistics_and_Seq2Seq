@@ -137,7 +137,7 @@ def test_turn_prompt_carries_the_cards_and_history():
     prompt = P.build_turn_prompt(s, series, pool, [], 1, 6)
     assert "ITERATION 1 of 6" in prompt
     assert "SERIES PROFILE" in prompt and "MODEL POOL" in prompt
-    assert "ATTEMPT HISTORY (3)" in prompt  # the three seeded baselines
+    assert f"ATTEMPT HISTORY ({len(s.attempts)})" in prompt  # everything Phase 2 seeded
     assert "6 iterations left" in prompt  # the current one counts
 
 
@@ -167,8 +167,9 @@ def test_turn_prompt_lists_created_handles():
     T.select_top_k(s, k=3)
     T.weights_inverse_error(s, pool="pool1")
     prompt = P.build_turn_prompt(s, series, pool, [], 2, 6)
-    assert "HANDLES YOU HAVE CREATED" in prompt
-    assert "pool1" in prompt and "w1" in prompt
+    assert "HANDLES AVAILABLE" in prompt
+    assert "w1" in prompt
+    assert all(h in prompt for h in s.pools if h != FULL_POOL)
 
 
 def test_observation_summaries_are_short():
@@ -277,15 +278,23 @@ def test_early_stop_after_consecutive_non_improvements():
 
 def test_improvement_resets_the_early_stop_counter():
     s, series, pool = prepared(ReactConfig(max_iterations=8, early_stop_patience=2))
-    T.select_top_k(s, k=3)  # creates pool1, which beats the full-pool mean
+    winner = T.select_top_k(s, k=2)["pool"]  # not one of the seeded stability pools
+    n_seeded = len(s.attempts)
+    # ids are assigned in evaluation order, so the improving proposal below is the
+    # second one the loop scores
+    improving_id = f"a{n_seeded + 2}"
+
     llm = ScriptedLLM([
         step("evaluate_strategy", {"strategy": {"combine": "best_single", "model": "bad"}}),
-        step("evaluate_strategy", {"strategy": {"combine": "mean", "pool": "pool1"}}),
+        step("evaluate_strategy", {"strategy": {"combine": "mean", "pool": winner}}),
         step("evaluate_strategy", {"strategy": {"combine": "best_single", "model": "mediocre"}}),
-        step("accept", {"attempt_id": "a5"}),
+        step("accept", {"attempt_id": improving_id}),
     ])
     r = run_react_loop(s, llm, series, pool)
-    assert r.early_stopped is False
+    assert r.early_stopped is False, (
+        "the middle proposal improved, so the two stale turns around it must not "
+        "trip the patience counter"
+    )
     assert r.iterations_used == 4
 
 
@@ -370,9 +379,13 @@ def test_llm_failure_stops_cleanly_with_a_decision():
 def test_agent_cannot_pick_something_worse_than_a_baseline():
     """Principle 5 is enforced, and the override is visible rather than silent."""
     s, series, pool = prepared(ReactConfig(max_iterations=4))
+    # `bad` is evaluated first, so its id is knowable only after the fact; the
+    # script accepts it by looking it up rather than by a literal that Phase 2
+    # seeding would shift.
+    bad_id = f"a{len(s.attempts) + 1}"
     llm = ScriptedLLM([
         step("evaluate_strategy", {"strategy": {"combine": "best_single", "model": "bad"}}),
-        step("accept", {"attempt_id": "a4", "confidence": 0.9,
+        step("accept", {"attempt_id": bad_id, "confidence": 0.9,
                         "justification": "I like this one"}),
     ])
     r = run_react_loop(s, llm, series, pool)
@@ -418,8 +431,14 @@ def test_rationale_flows_from_thought_into_the_history():
         step("accept", {"attempt_id": "a1"}),
     ])
     run_react_loop(s, llm, series, pool)
-    trimmed = [a for a in s.attempts if a.spec["combine"] == "trimmed_mean"][0]
-    assert "trimming should drop" in trimmed.rationale
+    trimmed = [
+        a for a in s.attempts
+        if a.spec["combine"] == "trimmed_mean" and a.spec["pool"] == FULL_POOL
+    ][0]
+    assert (
+        "trimming should drop" in trimmed.rationale
+        or "trimming should drop" in trimmed.agent_rationale
+    )
     assert trimmed.origin == "agent"
     assert trimmed.iteration == 1
 
@@ -699,8 +718,19 @@ def test_unscored_weight_handles_are_flagged_near_the_end():
 
 def test_the_prompt_says_handles_start_empty():
     """A model fresh off another series reached for a `w1` that did not exist."""
-    s, series, pool = prepared()
+    s = make_state()
+    series, pool = {}, {}
     assert "none yet" in P.build_turn_prompt(s, series, pool, [], 1, 8)
+
+
+def test_seeded_pools_are_not_attributed_to_the_agent():
+    """Phase 2 registers stability pools before the loop opens. Presenting them as
+    handles the agent created invited it to assume a matching `w1` existed too."""
+    s, series, pool = prepared()
+    text = P.build_turn_prompt(s, series, pool, [], 1, 8)
+    assert "HANDLES AVAILABLE" in text
+    assert "YOU HAVE CREATED" not in text
+    assert "no weight handles exist yet" in text, "the absence of weights must be explicit"
     assert "Never assume w1 or pool1 exists" in P.build_system_prompt()
 
 
@@ -760,7 +790,7 @@ def test_a_clearly_worse_runner_up_moves_the_verdict():
 
 def test_a_single_attempt_cannot_be_compared():
     s = make_state()
-    POOL.seed_baselines(s, methods=("mean",))
+    POOL.seed_baselines(s, methods=("mean",), stable_pools=())
     conf = s.selection_confidence()
     assert conf["verdict"] == "no_comparison"
     assert conf["runner_up"] is None
@@ -850,7 +880,7 @@ def test_reuse_is_announced_to_the_agent():
     assert "identical to an existing pool" in everything["note"]
 
     fresh = T.select_top_k(s, k=3)
-    assert fresh["pool"] == "pool1" and fresh["reused"] is False
+    assert fresh["reused"] is False and fresh["pool"] not in {FULL_POOL}
 
 
 def test_a_no_op_prune_reports_reuse():
@@ -898,7 +928,7 @@ def test_a_twin_runner_up_is_skipped_in_the_confidence_test():
 
 def test_confidence_reports_when_no_distinct_alternative_exists():
     s = make_state()
-    POOL.seed_baselines(s, methods=("mean",))
+    POOL.seed_baselines(s, methods=("mean",), stable_pools=())
     # trimmed_mean with trim 0 is arithmetically the mean: an exact twin
     T.evaluate_strategy(s, {"combine": "trimmed_mean", "pool": FULL_POOL, "trim_pct": 0.0})
     conf = s.selection_confidence()

@@ -80,12 +80,23 @@ def combine_best_single(preds: np.ndarray, model_pos: int) -> np.ndarray:
     return p[int(model_pos), :].copy()
 
 
-def combine_dba(preds: np.ndarray, max_iter: int = 30) -> np.ndarray:
+def combine_dba(preds: np.ndarray, max_iter: int = 30, random_state: int = 7) -> np.ndarray:
     """DTW Barycenter Averaging. Falls back to the plain mean if tslearn is
     missing or fails.
 
     Reuses the same call used by `combinations/dba.py` and by the two legacy
     combiners in the project.
+
+    `random_state` is not optional in practice: `dtw_barycenter_averaging` inits
+    its centroid from `sklearn.utils.check_random_state(None)` when no seed is
+    given, which reads the ambient global numpy RNG rather than anything tied to
+    the input. Two identical NN5 series (T1==T47, T11==T50, T79==T111) that both
+    picked `dba` over the same full pool produced different forecasts under the
+    old default (max abs diff 0.79, sMAPE 0.1199 vs 0.1217) — not because the
+    inputs differed, but because a different number of unrelated `np.random` calls
+    had happened elsewhere in the process by the time each series reached this
+    line. A fixed seed here closes that gap; it does not, by itself, make the rest
+    of the pipeline deterministic (the LLM sampling seed is a separate control).
     """
     p = _check(preds)
     col_means = np.nanmean(p, axis=0)
@@ -100,7 +111,9 @@ def combine_dba(preds: np.ndarray, max_iter: int = 30) -> np.ndarray:
 
     try:
         centroid = dtw_barycenter_averaging(
-            clean.reshape(clean.shape[0], clean.shape[1], 1), max_iter=int(max_iter)
+            clean.reshape(clean.shape[0], clean.shape[1], 1),
+            max_iter=int(max_iter),
+            random_state=int(random_state),
         )
         out = np.asarray(centroid, dtype=float).ravel()[: p.shape[1]]
         if out.size != p.shape[1] or not np.all(np.isfinite(out)):
@@ -121,6 +134,7 @@ def apply_combination(
     trim_pct: float = 0.2,
     model_pos: int = 0,
     dba_max_iter: int = 30,
+    dba_random_state: int = 7,
 ) -> np.ndarray:
     """Single dispatch point used by both the backtest and the final application."""
     method = str(method).strip().lower()
@@ -135,7 +149,7 @@ def apply_combination(
             raise ValueError("combine 'weighted' requires a weights handle")
         return combine_weighted(preds, weights)
     if method == "dba":
-        return combine_dba(preds, max_iter=dba_max_iter)
+        return combine_dba(preds, max_iter=dba_max_iter, random_state=dba_random_state)
     if method == "best_single":
         return combine_best_single(preds, model_pos=model_pos)
     raise ValueError(f"unknown combination method: {method!r} (valid: {COMBINE_METHODS})")

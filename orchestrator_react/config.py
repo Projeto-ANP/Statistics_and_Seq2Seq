@@ -66,8 +66,12 @@ class ReactConfig:
     diagnostic_llm: bool = False
 
     # -- ablation 3: ReAct loop budget ------------------------------------------
-    max_iterations: int = 8
-    early_stop_patience: int = 2  # consecutive proposals without improvement
+    # Raised from 8/2 after the v2 run: with only the full-pool seeds the agent
+    # cleared the floor in 43 of 111 series and stopped early in 83. The stability
+    # seeds raise that floor further, so it needs more room to find something that
+    # clears it before the patience counter gives up on it.
+    max_iterations: int = 12
+    early_stop_patience: int = 4  # consecutive proposals without improvement
     min_improvement: float = 1e-4  # minimum relative gain to count as progress
 
     # -- ablation 4: prompt format ----------------------------------------------
@@ -89,6 +93,30 @@ class ReactConfig:
     #: because the off state is the protocol every earlier result was produced
     #: under, and `ablation_config` has to be able to say which one ran.
     nested_selection: bool = True
+    #: Phase 4: how the attempt history becomes one forecast.
+    #: "argmin" applies the single best-scoring strategy — the original contract.
+    #: "ensemble" softmax-averages the top `final_top_m`.
+    #:
+    #: `ensemble` is NOT the default, and the reason is worth recording. The idea
+    #: is sound in isolation: a three-window score orders strategies against the
+    #: blind window at only Spearman +0.33, 98 of 111 NN5 series cannot separate
+    #: first from second, and averaging over a noisy ranking beats betting on its
+    #: top entry — worth 0.12036 -> 0.11948 sMAPE against the old seed set.
+    #: But that gain is the *same* gain `seed_stable_pools` delivers, and it does
+    #: not survive alongside it: with the stability seeds in place the ensemble is
+    #: 0.11536 -> 0.11595 (p=0.62) on the deterministic arm and 0.11601 -> 0.11645
+    #: (p=0.58) replayed over the agent's real trajectories. Both directions are
+    #: inside the noise, so the simpler contract keeps the default and this stays
+    #: as a measured, implemented ablation arm.
+    final_strategy: Literal["argmin", "ensemble"] = "argmin"
+    final_top_m: int = 3
+    final_eta: float = 5.0
+    #: Seed stability-selected combinations alongside the three full-pool
+    #: baselines. The seeded set is the floor the whole run inherits whenever the
+    #: agent finds nothing better — which was 68 of 111 series on the v2 NN5 run —
+    #: so what goes in it matters more than its name suggests. See
+    #: `pool.SEED_STABLE_POOLS`.
+    seed_stable_pools: bool = True
     score_preset: str = "balanced"
     n_validation_windows: int = 3
     seasonal_period: Optional[int] = None  # None => inferred from the frequency
