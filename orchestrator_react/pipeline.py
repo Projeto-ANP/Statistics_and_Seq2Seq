@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
 import numpy as np
 
 from orchestrator_react import ingest as ingest_mod
+from orchestrator_react import meta_model as meta_model_mod
 from orchestrator_react import phases as phases_mod
 from orchestrator_react import pool as pool_mod
 from orchestrator_react import tools as T
@@ -419,6 +420,7 @@ def run_series(
     report_hook: ReportHook = phases_mod.run_report,
     read_external_baselines: bool = True,
     on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
+    pooled_meta_model: Optional[meta_model_mod.PooledMetaModel] = None,
 ) -> SeriesOutcome:
     """Runs Phases 0 to 5 for one series.
 
@@ -426,6 +428,11 @@ def run_series(
         client: the combiner LLM. `None` builds one from `config.combinator`, and
             a disabled role means the deterministic arm (best seeded baseline).
         diagnosis_hook / report_hook: Phases 1 and 5, overridable for testing.
+        pooled_meta_model: this series' leave-one-series-out model from
+            `meta_model.build_pooled_meta_models`, or `None` when the run has too
+            few series to pool, or xgboost is unavailable. Attached to `state`
+            before Phase 3 so `weights_pooled_meta_model` can find it; `run_dataset`
+            computes the whole dataset's models once and passes each series its own.
 
     Phase ordering note: the series profile is computed first, but its
     *interpretation* runs after Phase 2, because principle 4 puts both the series
@@ -447,6 +454,7 @@ def run_series(
         frames=frames,
     )
     state = ingested.state
+    state.pooled_meta_model = pooled_meta_model
     outcome = SeriesOutcome(
         dataset=dataset,
         dataset_index=int(dataset_index),
@@ -467,7 +475,7 @@ def run_series(
     outcome.pool_card = outcome.phase2["report"]
 
     # ── Phase 1b — interpretation of both cards (LLM only under the ablation) ─
-    diag_client = build_client(config.diagnostician) if config.diagnostic_llm else None
+    diag_client = build_client(config.diagnostician)
     try:
         outcome.diagnosis = diagnosis_hook(
             state, outcome.series_card, diag_client, outcome.pool_card
@@ -561,6 +569,14 @@ def run_dataset(
         source = load_series_source(source_file, n_expected_series=n_series, source_dir=source_dir)
 
     todo = list(indices) if indices is not None else list(range(n_series))
+
+    meta_models: Dict[int, meta_model_mod.PooledMetaModel] = {}
+    if config.pooled_meta_model:
+        meta_models = _build_pooled_meta_models(
+            models, dataset, todo, config=config, source=source,
+            results_dir=results_dir, frames=frames,
+        )
+
     for idx in todo:
         try:
             yield run_series(
@@ -572,6 +588,7 @@ def run_dataset(
                 results_dir=results_dir,
                 frames=frames,
                 client=client,
+                pooled_meta_model=meta_models.get(idx),
                 **kwargs,
             )
         except SeriesAlignmentError:
@@ -591,6 +608,55 @@ def run_dataset(
 # ──────────────────────────────────────────────────────────────────────────────
 # helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _build_pooled_meta_models(
+    models: Sequence[str],
+    dataset: str,
+    todo: Sequence[int],
+    config: ReactConfig,
+    source: Optional[SeriesSource],
+    results_dir: str,
+    frames: Dict[str, Any],
+) -> Dict[int, meta_model_mod.PooledMetaModel]:
+    """One pre-pass over the dataset, before any series' Phase 3 opens.
+
+    Deterministic, no LLM: for each series this only runs Phase 0 (ingestion) plus
+    `series_profile`, to get the same features and validation errors Phase 2 would
+    have exposed anyway, then discards the state — keeping ~200 small feature
+    vectors in memory costs nothing; keeping ~200 series' full forecast tensors
+    would. Returns `{}` (every series gets `pooled_meta_model=None`, and the tool
+    is withheld) if there are too few series or xgboost is unavailable, decided
+    once by `meta_model.build_pooled_meta_models` rather than duplicated here.
+
+    A `SeriesAlignmentError` here means the same thing it means in the main loop —
+    the `.tsf` on disk is not the one the forecasts came from — and is re-raised
+    for the same reason: every remaining series would fail identically. Any other
+    per-series ingestion failure just drops that series from the training rows;
+    the main loop below will independently hit and report the same failure again
+    when it reaches that series for real.
+    """
+    rows: List[meta_model_mod.MetaRow] = []
+    for idx in todo:
+        try:
+            ingested = ingest_mod.load_series(
+                models=models, dataset=dataset, dataset_index=idx,
+                source=source, config=config, results_dir=results_dir, frames=frames,
+            )
+        except SeriesAlignmentError:
+            raise
+        except Exception:
+            continue
+        profile = T.series_profile(ingested.state)
+        rows.append(
+            meta_model_mod.build_meta_row(
+                idx, profile, ingested.state.y_true, ingested.state.y_preds,
+                ingested.state.model_names,
+            )
+        )
+    return meta_model_mod.build_pooled_meta_models(
+        rows, models, min_series=config.pooled_meta_model_min_series
+    )
 
 
 def _provenance_columns(state: Optional[ReactState]) -> Dict[str, Any]:

@@ -5,9 +5,9 @@ was already computed by the deterministic tools; the model's job is to read a ca
 and say what it means, or to turn a decision into prose. Nothing here can change
 which strategy is applied.
 
-Phase 1 is an ablation (`config.diagnostic_llm`): without an LLM the precomputed
-card is used as-is, which is the control arm. With one, the model adds a structured
-interpretation that is injected into the Phase 3 prompt.
+Phase 1 is an ablation (`config.diagnostician.model`): without an LLM the
+precomputed card is used as-is, which is the control arm. With one, the model
+adds a structured interpretation that is injected into the Phase 3 prompt.
 
 Both phases degrade instead of failing. A refusal, a timeout or unparseable output
 falls back to a deterministic reading, because a missing interpretation must never

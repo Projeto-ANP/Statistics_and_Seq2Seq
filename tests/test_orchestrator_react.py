@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from orchestrator_react import meta_model as MM
 from orchestrator_react import metrics as M
 from orchestrator_react import registry as R
 from orchestrator_react import tools as T
@@ -745,10 +746,10 @@ def test_list_attempts_hides_rationale_when_ablation_disables_it():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_catalog_holds_23_tools():
-    assert len(R.TOOLS) == 23
+def test_catalog_holds_24_tools():
+    assert len(R.TOOLS) == 24
     for name in ("series_profile", "select_top_k", "weights_ols", "weights_error_trend",
-                 "combine_dba", "evaluate_strategy"):
+                 "weights_pooled_meta_model", "combine_dba", "evaluate_strategy"):
         assert name in R.TOOLS
 
 
@@ -819,6 +820,15 @@ def test_every_tool_is_callable_through_the_registry(state: ReactState):
     Catches signature drift between `tools.py` and `registry.py` before the loop
     ever runs against an LLM.
     """
+    # weights_pooled_meta_model needs a model attached before Phase 3, same as a
+    # real run would via `meta_model.build_pooled_meta_models`. Empty regressors
+    # still exercise the real call path (falls back to uniform weights, ok=True).
+    state.pooled_meta_model = MM.PooledMetaModel(
+        feature_names=MM.FEATURE_NAMES,
+        model_names=list(state.model_names),
+        regressors={name: None for name in state.model_names},
+        n_train_series=0,
+    )
     required = {
         "dm_test": {"model_a": "good_a", "model_b": "bad"},
         "select_top_k": {"k": 3},
@@ -868,6 +878,28 @@ def test_config_from_environment(monkeypatch):
     assert cfg.combinator.model == "gemma4:26b"
     assert cfg.reporter.model is None and cfg.reporter.label() == "none"
     assert cfg.combinator.base_url == "http://localhost:9999"
+
+
+def test_diagnostician_env_var_actually_enables_the_role():
+    """Regression test for a real bug: `exec_dataset_orchestrator` used to compute
+    a separate `cfg.diagnostic_llm` flag BEFORE applying `ReactConfig.from_env`, so
+    setting only `REACT_MODEL_DIAGNOSTICIAN` (without also editing the
+    `diagnostician_model=` kwarg in code) updated `diagnostician.model` but left
+    the stale flag `False` — Phase 1 read the flag, not the model, so the LLM was
+    silently never called while the config claimed a model was configured. There
+    is no separate flag any more: `diagnostician.enabled` must reflect the model
+    that ends up set, regardless of which path set it."""
+    monkeypatch_env = os.environ.get("REACT_MODEL_DIAGNOSTICIAN")
+    os.environ["REACT_MODEL_DIAGNOSTICIAN"] = "qwen3:8b"
+    try:
+        cfg = ReactConfig.from_env(ReactConfig())
+        assert cfg.diagnostician.model == "qwen3:8b"
+        assert cfg.diagnostician.enabled is True
+    finally:
+        if monkeypatch_env is None:
+            os.environ.pop("REACT_MODEL_DIAGNOSTICIAN", None)
+        else:
+            os.environ["REACT_MODEL_DIAGNOSTICIAN"] = monkeypatch_env
 
 
 def test_scale_free_preset_survives_nan_mape():

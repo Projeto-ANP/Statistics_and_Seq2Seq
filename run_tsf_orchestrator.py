@@ -8,7 +8,7 @@ What changed under the hood
 ---------------------------
 The Proposer / Skeptic / Statistician / PatternAnalyst debate is gone. It is
 replaced by a **single agent** cycling Thought -> Action -> Observation over a
-closed catalog of 22 deterministic tools, where every strategy it proposes is
+closed catalog of 24 deterministic tools, where every strategy it proposes is
 backtested on the validation windows before it can be accepted.
 
     Phase 0  ingestion            per-model CSVs + the original .tsf series
@@ -176,6 +176,8 @@ def exec_dataset_orchestrator(
     final_strategy: str = "argmin",
     final_top_m: int = 3,
     seed_stable_pools: bool = True,
+    pooled_meta_model: bool = True,
+    pooled_meta_model_min_series: int = 20,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -231,6 +233,20 @@ def exec_dataset_orchestrator(
             full-pool baselines. This is the single largest measured lever — the
             deterministic floor goes from 0.12036 to 0.11500 mean sMAPE on NN5,
             past ADE (0.11780). False restores the pre-v3 seed set for the ablation.
+        pooled_meta_model: trains `weights_pooled_meta_model` once for the whole
+            dataset run — a gradient-boosted regressor per pool model, predicting
+            its error from a series' historical shape (trend/seasonal strength,
+            entropy, autocorrelation), fit leave-one-series-out across every other
+            series. This is the classical-ML piece ADE and FFORMA both use; the
+            existing `weights_feature_based` tries the same idea per series on 3
+            windows, which can never clear its own "enough samples" guard — pooling
+            across series is what gives it enough samples to be worth trying. False
+            skips the pre-pass entirely (also the correct control arm to ablate
+            against).
+        pooled_meta_model_min_series: below this many series in the run, pooling
+            has too little signal to be worth it and the tool is withheld for
+            every series, the same way weights_ols is withheld under too few
+            validation windows.
         min_windows_for_ols: `weights_ols` needs more independent equations than a
             3-window backtest gives it — below this threshold the simplex
             projection collapses to a vertex, i.e. `weights_ols` silently turns
@@ -282,6 +298,8 @@ def exec_dataset_orchestrator(
     cfg.final_strategy = final_strategy
     cfg.final_top_m = int(final_top_m)
     cfg.seed_stable_pools = bool(seed_stable_pools)
+    cfg.pooled_meta_model = bool(pooled_meta_model)
+    cfg.pooled_meta_model_min_series = int(pooled_meta_model_min_series)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -291,16 +309,19 @@ def exec_dataset_orchestrator(
     cfg.combinator = _as_role(combinator_model)
     cfg.diagnostician = _as_role(diagnostician_model)
     cfg.reporter = _as_role(reporter_model)
-    cfg.diagnostic_llm = cfg.diagnostician.enabled
 
     # Environment variables win, so a model can be swapped without editing code.
+    # (This is also why there is no separate `diagnostic_llm` flag: it used to be
+    # computed here, one line above where an env var could still change
+    # `cfg.diagnostician.model` — so it could go stale relative to the thing it
+    # was supposed to summarise. `cfg.diagnostician.enabled` is now checked live,
+    # everywhere, instead of snapshotted.)
     cfg = ReactConfig.from_env(cfg)
 
     if not use_llm:
         cfg.combinator = LLMRole(model=None)
         cfg.diagnostician = LLMRole(model=None)
         cfg.reporter = LLMRole(model=None)
-        cfg.diagnostic_llm = False
 
     experiment = f"orchestrator_react_{version}"
     out_dir = output_dir or results_dir
@@ -328,6 +349,8 @@ def exec_dataset_orchestrator(
         f"final        : {cfg.final_strategy}"
         f"{' top_m=' + str(cfg.final_top_m) if cfg.final_strategy == 'ensemble' else ''}"
         f" | stable seeds: {cfg.seed_stable_pools}"
+        f" | pooled meta-model: {cfg.pooled_meta_model}"
+        f"{f' (min {cfg.pooled_meta_model_min_series} series)' if cfg.pooled_meta_model else ''}"
         f" | budget: {cfg.max_iterations} iters, patience {cfg.early_stop_patience}"
     )
     log(
@@ -428,6 +451,24 @@ def exec_dataset_orchestrator(
                 f" score={attempt.score:7.4f} origin={attempt.origin:<8}"
                 f" iters={outcome.react.iterations_used} stop={outcome.react.stop_reason}"
             )
+            if cfg.diagnostician.enabled:
+                diag = outcome.diagnosis or {}
+                if diag.get("source") == "llm":
+                    log(
+                        f"         DIAGNOSIS llm({diag.get('model', '?')})"
+                        f" regime={diag.get('regime')} predictability={diag.get('predictability')}"
+                        f" hint={diag.get('combination_hint')}"
+                    )
+                else:
+                    # Phase 1 degrades instead of failing (a missing reading must
+                    # never cost a series), so a fallback here is expected sometimes
+                    # — but if EVERY series falls back, the ablation ran without the
+                    # LLM ever actually answering, and the log needs to say so
+                    # instead of looking identical to a real llm-source run.
+                    log(
+                        f"         DIAGNOSIS deterministic (fallback: "
+                        f"{diag.get('fallback_reason', 'no llm configured')})"
+                    )
             log(
                 f"         TEST  smape={metrics['smape']:.4f}  rmse={metrics['rmse']:.4f}"
                 f"  pocid={metrics['pocid']:.2f}  mape={metrics['mape']:.4f}"
@@ -506,6 +547,10 @@ def exec_dataset_orchestrator(
                 verdicts[v] = verdicts.get(v, 0) + 1
         if verdicts:
             log(f"  selection verdict: {verdicts}")
+        if cfg.diagnostician.enabled:
+            n_llm = sum(1 for o in outcomes if o.success and (o.diagnosis or {}).get("source") == "llm")
+            log(f"  diagnosis answered by the llm in {n_llm}/{ok} series"
+                f"{' (WARNING: 0 — check the model/server, the ablation ran with no llm reading at all)' if ok and n_llm == 0 else ''}")
     if llm_failures:
         log(
             f"WARNING: the agent failed on {llm_failures}/{ok + failed} series; those rows "
@@ -595,6 +640,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--final-top-m", type=int, default=3)
     p.add_argument("--no-stable-seeds", action="store_true",
                    help="ablation: seed only the three full-pool baselines")
+    p.add_argument("--no-pooled-meta-model", action="store_true",
+                   help="ablation: skip the cross-series meta-model pre-pass "
+                        "(weights_pooled_meta_model is withheld for every series)")
+    p.add_argument("--pooled-meta-model-min-series", type=int, default=20,
+                   help="withhold weights_pooled_meta_model below this many series "
+                        "in the run (default 20)")
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
     p.add_argument("--score-preset", default="balanced")
@@ -643,6 +694,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_strategy=args.final_strategy,
             final_top_m=args.final_top_m,
             seed_stable_pools=not args.no_stable_seeds,
+            pooled_meta_model=not args.no_pooled_meta_model,
+            pooled_meta_model_min_series=args.pooled_meta_model_min_series,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,
@@ -671,16 +724,35 @@ if __name__ == "__main__":
     models = DEFAULT_MODELS
 
     dataset = "NN5_WEEKLY_DATASET"
+
+    # The cheapest ablation-2 experiment: does a dedicated Phase 1 reading (a
+    # smaller/faster model, since it only has to read two cards and answer one
+    # categorical judgement, not run the combination loop) change anything versus
+    # the deterministic profile? Nothing else below should differ between the two
+    # runs, or the comparison stops being apples-to-apples.
+    #
+    #   baseline (today's default): DIAGNOSTICIAN = None, version = "v4_baseline"
+    #   this experiment:            DIAGNOSTICIAN = "qwen3:8b" (or whatever you
+    #                                have pulled), version = "v4_diagnostician"
+    #
+    # Run both with the same everything else, then compare the two CSVs' mean
+    # sMAPE/rmse/pocid and, per series, `outcome.diagnosis["source"]` (the log
+    # below already prints a DIAGNOSIS line per series, and a dataset-level
+    # "diagnosis answered by the llm in N/ok series" line at the end — if that
+    # number is 0, the ablation ran without the LLM ever actually answering, and
+    # the comparison would be meaningless).
+    DIAGNOSTICIAN: Optional[str] = None  # None = baseline; set e.g. "qwen3:8b" for the ablation
+
     exec_dataset_orchestrator(
         models,
         dataset=dataset,
         source_file="nn5_weekly_dataset.tsf",
         use_llm=True,
         combinator_model=LLMRole(model="gpt-oss:20b", temperature=0.2),
-        # diagnostician_model=LLMRole(model="qwen3:8b"),   # ablation 2: Phase 1 with an LLM
+        diagnostician_model=LLMRole(model=DIAGNOSTICIAN) if DIAGNOSTICIAN else None,
         # reporter_model=LLMRole(model="qwen3:8b"),        # Phase 5: prose justification
         n_windows=3,
-        max_iterations=8,
+        max_iterations=12,
         llm_logs=True,
-        version="react_v1",
+        version="v4_diagnostician" if DIAGNOSTICIAN else "v4_baseline",
     )

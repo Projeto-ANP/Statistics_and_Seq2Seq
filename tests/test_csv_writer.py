@@ -73,7 +73,7 @@ def test_new_columns_are_all_present():
 
 
 def test_schema_has_no_duplicates():
-    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 56
+    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 58
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -165,6 +165,29 @@ def test_artifacts_payload_is_complete(fake_repo):
                 "predict_debug", "sanity", "config"):
         assert key in payload
     json.dumps(payload, default=str)  # must serialise
+
+
+def test_artifacts_payload_carries_the_tool_error_detail(fake_repo):
+    """Before this, `tool_missing=True` on a CSV row said nothing about WHY: the
+    `kind` and `detail` of the failing call lived only in `state.tool_errors`,
+    which was never written anywhere — reading it back meant re-parsing the
+    `tools_called` CSV column by hand. This pins that it is now saved.
+
+    `select_top_k` does not accept `unexpected_field`, and only `evaluate_strategy`
+    is on the permissive list that tolerates a stray argument, so this call is a
+    real, reproducible `unknown_argument` failure through the actual registry path
+    — not a mocked one."""
+    llm = ScriptedLLM([
+        'Thought: t\nAction: select_top_k\nAction Input: {"k": 3, "unexpected_field": "x"}',
+        'Thought: t\nAction: accept\nAction Input: {"attempt_id": "a1"}',
+    ])
+    out = outcome_for(fake_repo, client=llm)
+    payload = W.artifacts_payload(out)
+
+    tools = payload["react"]["tools"]
+    assert tools["tool_missing"] is True
+    assert any(e["kind"] == "unknown_argument" for e in tools["errors"])
+    assert any(e["tool"] == "select_top_k" for e in tools["errors"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -377,6 +400,44 @@ def test_exec_dataset_orchestrator_with_an_agent(tmp_path, fake_repo, monkeypatc
     assert json.loads(row["react_trajectory_json"])[0]["action"] == "select_top_k"
 
 
+def test_exec_dataset_orchestrator_actually_uses_the_diagnostician(tmp_path, fake_repo, monkeypatch):
+    """End-to-end regression test for the ordering bug this session fixed:
+    `cfg.diagnostic_llm` used to be computed before `ReactConfig.from_env` could
+    still change `cfg.diagnostician.model`, so an env-var-set diagnostician looked
+    configured in the log but Phase 1 never actually called it. There is no
+    separate flag any more — this asserts the LLM reading really lands in the row,
+    not just that the config says a model name."""
+    import orchestrator_react.pipeline as PLmod
+    import run_tsf_orchestrator as R
+    from orchestrator_react.phases import DIAGNOSIS_SYSTEM
+
+    diag_json = (
+        '{"regime": "seasonal_dominated", "predictability": "high", '
+        '"combination_hint": "robust", "risks": [], "narrative": "test"}'
+    )
+
+    def fake_build_client(role):
+        if not role.enabled:
+            return None
+        return ScriptedLLM([diag_json] * N_SERIES) if role.model == "qwen3:8b" else None
+
+    monkeypatch.setattr(PLmod, "build_client", fake_build_client)
+
+    summary = R.exec_dataset_orchestrator(
+        MODELS, dataset="FAKE", source_file="fake.tsf",
+        combinator_model=None,  # off: this test isolates the diagnostician role
+        diagnostician_model="qwen3:8b",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path), version="diag_e2e", llm_logs=False, indices=[0],
+    )
+    assert summary["n_ok"] == 1
+    outcome = summary["outcomes"][0]
+    assert outcome.diagnosis["source"] == "llm"
+    assert outcome.diagnosis["regime"] == "seasonal_dominated"
+    row = pd.read_csv(summary["csv_path"], sep=";").iloc[0]
+    assert row["agent_model_diagnostico"] == "qwen3:8b"
+
+
 def test_cli_environment_overrides_the_flags(monkeypatch, tmp_path, fake_repo):
     """Section 3.5: swapping the model per role must not need a code change."""
     import run_tsf_orchestrator as R
@@ -508,3 +569,65 @@ def test_nested_selection_and_ols_gate_are_exposed_and_reach_the_config(tmp_path
     default_cfg = summary["outcomes"][0].config
     assert default_cfg.nested_selection is True
     assert default_cfg.min_windows_for_ols == 5
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# zero_actual_diagnostics — visibility for an sMAPE metric-artifact, not a fix
+# to the metric itself (which must stay byte-identical, Section 4.1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_flags_a_test_window_containing_a_literal_zero():
+    """The real ANP_MONTHLY case that motivated this: series 85's test window."""
+    out = W.zero_actual_diagnostics([20.0, 45.0, 15.0, 20.0, 5.0, 30.0, 0.0, 0.0, 10.0, 0.0, 15.0, 5.0])
+    assert out["test_has_zero_actual"] is True
+    assert out["test_min_abs_actual"] == 0.0
+
+
+def test_does_not_flag_a_window_with_no_zero():
+    out = W.zero_actual_diagnostics([20.0, 45.0, 15.0, 3.2])
+    assert out["test_has_zero_actual"] is False
+    assert out["test_min_abs_actual"] == pytest.approx(3.2)
+
+
+def test_a_small_but_nonzero_value_is_reported_not_flagged():
+    """The boolean is deliberately strict (exact zero, not "small"): the
+    continuous `test_min_abs_actual` is what lets analysis apply its own
+    threshold instead of inheriting one hardcoded into the pipeline."""
+    out = W.zero_actual_diagnostics([0.003, 10.0])
+    assert out["test_has_zero_actual"] is False
+    assert out["test_min_abs_actual"] == pytest.approx(0.003)
+
+
+def test_empty_or_all_nan_actual_reports_none_not_false():
+    """`False` would silently claim 'checked, no zero'; there was nothing to check."""
+    assert W.zero_actual_diagnostics([])["test_has_zero_actual"] is None
+    assert W.zero_actual_diagnostics([float("nan"), float("nan")])["test_has_zero_actual"] is None
+
+
+def test_nan_values_are_ignored_rather_than_propagated():
+    out = W.zero_actual_diagnostics([float("nan"), 0.0, 5.0])
+    assert out["test_has_zero_actual"] is True
+    assert out["test_min_abs_actual"] == 0.0
+
+
+def test_a_negative_zero_is_still_flagged_by_magnitude():
+    out = W.zero_actual_diagnostics([-1e-12, 8.0])
+    assert out["test_has_zero_actual"] is True
+
+
+def test_the_flag_reaches_the_csv_row(fake_repo):
+    out = outcome_for(fake_repo)
+    out.test_values = [0.0, 5.0, 10.0]
+    row = W.build_row(out, regressor="exp1")
+    assert row["test_has_zero_actual"] is True
+    assert row["test_min_abs_actual"] == 0.0
+
+
+def test_it_reads_only_test_values_already_used_by_the_metrics():
+    """Same input the byte-identical metrics already consume, at the same point
+    in the pipeline — this cannot see anything the metrics do not."""
+    import inspect
+
+    sig = inspect.signature(W.zero_actual_diagnostics)
+    assert list(sig.parameters) == ["actual"]

@@ -144,6 +144,12 @@ class ReactState:
         self.pool_meta: Dict[str, Dict[str, Any]] = {
             FULL_POOL: {"origin": "full", "k": self.n_models}
         }
+        #: Set externally (by `run_series`/`exec_dataset_orchestrator`), before
+        #: Phase 3, to the leave-this-series-out model from `meta_model.py`. None
+        #: means no pooled meta-model was trained for this run — too few series in
+        #: the dataset, or xgboost unavailable — and the tool that reads this is
+        #: withheld from the catalog rather than offered and left to fail.
+        self.pooled_meta_model: Optional[Any] = None
         self.pool_recipes: Dict[str, PoolRecipe] = {}
         self.weights: Dict[str, WeightsRecipe] = {}
         self._weights_by_spec: Dict[str, str] = {}
@@ -354,6 +360,21 @@ class ReactState:
             idx = idx or self.get_pool(handle)
         self._nested_pool_cache[key] = list(idx)
         return list(idx)
+
+    def pool_is_fold_invariant(self, handle: str) -> bool:
+        """False when `pool_for_window` can return different members per fold.
+
+        `weights_pooled_meta_model` computes its weight vector once, against
+        `get_pool(handle)`'s membership at call time, and reuses it unchanged
+        across every backtest fold (see `weighting.resolve_recipe`'s
+        `pooled_meta_model` branch). That is only sound when the pool itself does
+        not change per fold — otherwise the stored vector's length would disagree
+        with a fold whose `pool_for_window` picked a different subset.
+        """
+        recipe = self.pool_recipes.get(handle)
+        if recipe is None or not recipe.refittable:
+            return True
+        return not self.config.nested_selection
 
     def get_pool(self, handle: str) -> List[int]:
         if handle not in self.pools:

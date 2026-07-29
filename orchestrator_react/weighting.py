@@ -26,6 +26,7 @@ WEIGHT_METHODS = (
     "error_trend",
     "ols",
     "feature_based",
+    "pooled_meta_model",
 )
 ERROR_METRICS = ("rmse", "mae", "smape")
 
@@ -460,6 +461,22 @@ def resolve_recipe(
 
     if y_pool.shape[0] == 0:
         return _uniform(n_pool), {"mode": "uniform_no_fit_data"}
+
+    if method == "pooled_meta_model":
+        # Deliberately ignores `y_true`/`y_pool`: the weights were already
+        # computed once, from this series' own historical shape (trend/seasonal
+        # strength, entropy, autocorrelation) queried against a model trained on
+        # every OTHER series in the dataset. None of those four features change
+        # per backtest fold — they never depended on a specific validation
+        # window — so the same vector is correct for every fold. The tool that
+        # registers this recipe (`tools.weights_pooled_meta_model`) refuses a pool
+        # whose membership can vary per fold under `nested_selection`, which is
+        # what keeps this shortcut sound: the vector's length can never disagree
+        # with `y_pool.shape[1]` at resolution time.
+        w = np.asarray(p.get("precomputed_weights", []), dtype=float)
+        if w.size != n_pool:
+            return _uniform(n_pool), {"mode": "pooled_meta_model_pool_mismatch"}
+        return w, {"mode": "pooled_meta_model"}
 
     if method == "inverse_error":
         w = weights_inverse_error(

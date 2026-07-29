@@ -100,6 +100,16 @@ NEW_COLUMNS: List[str] = [
     "calibration_gate_triggered",
     "ablation_config",
     "justificativa_final",
+    # Beyond Section 4.4: sMAPE is unstable when an actual test value is at or
+    # near zero — a single such point can push a whole series' sMAPE past 100%
+    # for every method alike (ANP_MONTHLY series 18 and 85: agent and all five
+    # external baselines all score 1.34-1.44 sMAPE, because the test window
+    # contains literal zeros, not because any method forecast badly). Nothing
+    # here changes the metric — smape/rmse/... stay byte-identical via
+    # `all_functions`, as Section 4.1 requires — this only makes the artifact
+    # visible instead of silently distorting an aggregate mean.
+    "test_has_zero_actual",
+    "test_min_abs_actual",
 ]
 
 COLS_SERIE: List[str] = CORE_COLUMNS + KEPT_COLUMNS + NEW_COLUMNS
@@ -165,6 +175,33 @@ def compute_metrics(forecast: Sequence[float], actual: Sequence[float]) -> Dict[
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def zero_actual_diagnostics(actual: Sequence[float]) -> Dict[str, Any]:
+    """Flags a test window where sMAPE cannot be trusted at face value.
+
+    sMAPE's denominator is `(|forecast| + |actual|) / 2`. When `actual` is at or
+    near zero, that denominator collapses regardless of how close the forecast
+    is in absolute terms, and the point's contribution saturates toward 200%.
+    This is a property of the metric, not of any forecaster — on ANP_MONTHLY
+    series 85 (test window `[20, 45, 15, 20, 5, 30, 0, 0, 10, 0, 15, 5]`) every
+    method scored 1.34-1.44 sMAPE alike.
+
+    Reads only `test_values`, after Phase 4 — the same data the metrics
+    themselves are computed from, at the same point in the pipeline. It cannot
+    leak anything the metrics do not already use.
+    """
+    arr = np.asarray(actual, dtype=float) if len(actual) else np.array([])
+    if arr.size == 0:
+        return {"test_has_zero_actual": None, "test_min_abs_actual": None}
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return {"test_has_zero_actual": None, "test_min_abs_actual": None}
+    min_abs = float(np.min(np.abs(finite)))
+    return {
+        "test_has_zero_actual": bool(min_abs < 1e-9),
+        "test_min_abs_actual": round(min_abs, 6),
+    }
+
+
 def build_row(
     outcome: Any,
     regressor: str,
@@ -182,6 +219,7 @@ def build_row(
     forecast = list(outcome.forecast or [])
     actual = list(outcome.test_values or [])
     metrics = compute_metrics(forecast, actual) if (outcome.success and forecast) else compute_metrics([], [])
+    zero_diag = zero_actual_diagnostics(actual)
 
     row: Dict[str, Any] = {
         "dataset_index": f"{outcome.dataset_index}",
@@ -194,6 +232,7 @@ def build_row(
         "predictions": [list(forecast)],
         "start_test": start_test,
         "final_test": final_test if final_test is not None else outcome.final_test,
+        **zero_diag,
     }
 
     fields = outcome.csv_fields()
@@ -228,6 +267,13 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
             "summary": outcome.react.summary() if outcome.react else {},
             "errors": outcome.react.errors if outcome.react else [],
             "parse_failures": outcome.react.parse_failures if outcome.react else [],
+            # `tools` is `registry.tools_called_summary(state)`: the same
+            # `tool_missing`/`tools_called` the CSV row reports, but with the
+            # `kind`/`detail` of each failed call attached. Before this, finding
+            # out WHY a series had `tool_missing=True` meant re-parsing the
+            # `tools_called` CSV column by hand — this is that lookup, saved once
+            # instead of redone per series.
+            "tools": outcome.react.tools if outcome.react else {},
         },
         "predict_debug": outcome.predict_debug,
         "sanity": outcome.sanity,

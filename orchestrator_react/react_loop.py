@@ -157,7 +157,7 @@ def run_react_loop(
         result.tools = tools_called_summary(state)
         return result
 
-    withheld = withheld_tools(config, state.n_windows)
+    withheld = withheld_tools(config, state.n_windows, state=state)
     result.withheld_tools = dict(withheld)
     system = P.build_system_prompt(
         include_history_rules=config.show_attempt_history, withheld_tools=withheld

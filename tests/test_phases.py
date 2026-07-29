@@ -280,10 +280,13 @@ def test_failing_report_client_does_not_break_the_series(fake_repo):
 
 
 def test_diagnosis_ablation_off_uses_the_deterministic_reading(fake_repo):
+    """Off means the role has no model — there is no separate flag any more that
+    could disagree with it (see config.py's comment on why one existed and was
+    removed: an env-var override could update `diagnostician.model` without the
+    old flag ever noticing, so the LLM silently never ran)."""
     cfg = ReactConfig(
         combinator=LLMRole(model=None),
-        diagnostic_llm=False,
-        diagnostician=LLMRole(model="qwen3:8b"),  # configured but the flag is off
+        diagnostician=LLMRole(model=None),
     )
     out = PL.run_series(
         MODELS, "FAKE", 0, config=cfg,
@@ -296,7 +299,6 @@ def test_diagnosis_ablation_off_uses_the_deterministic_reading(fake_repo):
 def test_diagnosis_ablation_on_uses_the_llm(fake_repo):
     cfg = ReactConfig(
         combinator=LLMRole(model=None),
-        diagnostic_llm=True,
         diagnostician=LLMRole(model="qwen3:8b"),
     )
     out = PL.run_series(
@@ -320,7 +322,7 @@ def test_both_ablation_arms_produce_the_same_schema(fake_repo):
     off = PL.run_series(MODELS, "FAKE", 0, config=ReactConfig(combinator=LLMRole(model=None)), **base)
     on = PL.run_series(
         MODELS, "FAKE", 0,
-        config=ReactConfig(combinator=LLMRole(model=None), diagnostic_llm=True,
+        config=ReactConfig(combinator=LLMRole(model=None),
                            diagnostician=LLMRole(model="qwen3:8b")),
         diagnosis_hook=lambda s, sc, c, pc=None: PH.run_diagnosis(
             s, sc, ScriptedLLM([diagnosis_json()]), pc
@@ -371,7 +373,7 @@ def test_phases_cannot_change_the_applied_strategy(fake_repo):
     )
     decorated = PL.run_series(
         MODELS, "FAKE", 1,
-        config=ReactConfig(combinator=LLMRole(model=None), diagnostic_llm=True,
+        config=ReactConfig(combinator=LLMRole(model=None),
                            diagnostician=LLMRole(model="x"), reporter=LLMRole(model="y")),
         diagnosis_hook=lambda s, sc, c, pc=None: PH.run_diagnosis(
             s, sc, ScriptedLLM([diagnosis_json(combination_hint="selective")]), pc

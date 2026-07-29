@@ -36,6 +36,7 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "weights_error_trend": T.weights_error_trend,
     "weights_ols": T.weights_ols,
     "weights_feature_based": T.weights_feature_based,
+    "weights_pooled_meta_model": T.weights_pooled_meta_model,
     # 3.4.4 combination
     "combine_mean": T.combine_mean,
     "combine_median": T.combine_median,
@@ -75,13 +76,21 @@ SPEC_ERROR_KINDS = {
 WINDOW_GATED_TOOLS: Dict[str, str] = {"weights_ols": "min_windows_for_ols"}
 
 
-def withheld_tools(config: Any, n_windows: int) -> Dict[str, str]:
+def withheld_tools(config: Any, n_windows: int, state: Optional[Any] = None) -> Dict[str, str]:
     """Catalog entries unavailable for this run, mapped to the reason why.
 
     A tool that cannot produce a trustworthy answer is removed from the catalog
     instead of being offered and then failing: the agent never sees it, so it
     cannot spend an iteration on it, and the prompt stays honest about what the
     action space actually is.
+
+    `state` is optional, and only used for the one gate that cannot be decided
+    from `config`/`n_windows` alone: `weights_pooled_meta_model` needs a model
+    that was fit once for the whole dataset run and attached to this series'
+    `state` before Phase 3 opened (see `meta_model.py`) — `config` has no way to
+    know whether that happened. Callers without a `state` (existing tests, or
+    code built before this tool existed) keep working exactly as before; they
+    just cannot withhold this one entry.
     """
     out: Dict[str, str] = {}
     for name, field_name in WINDOW_GATED_TOOLS.items():
@@ -90,6 +99,11 @@ def withheld_tools(config: Any, n_windows: int) -> Dict[str, str]:
             out[name] = (
                 f"needs at least {minimum} validation windows, this run has {int(n_windows)}"
             )
+    if state is not None and getattr(state, "pooled_meta_model", None) is None:
+        out["weights_pooled_meta_model"] = (
+            "no pooled meta-model was trained for this run "
+            "(too few series in the dataset, or xgboost unavailable)"
+        )
     return out
 
 

@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from orchestrator_react import features as F
+from orchestrator_react import meta_model as MM
 from orchestrator_react.selection import (
     PoolRecipe,
     rank_table,
@@ -566,6 +567,50 @@ def weights_feature_based(
     return _register(
         state, "feature_based", pool, windows, False, metric=str(metric), eta=float(eta)
     )
+
+
+def weights_pooled_meta_model(state: ReactState, pool: str = FULL_POOL, eta: float = 1.0) -> Dict[str, Any]:
+    """w from a gradient-boosted model trained across every OTHER series in this
+    dataset run, predicting each pool model's error from this series' own
+    historical shape (trend/seasonal strength, entropy, autocorrelation) — the
+    same feature family FFORMA/ADE use, but fit on however many series the
+    dataset has instead of on 3 windows of just this one, which is what actually
+    lets the classical meta-learner have enough samples to work.
+
+    Requires a pool whose membership is the same on every backtest fold — pass
+    `pool_full`, or a pool built from an explicit model list, not one selected by
+    `select_top_k`/`select_stable`/`prune_redundant` while `nested_selection` is
+    on, since those can vary per fold and this tool's weights do not.
+    """
+    meta = getattr(state, "pooled_meta_model", None)
+    if meta is None:
+        raise ValueError(
+            "no pooled meta-model is available for this run: fewer than the "
+            "minimum number of series in the dataset, or xgboost unavailable. "
+            "Use weights_inverse_error or weights_softmax_neg_error instead."
+        )
+    if not state.pool_is_fold_invariant(pool):
+        raise ValueError(
+            f"pool {pool!r} is re-selected per backtest fold under nested_selection, "
+            "but weights_pooled_meta_model computes its weights once and reuses them "
+            "on every fold. Use 'pool_full', or a pool that was not built by "
+            "select_top_k/select_stable/prune_redundant."
+        )
+
+    idx = state.get_pool(pool)
+    names = [state.model_names[i] for i in idx]
+    profile = series_profile(state)
+    features = MM.extract_meta_features(profile)
+    predicted = meta.predict_errors(features, names)
+    w = MM.errors_to_weights(predicted, names, eta=float(eta))
+
+    out = _register(
+        state, "pooled_meta_model", pool, None, False,
+        precomputed_weights=w.tolist(), eta=float(eta),
+    )
+    out["n_train_series"] = meta.n_train_series
+    out["n_models_with_a_fit"] = sum(1 for v in predicted.values() if v is not None)
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════

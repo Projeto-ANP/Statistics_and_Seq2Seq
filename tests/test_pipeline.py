@@ -526,6 +526,41 @@ def test_run_dataset_captures_a_per_series_failure(fake_repo):
     assert all(o.csv_fields()["description"] for o in outs)
 
 
+def test_run_dataset_withholds_the_pooled_meta_model_with_too_few_series(fake_repo):
+    """The fake dataset has 4 series, far under the default minimum of 20 — every
+    series must get `pooled_meta_model=None` and never see the tool offered."""
+    cfg = ReactConfig(combinator=LLMRole(model=None))
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg,
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+    ))
+    assert all(o.state.pooled_meta_model is None for o in outs)
+
+
+def test_run_dataset_trains_and_attaches_a_pooled_meta_model_when_asked(fake_repo):
+    """Lowering the minimum lets the 4 fake series exercise the positive path:
+    every series gets its OWN leave-one-out model, not a shared one."""
+    pytest.importorskip("xgboost")
+    cfg = ReactConfig(combinator=LLMRole(model=None), pooled_meta_model_min_series=2)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg,
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+    ))
+    assert all(o.state.pooled_meta_model is not None for o in outs)
+    n_train = {o.state.pooled_meta_model.n_train_series for o in outs}
+    assert n_train == {N_SERIES - 1}, "each series' model must exclude only itself"
+
+
+def test_pooled_meta_model_off_skips_the_pre_pass_entirely(fake_repo):
+    cfg = ReactConfig(combinator=LLMRole(model=None), pooled_meta_model=False,
+                       pooled_meta_model_min_series=1)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg,
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+    ))
+    assert all(o.state.pooled_meta_model is None for o in outs)
+
+
 def test_run_dataset_reraises_a_systematic_alignment_error(fake_repo, tmp_path):
     """A wrong .tsf breaks every series, so the run must stop, not emit N failures."""
     (tmp_path / "tiny.tsf").write_text(

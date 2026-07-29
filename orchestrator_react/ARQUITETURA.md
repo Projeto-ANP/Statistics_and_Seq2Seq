@@ -11,7 +11,7 @@ do `NN5_WEEKLY_DATASET`.
 
 ## 1. Visão geral
 
-Um único agente ReAct opera sobre um catálogo fechado de 23 ferramentas
+Um único agente ReAct opera sobre um catálogo fechado de 24 ferramentas
 determinísticas. O agente **nunca escreve números** — nem previsões, nem pesos. Ele
 escolhe qual ferramenta chamar; a ferramenta calcula e devolve um *handle*
 (`pool1`, `w2`) mais um resumo qualitativo.
@@ -22,7 +22,7 @@ Fase 1  diagnóstico       series_card + pool_card (LLM opcional)
 Fase 2  baselines         mean / median / dba semeadas no histórico
 Fase 3  loop ReAct        Thought -> Action -> Observation, até 8 iterações
 Fase 4  aplicação         a melhor tentativa é aplicada à janela de teste cega
-Fase 5  relato            justificativa final + CSV de 56 colunas
+Fase 5  relato            justificativa final + CSV de 58 colunas
 ```
 
 O contrato central: **toda estratégia proposta passa por backtest nas janelas de
@@ -164,27 +164,233 @@ independentemente à mesma conclusão" são afirmações diferentes.
 
 ---
 
-## 3. O catálogo de ferramentas (23)
+## 3. O catálogo de ferramentas (24) — o que cada uma faz, com exemplo
 
-### 3.1 Diagnóstico
-`series_profile` · `stl_summary` · `error_summary` · `ranking_stability` ·
-`error_correlation` · `dm_test`
+Convenção para todo exemplo abaixo: `Action Input` é exatamente o que o agente
+escreve; `observação` é exatamente o que ele recebe de volta (resumido — os dicts
+reais têm mais campos). Nenhum tool devolve um array bruto; sempre um resumo.
 
-### 3.2 Seleção de pool
-`select_top_k` · `select_stable` · `prune_redundant`
+### 3.1 Diagnóstico — leitura, nunca decide nada sozinho
 
-Todas registram uma `PoolRecipe` re-ajustável (§2.1).
+**`series_profile()`** — a ficha da série: tendência, sazonalidade, estacionariedade,
+outliers, catch22, e os campeões de componente (§ features.py). É a única chamada
+sempre feita automaticamente antes do loop abrir (Fase 1a) e reinjetada em todo
+turno; o agente pode rechamá-la, mas o conteúdo não muda.
+```
+Action Input: {}
+observação: {"trend_strength": 1.0, "seasonal_strength": 0.9999, "seasonal_period": 52,
+             "features": {"spectral_entropy": 0.866, "acf1": 0.015, ...},
+             "stationarity": {...}, "outliers": {...}}
+```
 
-### 3.3 Pesos
-`weights_inverse_error` · `weights_softmax_neg_error` · `weights_error_trend` ·
-`weights_ols` · `weights_feature_based`
+**`stl_summary()`** — quanto de variância cada componente da STL explica.
+```
+Action Input: {}
+observação: {"trend_pct": 62.3, "seasonal_pct": 31.1, "residual_pct": 6.6,
+             "dominant_component": "trend"}
+```
 
-### 3.4 Combinação
-`combine_mean` · `combine_median` · `combine_trimmed_mean` · `combine_weighted` ·
-`combine_dba` · `combine_best_single`
+**`error_summary(window=None, top_n=8, metric="rmse")`** — tabela de erro por
+modelo, ranqueada; `window` restringe a uma janela específica em vez de todas.
+```
+Action Input: {"top_n": 5}
+observação: {"top": [{"model": "ETS", "error": 16.57, "rank": 1}, ...],
+             "rest": {"n_models": 14, "median_error": 22.1}, "relative_spread": 0.42}
+```
 
-### 3.5 Validação
-`evaluate_strategy` · `sanity_check` · `list_attempts`
+**`ranking_stability(metric="rmse")`** — o ranking de modelos se mantém entre
+janelas? Kendall tau médio entre todos os pares de janelas.
+```
+Action Input: {}
+observação: {"mean_kendall_tau": 0.228, "verdict": "unstable"}
+```
+
+**`error_correlation(model_ids=None, threshold=0.9)`** — quais modelos erram de
+forma parecida (candidatos a redundância, usado por `prune_redundant`).
+```
+Action Input: {"threshold": 0.95}
+observação: {"redundant_groups": [{"models": ["DWT_rf", "DWT_catboost"], "mean_corr": 0.97}]}
+```
+
+**`dm_test(model_a, model_b, loss="squared")`** — Diebold-Mariano entre dois
+modelos específicos, com a correção Harvey-Leybourne-Newbold de amostra pequena.
+```
+Action Input: {"model_a": "ETS", "model_b": "ARIMA"}
+observação: {"dm_stat": -1.42, "p_value": 0.29, "verdict": "indistinguishable"}
+```
+
+### 3.2 Seleção de pool — todas registram uma `PoolRecipe` re-ajustável (§2.1)
+
+**`select_top_k(k, metric="rmse", windows=None)`** — os k modelos de menor erro.
+Sob `nested_selection`, a janela sendo pontuada nunca vota na própria seleção.
+```
+Action Input: {"k": 5}
+observação: {"pool": "pool2", "models": ["FT_catboost", "ONLY_FT_rf", "CWT_rf", ...]}
+```
+
+**`select_stable(k, metric="rmse")`** — os k modelos mais consistentes entre
+janelas (`mean rank + std rank`, não erro puro). É a seleção que sustenta o piso
+determinístico (§2.4) — critério diferente de `select_top_k`, de propósito.
+```
+Action Input: {"k": 5}
+observação: {"pool": "pool1", "models": [{"model": "ETS", "mean_rank": 2.3, "rank_std": 0.5}, ...]}
+```
+
+**`prune_redundant(pool=FULL_POOL, corr_threshold=0.95, metric="rmse")`** — remove
+modelos redundantes, mantendo o de menor erro em cada grupo correlacionado.
+```
+Action Input: {"pool": "pool_full", "corr_threshold": 0.95}
+observação: {"pool": "pool4", "n_before": 19, "n_after": 11, "removed": ["ARIMA", "CWT_rf", ...]}
+```
+
+### 3.3 Pesos — sempre devolvem um *handle* (`w1`, `w2`...), nunca números soltos
+
+**`weights_inverse_error(pool, metric="rmse", shrinkage=0.0)`** — `w ∝ 1/erro`.
+Com poucos modelos de erro parecido, degenera pra quase-uniforme (§7) —
+`conc≈0` é justamente esse sinal.
+```
+Action Input: {"pool": "pool1", "shrinkage": 0.1}
+observação: {"weights": "w1", "summary": {"n_active": 5, "concentration": 0.002}}
+```
+
+**`weights_softmax_neg_error(pool, metric="rmse", eta=1.0)`** — `w ∝ softmax(-η·erro)`,
+a mesma forma final que o ADE usa. `eta` maior concentra mais peso no melhor modelo.
+```
+Action Input: {"pool": "pool_full", "eta": 2.0}
+observação: {"weights": "w2", "summary": {"n_active": 19, "concentration": 0.031}}
+```
+
+**`weights_error_trend(pool, metric="mae", eta=1.0, damping=None)`** — pesa pelo
+erro *extrapolado*, não pela média — lê a grade ponto a ponto (janelas×horizonte),
+não 3 números agregados. Medido: empata com as outras receitas de peso (§4.2),
+mantida como braço de ablação.
+```
+Action Input: {"pool": "pool_full"}
+observação: {"weights": "w3", "effective_mode": "error_trend",
+             "n_worsening": 4, "n_improving": 6}
+```
+
+**`weights_ols(pool, l2=0.0, nonneg=True)`** — mínimos quadrados projetados no
+simplex. **Retirada do catálogo com menos de `min_windows_for_ols` janelas** (§4.1)
+— com o protocolo padrão de 3 janelas, essa tool não aparece nem na lista de ações
+disponíveis.
+
+**`weights_feature_based(pool, metric="smape", eta=1.0)`** — meta-modelo XGBoost
+**por série**, no espírito do FFORMA. Nunca teve amostra suficiente pra treinar de
+verdade com 3 janelas — sempre cai no fallback `softmax(-erro)` (§13.1). É o
+motivo direto de existir a próxima.
+
+**`weights_pooled_meta_model(pool, eta=1.0)`** — ver §3.6 abaixo, exemplo completo.
+
+### 3.4 Combinação — monta o objeto de estratégia (não pontua nada sozinha)
+
+**`combine_mean()` / `combine_median()`** — sem parâmetros; montam a estratégia.
+```
+Action Input: {"pool": "pool_full"}
+observação: {"strategy": {"combine": "mean", "pool": "pool_full"}, "n_models": 19,
+             "next_step": "call evaluate_strategy with exactly this Action Input"}
+```
+
+**`combine_trimmed_mean(pool, trim_pct=0.2)`** — média cortando as `trim_pct`
+frações mais extremas de cada lado.
+
+**`combine_weighted(pool, weights)`** — exige um handle de peso já calculado por
+uma das tools da seção 3.3.
+```
+Action Input: {"pool": "pool2", "weights": "w1"}
+```
+
+**`combine_dba(pool, max_iter=30)`** — DTW Barycenter Averaging. `random_state=7`
+fixo internamente (§ correção do bug de determinismo — antes duas séries
+idênticas podiam dar previsões diferentes por causa do estado global do numpy).
+
+**`combine_best_single(model)`** — não combina nada; aposta num único modelo.
+
+### 3.5 Validação — o único caminho pra entrar no histórico
+
+**`evaluate_strategy(...)`** — roda o backtest anti-vazamento e ranqueia contra
+todo o histórico. Aceita a estratégia em várias formas (flat, aninhada, JSON em
+string) porque o modelo varia como escreve isso, e rejeitar por formato custa uma
+iteração à toa.
+```
+Action Input: {"combine": "weighted", "pool": "pool2", "weights": "w1",
+               "rationale": "pesos por erro inverso no subconjunto estável"}
+observação: {"rank": "2/6", "score": 0.6229, "rmse": 19.40, "leader": "a5 (best_single ETS)"}
+```
+
+**`sanity_check(reference)`** — compara a previsão final contra a faixa histórica
+da série. Só avisa, nunca bloqueia. `reference` aceita um id de tentativa (`"a3"`)
+ou uma estratégia inteira.
+```
+Action Input: {"reference": "a1"}
+observação: {"ok": true, "warnings": [], "n_points": 8}
+```
+
+**`list_attempts(top_n=10)`** — histórico ranqueado do melhor pro pior. É o que
+prova que `evaluate_strategy` foi mesmo chamada — texto forjado de Observation não
+tem como aparecer aqui, porque isso lê `state.attempts` de verdade, não o que o
+modelo escreveu antes.
+```
+Action Input: {}
+observação: {"total": 8, "best": "a6", "ranking": [{"id": "a6", "strategy": "median pool=pool1", "score": 0.6466}, ...]}
+```
+
+### 3.6 `weights_pooled_meta_model` — exemplo completo, do treino à decisão
+
+Esta é a tool mais recente (§13), e a única cujo cálculo não vem só desta série.
+
+**Passo 0 (antes do loop abrir, uma vez por dataset):** o pré-passo em
+`pipeline.run_dataset` roda `series_profile` + erro de validação em toda série do
+dataset, treina um XGBoost por modelo pra cada série (excluindo a própria série,
+LOSO) e anexa o resultado da série *i* a `state.pooled_meta_model` antes da Fase 3
+de *i* abrir. O agente não vê nada disso — só o resultado quando chama a tool.
+
+**A tool em si:**
+```
+Action: weights_pooled_meta_model
+Action Input: {"pool": "pool_full", "eta": 1.0}
+```
+Por baixo: pega as 4 features de `series_profile()` desta série (tendência,
+sazonalidade, entropia, autocorrelação), consulta o modelo já treinado — que
+**nunca viu a linha desta série** — e converte erro previsto em peso via
+`softmax(-eta·erro)`.
+
+Observação devolvida:
+```json
+{"weights": "w4", "method": "pooled_meta_model", "n_train_series": 110,
+ "n_models_with_a_fit": 19,
+ "summary": {"n_active": 19, "concentration": 0.018}}
+```
+`n_train_series` é o tamanho real da amostra que treinou o modelo desta série —
+está aí de propósito, pra distinguir "o número veio de 110 séries" de "o número
+veio de 3 janelas desta".
+
+**Exemplo real, duas séries do NN5 com perfis opostos** (mesmo pool completo, mesmo
+modelo pooled, cada uma consultando a sua própria versão leave-one-out):
+
+| | série 64 — ruidosa (acf1=0.015, entropia=0.87) | série 25 — persistente (acf1=0.91, entropia=0.33) |
+|---|---|---|
+| top 3 previsto | ARIMA, THETA, ETS (~18.9 cada) | NaiveMovingAverage, ARIMA (~22.1), ETS (25.6) |
+| pior previsto | NaiveSeasonal, ONLY_FT_catboost | DWT_catboost (49.9), DWT_rf (54.2) |
+
+Numa série persistente o modelo pooled penaliza pesado os modelos baseados em
+decomposição wavelet (DWT); numa série ruidosa eles nem entram entre os piores.
+Isso vem de padrão aprendido nas **outras** séries do dataset, não das 3 janelas
+desta.
+
+**Restrição que a tool aplica sozinha:** recusa um `pool` cuja composição muda por
+fold sob `nested_selection` (ex. o resultado de `select_top_k`), porque o vetor de
+pesos é calculado uma vez só e reaplicado igual em todo fold — se o pool mudasse
+de tamanho por fold, o vetor ficaria com tamanho errado. `pool_full` ou um pool
+registrado manualmente sempre funcionam.
+
+**Limite honesto (§13.4):** no NN5, 2 das 4 features (`trend_strength`,
+`seasonal_strength`) são quase constantes entre as 111 séries — o mesmo problema
+de saturação do STL encontrado no diagnosticador determinístico. O modelo pooled
+está funcionando com 2 features úteis, não 4, o que ajuda a explicar por que ele
+empatou com `softmax_neg_error` em vez de vencer. Ainda não testado no ANP, onde
+as séries são mais heterogêneas entre si e essas duas features tendem a variar de
+verdade.
 
 ---
 
@@ -418,14 +624,204 @@ Referência cruzada com `insights_trabalhos.md`:
 | `state.py` | dados, handles, protocolo de backtest, confiança, procedência |
 | `selection.py` | **novo** — seletores puros e `PoolRecipe` (§2.1) |
 | `weighting.py` | receitas de peso e `WeightsRecipe` |
+| `meta_model.py` | **novo** — meta-modelo pooled entre séries, LOSO (§13) |
 | `combiners.py` | `apply_combination` — fonte única, backtest e aplicação final |
 | `features.py` | STL, sazonalidade declarada, campeões de componente |
-| `tools.py` | o catálogo de 23 ferramentas |
+| `tools.py` | o catálogo de 24 ferramentas |
 | `registry.py` | espaço de ação fechado, despacho, `withheld_tools` |
 | `prompts.py` | prompt de sistema e de turno |
 | `react_loop.py` | Fase 3 — laço Thought/Action/Observation |
 | `pipeline.py` | orquestra as fases, `SeriesOutcome`, `reducibility()` |
-| `csv_writer.py` | contrato de 56 colunas |
+| `csv_writer.py` | contrato de 58 colunas |
 | `llm.py` | cliente Ollama, parser de passo, `ScriptedLLM` |
 
-**364 testes**, todos em CPU, sem servidor.
+**419 testes**, todos em CPU, sem servidor.
+
+---
+
+## 12. ANP_MONTHLY — segundo dataset: o que se confirma, o que não, e por quê
+
+Primeira rodada num dataset diferente de NN5 (mensal, escala de volume de
+combustível, 182 séries pós-filtro-de-zeros). Serve de teste de generalização para
+tudo que foi medido só no NN5 até aqui.
+
+### 12.1 Confirma — mais forte ainda
+
+`weights_concentration` médio: **0.0017** (era 0.0213 no NN5 — ainda mais uniforme).
+Por método:
+
+```
+mean          100.0% equivalente à média
+weighted       88.5% equivalente à média     ← quase sempre
+trimmed_mean   45.9%
+median          6.2%
+best_single     0.0%
+```
+
+Exemplo real, série 0, `weighted` sobre os 19 modelos (uniforme seria 1/19 = 0.0526):
+
+```
+ARIMA 0.0554  ETS 0.0545  THETA 0.0536  rf 0.0559  catboost 0.0437 ...
+DWT_rf 0.0546  FT_rf 0.0547  NaiveSeasonal 0.0465  NaiveMovingAverage 0.0548
+```
+
+Toda a faixa cabe entre 0.0437 e 0.0568 — 0.013 de amplitude ao redor de 0.0526.
+**Isso deixa de ser peculiaridade do NN5 e vira achado replicado entre dois
+datasets de natureza totalmente diferente** (semanal/retail vs mensal/combustível).
+
+### 12.2 Não confirma — e a causa raiz foi isolada
+
+No NN5, dois padrões pareciam sólidos:
+- veredito `separated` → agente empata/bate o ADE; `indistinguishable` → perde
+- pool efetivo menor → rank médio melhor, monotonicamente
+
+Nenhum dos dois se repete no ANP (§ da mensagem anterior). A hipótese óbvia —
+"o mecanismo estatístico está mal calibrado no ANP" — **não se sustenta**: a
+distribuição de margem/p-valor por veredito é praticamente idêntica entre os dois
+datasets (`separated` tem margem maior e dm_pvalue menor em ambos, na mesma ordem
+de grandeza). O teste está funcionando igual nos dois lugares.
+
+A causa real, isolada reproduzindo o mesmo experimento do NN5 (22 regras fixas —
+`select_stable`/`select_top_k`, k∈{3,5,7,9,11}, mean/median — comparando ranking de
+validação vs ranking de teste):
+
+```
+Spearman(validação, teste), NN5  (nested_selection=True): +0.547
+Spearman(validação, teste), ANP  (nested_selection=True): -0.290
+```
+
+**No ANP o score de validação não carrega o mesmo sinal.** Escolher pela validação
+mal empata com não escolher nada:
+
+```
+escolher pelo score de validação          : 0.219368 sMAPE
+sempre aplicar a média do pool completo   : 0.220649 sMAPE   (a "escolha" quase não ajuda)
+ORACLE (melhor das 22 por série)          : 0.199101 sMAPE   (o ganho possível existe, só não é capturado)
+```
+
+Isso explica os dois padrões que não replicaram de uma vez: se o score de 3 janelas
+não prediz o teste no ANP, nem a confiança estatística sobre esse score (`separated`)
+nem a seleção de pool que depende dele (pool menor) têm por que se transferir.
+
+Descartei que fosse o artefato de zero (§12.3): só 5/182 séries têm zero na janela
+de teste, e excluí-las não muda o quadro.
+
+**Hipótese em aberto, não testada:** ANP mistura produtos/regiões com regimes bem
+diferentes (a série mais estável e a mais intermitente estão no mesmo dataset),
+enquanto NN5 é um benchmark homogêneo (todas séries semanais de caixa eletrônico,
+mesmo tipo de padrão). Um sinal de validação de 3 janelas pode ser suficiente
+quando as séries são parecidas entre si e insuficiente quando cada série tem sua
+própria dinâmica. Vale testar segmentando por característica da série (força de
+tendência/sazonalidade, escala) antes de aceitar essa hipótese como resposta final.
+
+### 12.3 Dois diagnósticos novos, implementados
+
+**Detalhe do erro de tool no artifact.** Antes, `tool_missing=True` numa linha do
+CSV não dizia por quê — o `kind`/`detail` de cada chamada que falhou vivia só em
+`state.tool_errors`, nunca gravado em lugar nenhum; para descobrir a causa era
+preciso cruzar a coluna `tools_called` na mão. Agora `artifacts_payload()["react"]`
+inclui `"tools": tools_called_summary(state)` — mesmo dado que a linha do CSV usa,
+com o motivo de cada falha anexado.
+
+No ANP isso revelou algo que só ficaria visível cruzando dados manualmente: dos
+35/182 series com `tool_missing=True`, **34 foram "unparsed"** (o modelo não emitiu
+Thought/Action/Action Input num turno) — não é o agente pedindo ferramenta ou
+argumento inexistente, é formatação de saída. A coluna mistura os dois sinais sob
+o mesmo nome.
+
+**`test_has_zero_actual` / `test_min_abs_actual`.** sMAPE tem denominador
+`(|previsão| + |real|) / 2`; quando o real é zero ou perto disso, esse denominador
+colapsa e o ponto satura perto de 200%, **para qualquer método**. Confirmado nas
+duas piores séries do ANP (18 e 85): agente e as cinco baselines externas todas
+entre 1.34 e 1.44 de sMAPE — não é nenhum método prevendo mal, é o real bater em
+zero em pelo menos um mês.
+
+```
+série 85, janela de teste: [20, 45, 15, 20, 5, 30, 0, 0, 10, 0, 15, 5]
+                                                    ^^^^   ^^     ^^
+```
+
+Isso **não muda a fórmula do sMAPE** — ela continua byte-idêntica via
+`all_functions`, como o contrato da Seção 4.1 exige, comparável com toda linha já
+escrita por qualquer versão do projeto. Só adiciona visibilidade: um booleano
+(`test_has_zero_actual`) e o valor absoluto mínimo do real na janela
+(`test_min_abs_actual`, contínuo, para quem quiser aplicar seu próprio limiar em
+vez de herdar um cravado no pipeline). Calculado só de `test_values`, no mesmo
+ponto do pipeline onde as métricas já são calculadas — não pode enxergar nada que
+as métricas não vejam.
+## 13. `weights_pooled_meta_model` — a peça clássica que faltava (ADE/FFORMA)
+
+### 13.1 O que já existia, e por que estava morto
+
+`weights_feature_based` já era um meta-modelo XGBoost no espírito do FFORMA —
+treinado **por série**, sobre as 3 janelas de validação daquela série. A checagem
+de amostra suficiente:
+
+```python
+if n_fit < 2 * feats.shape[1]:   # n_fit=3, feats.shape[1]=5  ->  3 < 10, sempre
+    return _softmax_fallback(...)
+```
+
+Com 3 janelas essa condição é **sempre verdadeira**, para qualquer contagem
+razoável de features. Confirmado em log: essa tool nunca apareceu na frequência de
+chamadas em nenhuma rodada real (NN5 v1/v2, ANP v3) — o caminho XGBoost nunca
+executou uma vez sequer.
+
+### 13.2 O que a pesquisa mostrou (pedido do usuário, ver mensagem anterior)
+
+O FFORMA real não re-treina por série. Ele extrai ~43 características **por
+série** (força de tendência, sazonalidade, entropia — a mesma família que
+`series_profile` já calcula) e treina **um único meta-modelo usando todas as
+séries do dataset como amostras de treino**. A unidade estatística é "quantas
+séries tem o dataset" (111 no NN5, 182 no ANP), não "quantas janelas tem uma
+série". Isso resolve exatamente o defeito de 13.1.
+
+### 13.3 Implementação
+
+`orchestrator_react/meta_model.py` — novo módulo:
+
+- `extract_meta_features(profile)`: 4 características, deliberadamente restritas
+  à forma histórica da série (`trend_strength`, `seasonal_strength`,
+  `spectral_entropy`, `acf1`) — todas vêm de `train_series`, que é sempre
+  totalmente conhecido antes da Fase 3 abrir e **não muda por fold de backtest**.
+  Isso é o que permite reaplicar o mesmo vetor de pesos em todo fold sem recalcular.
+- `build_meta_row`: uma linha de treino por série (features + erro de validação de
+  cada modelo do pool). Só usa `y_true`/`y_preds` de validação — nunca teste.
+- `build_pooled_meta_models`: treina **leave-one-series-out** — um modelo por
+  série, cada um excluindo a própria linha daquela série do treino. Mesma
+  disciplina do `nested_selection`, pelo mesmo motivo: consultar um modelo sobre a
+  série que o treinou mediria memorização, não generalização.
+  Retorna `{}` (ferramenta retirada do catálogo, como o `weights_ols`) com menos
+  de `pooled_meta_model_min_series` séries (padrão 20) ou sem xgboost instalado.
+
+Nova tool em `tools.py`: `weights_pooled_meta_model(state, pool=FULL_POOL, eta=1.0)`.
+Exige um pool cuja composição seja fixa entre folds — recusa `select_top_k`/
+`select_stable`/`prune_redundant` sob `nested_selection=True` com um erro que o
+agente lê e corrige, porque o vetor de pesos é calculado uma vez e reaplicado
+igual em todo fold; se o pool mudasse de tamanho por fold, o vetor ficaria com
+tamanho errado.
+
+Encaixe: `pipeline.run_dataset` roda um pré-passo (Fase 0 + `series_profile`, sem
+LLM, descartando o `state` pesado logo depois) sobre todas as séries do `todo`
+**antes** do loop por série, treina os N modelos LOSO uma vez, e cada série recebe
+o seu via `run_series(..., pooled_meta_model=meta_models.get(idx))`.
+
+Config: `pooled_meta_model: bool = True`, `pooled_meta_model_min_series: int = 20`.
+CLI: `--no-pooled-meta-model`, `--pooled-meta-model-min-series`.
+
+### 13.4 Validação em dado real (NN5, 111 séries, pool completo)
+
+```
+weights_pooled_meta_model : 0.119072 sMAPE
+weights_softmax_neg_error : 0.118576 sMAPE   (empate, p=0.73)
+mean                      : 0.119939 sMAPE   (pooled bate a média, p=0.0088)
+```
+
+**Resultado honesto: empata com o `softmax_neg_error` já existente, bate a média
+simples.** Não é a resposta que fecha a lacuna com o ADE sozinha — coerente com o
+achado já registrado (§7) de que o valor está na seleção do pool, não na
+ponderação. É uma ferramenta nova, legítima e testada no catálogo, não uma vitória
+decisiva. Fica disponível para o agente combinar com seleção de pool fixa; não
+testei ainda seu comportamento sobre subconjuntos menores (onde `error_trend`
+mostrou alguma vantagem antes).
+

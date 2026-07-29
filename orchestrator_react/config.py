@@ -62,9 +62,6 @@ class ReactConfig:
     pool_mode: PoolMode = "full"
     pool_k: int = 8
 
-    # -- ablation 2: Phase 1 (diagnosis) with or without LLM ---------------------
-    diagnostic_llm: bool = False
-
     # -- ablation 3: ReAct loop budget ------------------------------------------
     # Raised from 8/2 after the v2 run: with only the full-pool seeds the agent
     # cleared the floor in 43 of 111 series and stopped early in 83. The stability
@@ -78,7 +75,14 @@ class ReactConfig:
     show_attempt_history: bool = True
     show_attempt_rationales: bool = True
 
-    # -- ablations 5 and 6: LLM model per role -----------------------------------
+    # -- ablation 2 (Phase 1 with/without an LLM) and ablations 5-6 (model per role)
+    # `diagnostician.model = None` (the default) IS ablation 2's "off": Phase 1
+    # then uses `deterministic_diagnosis` only. There used to be a second,
+    # separate `diagnostic_llm: bool` flag here — removed because it could disagree
+    # with whether `diagnostician.model` was actually set (e.g. an env-var override
+    # via `REACT_MODEL_DIAGNOSTICIAN` landed on `diagnostician.model` but not on the
+    # separate flag, so the LLM silently never ran while the config claimed it was
+    # enabled). `LLMRole.enabled` is now the only signal, everywhere.
     combinator: LLMRole = field(default_factory=lambda: LLMRole(model="gpt-oss:20b", temperature=0.2))
     diagnostician: LLMRole = field(default_factory=LLMRole)
     reporter: LLMRole = field(default_factory=LLMRole)
@@ -117,6 +121,22 @@ class ReactConfig:
     #: so what goes in it matters more than its name suggests. See
     #: `pool.SEED_STABLE_POOLS`.
     seed_stable_pools: bool = True
+    #: Trains `weights_pooled_meta_model` once per dataset run (see meta_model.py):
+    #: a gradient-boosted regressor per pool model, predicting its error from THIS
+    #: series' historical shape (trend/seasonal strength, entropy, autocorrelation),
+    #: fit leave-one-series-out across every other series in the run. Exists
+    #: because `weights_feature_based` fits the same kind of model per series on 3
+    #: validation windows, which structurally can never clear its own "enough
+    #: samples" guard (`n_fit < 2 * n_features` is true for every real feature
+    #: count once `n_fit == 3`) — confirmed by that tool never once running its
+    #: real path across every NN5/ANP run so far. Pooling across series is what
+    #: gives the classical meta-learner (ADE's and FFORMA's own mechanism) enough
+    #: samples to be worth trying. `False` skips the pre-pass entirely.
+    pooled_meta_model: bool = True
+    #: Below this many series in the run, pooling has too little signal to be
+    #: worth it — `weights_pooled_meta_model` is withheld for every series, the
+    #: same way `weights_ols` is withheld under too few validation windows.
+    pooled_meta_model_min_series: int = 20
     score_preset: str = "balanced"
     n_validation_windows: int = 3
     seasonal_period: Optional[int] = None  # None => inferred from the frequency
