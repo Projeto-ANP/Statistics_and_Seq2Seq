@@ -24,7 +24,7 @@ from orchestrator_react.selection import (
     stable_indices,
     top_k_indices,
 )
-from orchestrator_react.state import FULL_POOL, ReactState
+from orchestrator_react.state import FULL_POOL, ReactState, _spec_label
 from orchestrator_react.weighting import ERROR_METRICS, WeightsRecipe, per_model_error
 
 
@@ -577,10 +577,9 @@ def weights_pooled_meta_model(state: ReactState, pool: str = FULL_POOL, eta: flo
     dataset has instead of on 3 windows of just this one, which is what actually
     lets the classical meta-learner have enough samples to work.
 
-    Requires a pool whose membership is the same on every backtest fold — pass
-    `pool_full`, or a pool built from an explicit model list, not one selected by
-    `select_top_k`/`select_stable`/`prune_redundant` while `nested_selection` is
-    on, since those can vary per fold and this tool's weights do not.
+    Works with any pool, including one re-selected per backtest fold: what gets
+    stored is a predicted error PER MODEL NAME, and each fold composes its own
+    softmax over whichever members it actually has.
     """
     meta = getattr(state, "pooled_meta_model", None)
     if meta is None:
@@ -589,27 +588,25 @@ def weights_pooled_meta_model(state: ReactState, pool: str = FULL_POOL, eta: flo
             "minimum number of series in the dataset, or xgboost unavailable. "
             "Use weights_inverse_error or weights_softmax_neg_error instead."
         )
-    if not state.pool_is_fold_invariant(pool):
-        raise ValueError(
-            f"pool {pool!r} is re-selected per backtest fold under nested_selection, "
-            "but weights_pooled_meta_model computes its weights once and reuses them "
-            "on every fold. Use 'pool_full', or a pool that was not built by "
-            "select_top_k/select_stable/prune_redundant."
-        )
 
-    idx = state.get_pool(pool)
-    names = [state.model_names[i] for i in idx]
+    # Predict for EVERY model in the run, not just the requested pool: a fold may
+    # re-select different members, and the recipe has to be able to answer for any
+    # of them without re-querying the meta-model mid-backtest. `score_kind` tells
+    # the resolver how to turn scores into weights ("error" -> softmax(-eta*s),
+    # "margin" -> softmax(+s), the FFORMA objective's own output).
     profile = series_profile(state)
     features = MM.extract_meta_features(profile)
-    predicted = meta.predict_errors(features, names)
-    w = MM.errors_to_weights(predicted, names, eta=float(eta))
+    scores, kind = meta.predict_scores(features)
 
     out = _register(
         state, "pooled_meta_model", pool, None, False,
-        precomputed_weights=w.tolist(), eta=float(eta),
+        model_scores={k: (None if v is None else float(v)) for k, v in scores.items()},
+        score_kind=kind,
+        eta=float(eta),
     )
+    out["objective"] = getattr(meta, "objective", "per_model")
     out["n_train_series"] = meta.n_train_series
-    out["n_models_with_a_fit"] = sum(1 for v in predicted.values() if v is not None)
+    out["n_models_with_a_fit"] = sum(1 for v in scores.values() if v is not None)
     return out
 
 
@@ -736,10 +733,24 @@ def evaluate_strategy(
         base = abs(best.score) or 1.0
         gap = round(float((attempt.score - best.score) / base), 4)
 
+    twin = state.numerical_twin(attempt)
+    out_twin: Dict[str, Any] = {}
+    if twin is not None:
+        out_twin = {
+            "numerically_identical_to": twin.attempt_id,
+            "note": (
+                f"this produces the SAME forecasts as {twin.attempt_id} "
+                f"({_spec_label(twin.spec)}) — it adds nothing new. To explore a "
+                "different point, change the POOL or the KIND of combination, not "
+                "just the weighting method."
+            ),
+        }
+
     return {
         "id": attempt.attempt_id,
         "strategy": attempt.spec,
         "already_tested": not is_new,
+        **out_twin,
         "rank": position,
         "total_attempts": len(ranked),
         "metrics": {

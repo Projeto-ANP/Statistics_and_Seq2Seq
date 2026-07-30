@@ -72,11 +72,22 @@ def build_system_prompt(
         "  You do NOT need combine_* first. It only builds the same object, so going",
         "  through it costs you an iteration for nothing.",
         "",
-        "A TYPICAL SEQUENCE:",
+        "A TYPICAL SEQUENCE (the weights_* step is a CHOICE, not a fixed step):",
         '  select_stable      {"k": 5}                  -> pool1',
-        '  weights_inverse_error {"pool": "pool1"}      -> w1',
+        '  weights_<method>   {"pool": "pool1"}         -> w1',
         '  evaluate_strategy  {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
         f'  {TERMINAL_ACTION}  {{"attempt_id": "aN", "confidence": 0.7, "justification": "..."}}',
+        "",
+        "THE WEIGHT METHODS READ DIFFERENT SIGNALS - they are not interchangeable:",
+        "  weights_inverse_error / weights_softmax_neg_error - each model's AVERAGE",
+        "     error over the windows. Similar to each other; if one gives you",
+        "     concentration near 0, so will the other.",
+        "  weights_error_trend      - where each model's error is HEADING, read from",
+        "     the pointwise grid, not from the average. Separates a model that is",
+        "     improving from one that is degrading at the same mean error.",
+        "  weights_pooled_meta_model - learned across the OTHER series of this",
+        "     dataset, from this series' shape. The only method whose signal does",
+        "     not come from these three windows.",
         "",
         "RULES:",
         "- Prefer small structured comparisons over one sweeping decision. Pick a",
@@ -94,6 +105,13 @@ def build_system_prompt(
         "  SAME method on a better pool - dba on a pruned pool, median on a stable",
         "  subset - not a different method entirely. The baselines run on all models,",
         "  so a smaller pool is the variable you have not tried yet.",
+        "- If a weights_* handle comes back with concentration near 0, the weights",
+        "  are effectively UNIFORM, and that strategy gives the same forecasts as the",
+        "  plain mean of the same pool. Another error-based weights_* method on the",
+        "  SAME pool will usually do the same. Change the POOL, or the kind of",
+        "  combination, rather than the weighting method.",
+        "- If an observation says SAME forecasts as an earlier attempt, that turn",
+        "  bought nothing. Do not follow it with a variation of the same idea.",
         "- If a call is rejected, read the error: it lists the arguments that ARE",
         "  accepted. Do not retry the same shape.",
         f"- When you {TERMINAL_ACTION}, justification must explain the choice in terms of",
@@ -109,6 +127,44 @@ def build_system_prompt(
             "  strategy rather than tuning the winner.",
         ]
     return "\n".join(rules)
+
+
+def build_dataset_card(state: ReactState, top_n: int = 5) -> Optional[Dict[str, Any]]:
+    """What worked on the OTHER series of this dataset, from validation only.
+
+    Cross-series experience, computed by the Phase-2 pre-pass and held in
+    `state.strategy_prior` (leave-one-series-out, so this series' own result is not
+    in it). ADE and FFORMA both get this kind of dataset-wide view before they
+    combine anything; the agent had none, and it showed — on the 182-series ANP run
+    it used 4-5 of ~10 usable tools and reached for whichever one the prompt's
+    worked example happened to name.
+
+    Deliberately a RECOMMENDATION: the catalog stays fully open. Ranking strategies
+    by dataset-level validation is informative but not decisive — the same ranking
+    reverses between our two datasets — so it is offered as context, and the
+    caution line says how far to trust it.
+    """
+    prior = state.strategy_prior
+    if not prior:
+        return None
+    ranked = sorted(prior.items(), key=lambda kv: kv[1])
+    return {
+        "n_other_series": None,
+        "best_on_this_dataset": [
+            {"strategy": lbl, "mean_validation_score": round(float(v), 4)}
+            for lbl, v in ranked[:top_n]
+        ],
+        "worst_on_this_dataset": [
+            {"strategy": lbl, "mean_validation_score": round(float(v), 4)}
+            for lbl, v in ranked[-2:]
+        ],
+        "how_to_use": (
+            "validation-only averages over the OTHER series of this dataset. A "
+            "strategy near the top is a good place to START, not a rule: which "
+            "strategy wins is series-specific, and this ordering does not always "
+            "hold. Your own attempt history for THIS series outranks it."
+        ),
+    }
 
 
 def build_turn_prompt(
@@ -133,6 +189,12 @@ def build_turn_prompt(
     parts.append("")
     parts.append("MODEL POOL:")
     parts.append(_compact(_slim_pool_card(pool_card)))
+
+    card = build_dataset_card(state)
+    if card:
+        parts.append("")
+        parts.append("DATASET CARD - what worked on the OTHER series (validation only):")
+        parts.append(_compact(card, limit=900))
 
     if diagnosis:
         parts.append("")
@@ -316,6 +378,10 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
             f" rmse={observation.get('metrics', {}).get('rmse')}"
             + (" (best so far)" if observation.get("is_best") else tail)
             + (" [already tested]" if observation.get("already_tested") else "")
+            + (
+                f" [SAME forecasts as {observation['numerically_identical_to']}]"
+                if observation.get("numerically_identical_to") else ""
+            )
         )
     if action.startswith("weights_"):
         s = observation.get("summary", {})

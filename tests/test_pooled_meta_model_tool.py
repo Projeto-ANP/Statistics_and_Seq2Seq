@@ -2,9 +2,9 @@
 
 `tests/test_meta_model.py` covers the pure functions (LOSO fitting, feature
 extraction, softmax). This file covers the parts that only make sense wired into
-a real `ReactState`: the withholding gate, the fold-invariant-pool guard, and that
-`resolve_recipe`'s `pooled_meta_model` branch really does reuse one vector across
-every fold rather than silently drifting.
+a real `ReactState`: the withholding gate, and that `resolve_recipe`'s
+`pooled_meta_model` branch composes a correct per-fold vector from predicted errors
+keyed by model name — which is what let the fold-invariant-pool guard be removed.
 """
 
 from __future__ import annotations
@@ -90,17 +90,23 @@ def test_calling_it_directly_without_a_model_raises_a_readable_error():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# the fold-invariant-pool guard
+# pool compatibility (the old guard, now removed)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_refuses_a_refittable_pool_under_nested_selection():
+def test_accepts_a_refittable_pool_under_nested_selection():
+    """The guard this used to assert is GONE, on purpose. It made the tool unusable:
+    on the 182-series ANP run the agent called it once, on a pruned pool (its
+    dominant habit), and was rejected. Keying predicted errors by model NAME lets
+    each fold compose its own vector, so a per-fold pool is fine."""
     s = make_state()
     _attach_fitted_model(s)
     s.config.nested_selection = True
     top = T.select_top_k(s, k=3)["pool"]
-    with pytest.raises(ValueError, match="re-selected per backtest fold"):
-        T.weights_pooled_meta_model(s, pool=top)
+    out = T.weights_pooled_meta_model(s, pool=top)
+    assert out["weights"].startswith("w")
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": top, "weights": out["weights"]})
+    assert np.isfinite(attempt.score)
 
 
 def test_full_pool_is_always_allowed():
@@ -156,14 +162,14 @@ def test_it_is_usable_end_to_end_as_a_strategy():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# fold invariance — the property the pool guard exists to protect
+# per-fold composition — the property that replaces the guard
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_the_same_weight_vector_is_used_on_every_backtest_fold():
-    """Unlike every other weight recipe, this one must NOT change per fold: the
-    features it was computed from (trend/seasonal strength, entropy, acf1) come
-    from the series' historical shape, which no fold excludes."""
+def test_the_weights_do_not_depend_on_which_windows_are_passed():
+    """The features behind it (trend/seasonal strength, entropy, acf1, catch22) are
+    properties of `train_series`, which no fold excludes — so for a FIXED set of
+    members the vector must be identical regardless of the windows given."""
     from orchestrator_react.weighting import resolve_recipe
 
     s = make_state()
@@ -171,25 +177,223 @@ def test_the_same_weight_vector_is_used_on_every_backtest_fold():
     handle = T.weights_pooled_meta_model(s, pool=FULL_POOL)["weights"]
     recipe = s.get_weights_recipe(handle)
     idx = s.get_pool(FULL_POOL)
+    names = [s.model_names[i] for i in idx]
 
-    w_all, meta_all = resolve_recipe(recipe, s.y_true, s.y_preds[:, idx])
-    w_one, meta_one = resolve_recipe(recipe, s.y_true[:1], s.y_preds[:1][:, idx])
+    w_all, meta_all = resolve_recipe(recipe, s.y_true, s.y_preds[:, idx], names=names)
+    w_one, meta_one = resolve_recipe(recipe, s.y_true[:1], s.y_preds[:1][:, idx], names=names)
     assert meta_all["mode"] == meta_one["mode"] == "pooled_meta_model"
-    assert np.allclose(w_all, w_one), "the vector must not depend on which windows were passed in"
+    assert np.allclose(w_all, w_one)
 
 
-def test_a_pool_size_mismatch_falls_back_to_uniform_instead_of_crashing():
-    """Defence in depth: if the guard were ever bypassed and the pool at
-    resolution time has a different size than at registration, this must degrade
-    safely rather than raise mid-backtest."""
+def test_a_fold_with_fewer_members_gets_a_correctly_sized_simplex_vector():
+    """The property that replaces the old guard: a fold holding a SUBSET of the
+    models must get a vector of exactly its own length, still summing to 1, and
+    still ordered by the same predicted errors."""
+    from orchestrator_react.weighting import resolve_recipe
+
+    s = make_state()
+    _attach_fitted_model(s)
+    handle = T.weights_pooled_meta_model(s, pool=FULL_POOL)["weights"]
+    recipe = s.get_weights_recipe(handle)
+
+    subset = [0, 2, 4]
+    names = [s.model_names[i] for i in subset]
+    w, meta = resolve_recipe(recipe, s.y_true, s.y_preds[:, subset], names=names)
+    assert w.size == len(subset)
+    assert w.sum() == pytest.approx(1.0)
+    assert meta["n_fold_models"] == len(subset)
+
+    # the ranking within the subset must match the full-pool ranking of the same
+    # three models — the softmax is recomputed, not re-ordered
+    full_names = list(s.model_names)
+    w_full, _ = resolve_recipe(recipe, s.y_true, s.y_preds[:, list(range(s.n_models))],
+                               names=full_names)
+    assert np.argsort(w)[::-1].tolist() == np.argsort(w_full[subset])[::-1].tolist()
+
+
+def test_missing_names_degrade_to_uniform_instead_of_crashing():
+    """Defence in depth: a caller that resolves this recipe without passing member
+    names cannot compose a keyed vector, and must degrade rather than raise
+    mid-backtest."""
     from orchestrator_react.weighting import WeightsRecipe, resolve_recipe
 
     s = make_state()
     recipe = WeightsRecipe(
         method="pooled_meta_model", pool_handle=FULL_POOL,
-        params={"precomputed_weights": [1.0, 0.0]},  # wrong length on purpose
+        params={"predicted_errors": {n: 1.0 for n in s.model_names}},
     )
-    w, meta = resolve_recipe(recipe, s.y_true, s.y_preds)
-    assert meta["mode"] == "pooled_meta_model_pool_mismatch"
+    w, meta = resolve_recipe(recipe, s.y_true, s.y_preds)  # no names=
+    assert meta["mode"] == "pooled_meta_model_no_predictions"
     assert w.sum() == pytest.approx(1.0)
     assert w.size == s.n_models
+
+
+def test_a_model_with_no_prediction_gets_no_weight():
+    """`None` means the meta-model never fit a regressor for that model. It must
+    not silently receive uniform weight alongside models that have real
+    predictions."""
+    from orchestrator_react.weighting import WeightsRecipe, resolve_recipe
+
+    s = make_state()
+    errs = {n: 5.0 for n in s.model_names}
+    errs[s.model_names[0]] = None
+    recipe = WeightsRecipe(
+        method="pooled_meta_model", pool_handle=FULL_POOL,
+        params={"predicted_errors": errs},
+    )
+    w, meta = resolve_recipe(recipe, s.y_true, s.y_preds, names=list(s.model_names))
+    assert w[0] == pytest.approx(0.0)
+    assert w.sum() == pytest.approx(1.0)
+    assert meta["n_without_a_prediction"] == 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 2 seeding — the structural answer to "the agent never calls it"
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_phase2_seeds_the_pooled_strategy_when_a_model_is_attached():
+    """On the 182-series ANP v4 run the agent reached for this tool once, and that
+    call failed. Seeding it makes it a floor entry evaluated on every series
+    instead of an option that depends on the agent's habits."""
+    from orchestrator_react import pool as POOL
+
+    s = make_state()
+    _attach_fitted_model(s)
+    seeded = POOL.seed_baselines(s, stable_pools=(), seed_pooled_meta_model=True)
+    pooled = [a for a in seeded if a.spec.get("weights")]
+    assert len(pooled) == 1
+    recipe = s.get_weights_recipe(pooled[0].spec["weights"])
+    assert recipe.method == "pooled_meta_model"
+    assert pooled[0].origin == "baseline"
+
+
+def test_seeding_is_skipped_when_no_model_is_attached():
+    """No meta-model (too few series, or xgboost missing) must not add a broken
+    seed, and must not raise."""
+    from orchestrator_react import pool as POOL
+
+    s = make_state()
+    assert s.pooled_meta_model is None
+    seeded = POOL.seed_baselines(s, stable_pools=(), seed_pooled_meta_model=True)
+    assert all(not a.spec.get("weights") for a in seeded)
+
+
+def test_a_failing_pooled_seed_never_kills_the_series():
+    """It is a floor entry: a missing floor entry is strictly better than a lost
+    series, so failure degrades to 'no seed'."""
+    from orchestrator_react import pool as POOL
+
+    class Exploding:
+        n_train_series = 10
+        def predict_errors(self, features, names):
+            raise RuntimeError("simulated meta-model failure")
+
+    s = make_state()
+    s.pooled_meta_model = Exploding()
+    seeded = POOL.seed_baselines(s, stable_pools=(), seed_pooled_meta_model=True)
+    assert len(seeded) == len(POOL.SEED_BASELINES)
+
+
+def test_run_phase2_honours_the_seed_flag():
+    from orchestrator_react import pool as POOL
+    from orchestrator_react.config import ReactConfig as RC
+
+    for flag, expect_pooled in ((True, 1), (False, 0)):
+        s = make_state(config=RC(seed_pooled_meta_model=flag, seed_stable_pools=False))
+        _attach_fitted_model(s)
+        POOL.run_phase2(s, s.config)
+        n = sum(1 for a in s.attempts if a.spec.get("weights"))
+        assert n == expect_pooled
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# the "margin" score kind end-to-end (fforma objective through the tool)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _attach_fforma_model(state, n_train_series: int = 40) -> None:
+    rng = np.random.default_rng(1)
+    rows = []
+    for i in range(n_train_series):
+        profile = {
+            "trend_strength": float(rng.uniform(0, 1)),
+            "seasonal_strength": float(rng.uniform(0, 1)),
+            "features": {"spectral_entropy": float(rng.uniform(0, 1)), "acf1": float(rng.uniform(-1, 1))},
+        }
+        errors = {name: float(rng.uniform(1, 10)) for name in state.model_names}
+        rows.append(MM.MetaRow(dataset_index=i, features=MM.extract_meta_features(profile), errors=errors))
+    state.pooled_meta_model = MM._fit_one(
+        rows, state.model_names, exclude_dataset_index=-1,
+        n_estimators=10, max_depth=2, random_state=0, metric="rmse",
+        objective="fforma",
+    )
+
+
+def test_fforma_fit_flows_through_the_tool_and_backtest():
+    s = make_state()
+    _attach_fforma_model(s)
+    out = T.weights_pooled_meta_model(s, pool=FULL_POOL)
+    assert out["objective"] == "fforma"
+    recipe = s.get_weights_recipe(out["weights"])
+    assert recipe.params["score_kind"] == "margin"
+    attempt, _ = s.evaluate({"combine": "weighted", "pool": FULL_POOL, "weights": out["weights"]})
+    assert np.isfinite(attempt.score)
+    fc, _ = s.apply_to_test(attempt.spec)
+    assert np.all(np.isfinite(fc))
+
+
+def test_margin_weights_on_a_subset_renormalise_the_full_softmax():
+    """softmax over a subset of margins == the full softmax renormalised — the
+    property that makes per-fold membership need no special handling."""
+    from orchestrator_react.weighting import WeightsRecipe, resolve_recipe
+
+    s = make_state()
+    margins = {n: float(i) for i, n in enumerate(s.model_names)}
+    recipe = WeightsRecipe(method="pooled_meta_model", pool_handle=FULL_POOL,
+                           params={"model_scores": margins, "score_kind": "margin"})
+    all_names = list(s.model_names)
+    w_full, _ = resolve_recipe(recipe, s.y_true, s.y_preds, names=all_names)
+    sub = [1, 3, 4]
+    names = [all_names[i] for i in sub]
+    w_sub, meta = resolve_recipe(recipe, s.y_true, s.y_preds[:, sub], names=names)
+    assert meta["score_kind"] == "margin"
+    expected = w_full[sub] / w_full[sub].sum()
+    assert w_sub == pytest.approx(expected)
+
+
+def test_a_member_without_a_margin_gets_zero_weight():
+    from orchestrator_react.weighting import WeightsRecipe, resolve_recipe
+
+    s = make_state()
+    margins = {n: 1.0 for n in s.model_names}
+    margins[s.model_names[2]] = None
+    recipe = WeightsRecipe(method="pooled_meta_model", pool_handle=FULL_POOL,
+                           params={"model_scores": margins, "score_kind": "margin"})
+    w, _ = resolve_recipe(recipe, s.y_true, s.y_preds, names=list(s.model_names))
+    assert w[2] == pytest.approx(0.0)
+    assert w.sum() == pytest.approx(1.0)
+
+
+def test_legacy_predicted_errors_params_still_resolve():
+    """Recipes registered before the rename (predicted_errors, no score_kind) must
+    keep resolving as the error kind."""
+    from orchestrator_react.weighting import WeightsRecipe, resolve_recipe
+
+    s = make_state()
+    recipe = WeightsRecipe(method="pooled_meta_model", pool_handle=FULL_POOL,
+                           params={"predicted_errors": {n: 1.0 for n in s.model_names}})
+    w, meta = resolve_recipe(recipe, s.y_true, s.y_preds, names=list(s.model_names))
+    assert meta["score_kind"] == "error"
+    assert w.sum() == pytest.approx(1.0)
+
+
+def test_phase2_seed_works_with_an_fforma_fit():
+    from orchestrator_react import pool as POOL
+
+    s = make_state()
+    _attach_fforma_model(s)
+    seeded = POOL.seed_baselines(s, stable_pools=(), seed_pooled_meta_model=True)
+    pooled = [a for a in seeded if a.spec.get("weights")]
+    assert len(pooled) == 1
+    assert s.get_weights_recipe(pooled[0].spec["weights"]).params["score_kind"] == "margin"

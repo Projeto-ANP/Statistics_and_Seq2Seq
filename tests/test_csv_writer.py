@@ -631,3 +631,148 @@ def test_it_reads_only_test_values_already_used_by_the_metrics():
 
     sig = inspect.signature(W.zero_actual_diagnostics)
     assert list(sig.parameters) == ["actual"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# cross-series observability — a v5 run has to be analysable afterwards
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_artifact_records_the_dataset_prior_and_the_card_shown(fake_repo):
+    """The prior and the card are what the agent was given beyond its own series.
+    Without them in the artifact there is no way to tell, after a run, whether the
+    cross-series context helped — which is the whole question v5 exists to answer."""
+    from orchestrator_react.state import _spec_label
+
+    out = outcome_for(fake_repo)
+    out.state.strategy_prior = {_spec_label(a.spec): 0.5 + i * 0.1
+                                for i, a in enumerate(out.state.attempts)}
+    block = W.artifacts_payload(out)["cross_series"]
+    assert block["strategy_prior"], "the prior itself must be recorded"
+    assert block["prior_best"] and block["prior_worst"]
+    assert "best_on_this_dataset" in block["dataset_card_shown"]
+    json.dumps(block, default=str)  # must serialise
+
+
+def test_artifact_records_whether_the_pooled_fit_learned_anything(fake_repo):
+    """`degenerate=True` means uniform weights wearing a meta-model's name. A run
+    must not be able to look like it used one when it did not."""
+    from orchestrator_react import meta_model as MM
+
+    out = outcome_for(fake_repo)
+    out.state.pooled_meta_model = MM.PooledMetaModel(
+        feature_names=MM.FEATURE_NAMES, model_names=list(out.state.model_names),
+        objective="fforma", n_train_series=181, degenerate=True,
+    )
+    block = W.artifacts_payload(out)["cross_series"]["pooled_meta_model"]
+    assert block == {"objective": "fforma", "n_train_series": 181,
+                     "n_features": len(MM.FEATURE_NAMES), "degenerate": True}
+
+
+def test_cross_series_block_is_empty_when_nothing_cross_series_ran(fake_repo):
+    out = outcome_for(fake_repo)
+    assert W.artifacts_payload(out)["cross_series"] == {}
+
+
+def test_bookkeeping_never_breaks_the_artifact(fake_repo, monkeypatch):
+    """The artifact is the audit trail; a formatting helper must not be able to
+    lose it."""
+    import orchestrator_react.prompts as P
+
+    out = outcome_for(fake_repo)
+    out.state.strategy_prior = {"mean": 0.5}
+    monkeypatch.setattr(P, "build_dataset_card", lambda *a, **k: 1 / 0)
+    block = W.artifacts_payload(out)["cross_series"]
+    assert block["strategy_prior"] == {"mean": 0.5}
+    assert "dataset_card_shown" not in block
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# max_llm_failures — one flaky series must not end a 182-series run
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _flaky_client(n_failing_series):
+    """A client that burns through the LLM-error retry budget for the first
+    `n_failing_series` series, then answers normally.
+
+    Counting whole series rather than calls matters: `react_loop` retries a
+    transport error `LLM_ERROR_RETRIES` times before giving up, so killing one
+    series takes that many consecutive failures, not one."""
+    from orchestrator_react.llm import LLMError
+    from orchestrator_react.react_loop import LLM_ERROR_RETRIES
+
+    per_series = LLM_ERROR_RETRIES + 1
+    state = {"left": n_failing_series * per_series}
+
+    class Flaky:
+        name = "flaky"
+
+        def complete(self, system, user):
+            if "Reply with the single word OK" in system:
+                return "OK"
+            if state["left"] > 0:
+                state["left"] -= 1
+                raise LLMError("simulated transport failure")
+            return 'Thought: t\nAction: accept\nAction Input: {"attempt_id": "a1"}'
+
+    return Flaky()
+
+
+def test_one_failing_series_no_longer_ends_the_run(tmp_path, fake_repo, monkeypatch):
+    """The behaviour that forced the ANP resume: aborting on the FIRST llm error.
+    Resuming then re-ran the remainder in a chunk small enough to silently disable
+    the pooled meta-model, so the fix belongs here, not in the resume."""
+    import orchestrator_react.pipeline as PLmod
+    import run_tsf_orchestrator as R
+
+    client = _flaky_client(1)
+    monkeypatch.setattr(PLmod, "build_client", lambda role: client if role.enabled else None)
+    monkeypatch.setattr(R, "check_client", lambda c: (True, "OK"))
+
+    summary = R.exec_dataset_orchestrator(
+        MODELS, dataset="FAKE", source_file="fake.tsf", combinator_model="gpt-oss:20b",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path), version="flaky1", llm_logs=False,
+        max_llm_failures=5, pooled_meta_model=False, dataset_card=False,
+    )
+    assert summary["n_ok"] == N_SERIES, "every series still produced a row"
+    assert summary["n_llm_failures"] == 1
+
+
+def test_a_systematically_broken_server_still_aborts(tmp_path, fake_repo, monkeypatch):
+    """The original guarantee must survive: a run that silently degrades to the
+    deterministic baseline answers a different question while the log says ok."""
+    import orchestrator_react.pipeline as PLmod
+    import run_tsf_orchestrator as R
+
+    client = _flaky_client(N_SERIES)
+    monkeypatch.setattr(PLmod, "build_client", lambda role: client if role.enabled else None)
+    monkeypatch.setattr(R, "check_client", lambda c: (True, "OK"))
+
+    with pytest.raises(RuntimeError, match="max_llm_failures budget"):
+        R.exec_dataset_orchestrator(
+            MODELS, dataset="FAKE", source_file="fake.tsf", combinator_model="gpt-oss:20b",
+            source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+            output_dir=str(tmp_path), version="flakyall", llm_logs=False,
+            max_llm_failures=2, pooled_meta_model=False, dataset_card=False,
+        )
+
+
+def test_allow_baseline_fallback_still_never_aborts(tmp_path, fake_repo, monkeypatch):
+    import orchestrator_react.pipeline as PLmod
+    import run_tsf_orchestrator as R
+
+    client = _flaky_client(N_SERIES)
+    monkeypatch.setattr(PLmod, "build_client", lambda role: client if role.enabled else None)
+    monkeypatch.setattr(R, "check_client", lambda c: (True, "OK"))
+
+    summary = R.exec_dataset_orchestrator(
+        MODELS, dataset="FAKE", source_file="fake.tsf", combinator_model="gpt-oss:20b",
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        output_dir=str(tmp_path), version="fallback", llm_logs=False,
+        allow_baseline_fallback=True, max_llm_failures=1,
+        pooled_meta_model=False, dataset_card=False,
+    )
+    assert summary["n_llm_failures"] == N_SERIES
+    assert summary["n_ok"] == N_SERIES

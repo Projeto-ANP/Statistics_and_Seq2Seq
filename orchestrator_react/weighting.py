@@ -60,6 +60,27 @@ def _uniform(n: int) -> np.ndarray:
     return np.ones(int(n), dtype=float) / max(1, int(n))
 
 
+def _softmax_neg(errors: np.ndarray, eta: float = 1.0) -> np.ndarray:
+    """`softmax(-eta * error / median(error))` on the simplex — FFORMA's final step.
+
+    Median-normalised so `eta` means the same thing on a series in the millions and
+    one in the units. Non-finite entries (a model with no prediction, or an
+    infinite error) get weight 0 unless every entry is non-finite, in which case
+    the result is uniform rather than undefined.
+    """
+    e = np.asarray(errors, dtype=float).ravel()
+    finite = e[np.isfinite(e)]
+    if finite.size == 0:
+        return _uniform(e.size)
+    scale = float(np.median(finite)) or 1.0
+    z = -float(eta) * (e / scale)
+    z = np.where(np.isfinite(z), z, -np.inf)
+    z = z - np.max(z[np.isfinite(z)], initial=0.0)
+    out = np.exp(z)
+    total = out.sum()
+    return out / total if total > 0 else _uniform(e.size)
+
+
 def per_model_error(
     y_true: np.ndarray,
     y_pool: np.ndarray,
@@ -451,10 +472,19 @@ class WeightsRecipe:
 
 
 def resolve_recipe(
-    recipe: WeightsRecipe, y_true: np.ndarray, y_pool: np.ndarray
+    recipe: WeightsRecipe,
+    y_true: np.ndarray,
+    y_pool: np.ndarray,
+    names: Optional[Sequence[str]] = None,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Runs the recipe over the given windows. It does not decide which windows
-    those are: `state.py` owns the anti-leakage protocol."""
+    those are: `state.py` owns the anti-leakage protocol.
+
+    `names` are the model names of the pool slice in `y_pool`, in the same order.
+    Only `pooled_meta_model` needs them — it stores predicted errors keyed by name
+    so a fold with different membership still composes a correct vector. Callers
+    that omit them keep working for every other recipe.
+    """
     method = str(recipe.method).lower()
     p = dict(recipe.params)
     n_pool = int(y_pool.shape[1])
@@ -463,20 +493,57 @@ def resolve_recipe(
         return _uniform(n_pool), {"mode": "uniform_no_fit_data"}
 
     if method == "pooled_meta_model":
-        # Deliberately ignores `y_true`/`y_pool`: the weights were already
-        # computed once, from this series' own historical shape (trend/seasonal
-        # strength, entropy, autocorrelation) queried against a model trained on
-        # every OTHER series in the dataset. None of those four features change
-        # per backtest fold — they never depended on a specific validation
-        # window — so the same vector is correct for every fold. The tool that
-        # registers this recipe (`tools.weights_pooled_meta_model`) refuses a pool
-        # whose membership can vary per fold under `nested_selection`, which is
-        # what keeps this shortcut sound: the vector's length can never disagree
-        # with `y_pool.shape[1]` at resolution time.
-        w = np.asarray(p.get("precomputed_weights", []), dtype=float)
-        if w.size != n_pool:
-            return _uniform(n_pool), {"mode": "pooled_meta_model_pool_mismatch"}
-        return w, {"mode": "pooled_meta_model"}
+        # Deliberately ignores `y_true`/`y_pool`: what this recipe stores is a
+        # PER-MODEL predicted error, keyed by model name, produced once from this
+        # series' own historical shape (trend/seasonal strength, entropy,
+        # autocorrelation, catch22) queried against a model trained on every OTHER
+        # series in the dataset. Those features are properties of `train_series`,
+        # so no backtest fold changes them.
+        #
+        # Keying by NAME rather than by position is what makes this fold-safe. An
+        # earlier version stored a positional weight vector, which forced the tool
+        # to refuse any pool whose membership varies per fold — and that refusal
+        # made the tool unusable in practice: on the 182-series ANP run the agent
+        # called it exactly once, on a pruned pool, and was rejected. Composing the
+        # softmax over whichever members the fold actually has removes the
+        # restriction without weakening it: each fold gets a proper simplex vector
+        # of exactly its own length, over exactly its own models.
+        scores = p.get("model_scores") or p.get("predicted_errors") or {}
+        kind = str(p.get("score_kind") or "error")
+        if not isinstance(scores, dict) or not names:
+            return _uniform(n_pool), {"mode": "pooled_meta_model_no_predictions"}
+        fold_names = [str(nm) for nm in names]
+        if len(fold_names) != n_pool:
+            return _uniform(n_pool), {"mode": "pooled_meta_model_name_count_mismatch"}
+        missing = [nm for nm in fold_names if scores.get(nm) is None]
+        if kind == "margin":
+            # Raw class margins from the FFORMA-objective booster: the weights ARE
+            # softmax(margins). Softmax over a SUBSET of margins equals the full
+            # softmax renormalised to that subset, so per-fold membership needs no
+            # special handling. A member with no margin gets -inf -> weight 0.
+            m = np.array(
+                [scores[nm] if scores.get(nm) is not None else -np.inf for nm in fold_names],
+                dtype=float,
+            )
+            finite = m[np.isfinite(m)]
+            if finite.size == 0:
+                w = _uniform(n_pool)
+            else:
+                z = np.where(np.isfinite(m), m, -np.inf) - finite.max()
+                e = np.exp(z)
+                w = e / e.sum() if e.sum() > 0 else _uniform(n_pool)
+        else:
+            w = _softmax_neg(
+                np.array([scores.get(nm, np.inf) if scores.get(nm) is not None else np.inf
+                          for nm in fold_names], dtype=float),
+                eta=float(p.get("eta", 1.0)),
+            )
+        return w, {
+            "mode": "pooled_meta_model",
+            "score_kind": kind,
+            "n_fold_models": n_pool,
+            "n_without_a_prediction": len(missing),
+        }
 
     if method == "inverse_error":
         w = weights_inverse_error(

@@ -63,24 +63,54 @@ def _row(idx: int, trend_strength: float, seed: int = 0) -> MM.MetaRow:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_extract_meta_features_reads_the_four_named_fields():
+def test_extract_meta_features_reads_the_base_fields_in_order():
     profile = {
         "trend_strength": 0.9, "seasonal_strength": 0.3,
         "features": {"spectral_entropy": 0.7, "acf1": -0.1},
     }
     feats = MM.extract_meta_features(profile)
-    assert feats.tolist() == pytest.approx([0.9, 0.3, 0.7, -0.1])
+    assert feats[:4].tolist() == pytest.approx([0.9, 0.3, 0.7, -0.1])
+    assert feats.shape == (len(MM.FEATURE_NAMES),)
+
+
+def test_catch22_is_read_by_name_not_by_iteration_order():
+    """Column alignment across series must not depend on dict ordering: a profile
+    whose catch22 dict is shuffled has to produce the same vector."""
+    values = {name: float(i) for i, name in enumerate(MM.CATCH22_FEATURE_NAMES)}
+    straight = MM.extract_meta_features({"catch22": values})
+    shuffled = MM.extract_meta_features({"catch22": dict(reversed(list(values.items())))})
+    assert straight.tolist() == pytest.approx(shuffled.tolist())
+    # and they land in the declared slots, after the 4 base features
+    assert straight[4:].tolist() == pytest.approx([float(i) for i in range(22)])
+
+
+def test_catch22_unavailable_degrades_to_the_base_features():
+    """`series_profile` sets catch22 to the string 'pycatch22 unavailable' when the
+    package is missing. Those 22 slots become zeros; nothing raises."""
+    feats = MM.extract_meta_features({
+        "trend_strength": 0.5, "features": {"acf1": 0.2},
+        "catch22": "pycatch22 unavailable",
+    })
+    assert np.all(np.isfinite(feats))
+    assert feats.shape == (len(MM.FEATURE_NAMES),)
+    assert feats[4:].tolist() == pytest.approx([0.0] * 22)
 
 
 def test_missing_or_non_finite_fields_default_to_zero_not_nan():
     feats = MM.extract_meta_features({"trend_strength": float("nan"), "features": {}})
     assert np.all(np.isfinite(feats))
-    assert feats.tolist() == pytest.approx([0.0, 0.0, 0.0, 0.0])
+    assert feats.tolist() == pytest.approx([0.0] * len(MM.FEATURE_NAMES))
 
 
 def test_an_empty_profile_does_not_raise():
     feats = MM.extract_meta_features({})
-    assert feats.shape == (4,)
+    assert feats.shape == (len(MM.FEATURE_NAMES),)
+
+
+def test_the_feature_vector_length_matches_the_declared_names():
+    assert len(MM.FEATURE_NAMES) == len(MM.BASE_FEATURE_NAMES) + len(MM.CATCH22_FEATURE_NAMES)
+    assert len(MM.CATCH22_FEATURE_NAMES) == 22
+    assert len(set(MM.FEATURE_NAMES)) == len(MM.FEATURE_NAMES), "no duplicate feature names"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -211,3 +241,160 @@ def test_weights_are_always_a_valid_simplex_point():
         w = MM.errors_to_weights({"a": 3.0, "b": 7.0, "c": 1.0}, ["a", "b", "c"], eta=eta)
         assert w.sum() == pytest.approx(1.0)
         assert np.all(w >= 0.0)
+
+
+def test_predicting_with_a_different_feature_count_fails_readably():
+    """xgboost's own message is 'Feature shape mismatch, expected: 4, got 26',
+    which says nothing about the cause. A model fit before the catch22 columns were
+    added, queried after, must say so."""
+    rows = _dataset(25, seed=5)
+    for r in rows:
+        r.features = r.features[:4]           # train on the base features only
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, min_series=1, random_state=0)
+    m = next(iter(models.values()))
+    assert len(m.feature_names) == 4, "the model must record the subset it trained on"
+
+    full = np.zeros(len(MM.FEATURE_NAMES))
+    with pytest.raises(ValueError, match="was fit on 4 features"):
+        m.predict_errors(full, MODEL_NAMES)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# the "fforma" objective — one multi-class booster whose softmax IS the weights
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_fforma_objective_trains_one_booster_not_regressors():
+    """`_fit_one` is the unit; the degenerate->per_model fallback is a policy of
+    `build_pooled_meta_models`, so the structural assertion goes through the unit."""
+    rows = _dataset(30, seed=3)
+    m = MM._fit_one(rows, MODEL_NAMES, exclude_dataset_index=-1, n_estimators=10,
+                    max_depth=2, random_state=0, metric="smape", objective="fforma")
+    assert m.objective == "fforma"
+    assert m.booster is not None
+    assert not m.regressors
+
+
+def _scale_errors(rows, factor):
+    """Multiply every contribution by a constant. Ratios within a series — all this
+    objective is entitled to see — are untouched; only the magnitude moves."""
+    for r in rows:
+        r.errors = {k: v * factor for k, v in r.errors.items()}
+    return rows
+
+
+def test_fforma_scores_are_margins_and_favour_the_right_model():
+    """Same construction as the per_model generalisation test: above the 0.5
+    threshold `good_on_trend` wins. The booster, trained on every OTHER series,
+    must give the winner the larger margin (=> larger weight).
+
+    The fixture's sMAPE values sit around 0.04, which is below the magnitude this
+    objective can learn from in 100 rounds (see `_fit_one_fforma`'s note — `grad`
+    is proportional to the contributions). Scaling them up is what a real dataset
+    supplies naturally: ANP's are ~0.22, and there the same code reaches 0.2160."""
+    rows = [_row(i, trend_strength=0.95, seed=10) for i in range(15)]
+    rows += [_row(i + 100, trend_strength=0.05, seed=20) for i in range(15)]
+    _scale_errors(rows, 20.0)
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, random_state=0, objective="fforma")
+
+    hi = rows[0]
+    model_hi = models[hi.dataset_index]
+    assert not model_hi.degenerate, "contributions large enough: it must have learned"
+    scores, kind = model_hi.predict_scores(hi.features)
+    assert kind == "margin"
+    assert scores["good_on_trend"] > scores["good_on_flat"]
+
+    lo = rows[15]
+    scores, kind = models[lo.dataset_index].predict_scores(lo.features)
+    assert scores["good_on_flat"] > scores["good_on_trend"]
+
+
+def test_a_fit_that_learned_nothing_is_flagged_degenerate():
+    """Uniformly tiny contributions produce gradients too small to move
+    `base_score`: every model gets the same margin and the weights are uniform.
+    That must be reported, not applied while looking like a real meta-model."""
+    rows = [_row(i, trend_strength=0.95, seed=10) for i in range(15)]
+    rows += [_row(i + 100, trend_strength=0.05, seed=20) for i in range(15)]
+    _scale_errors(rows, 0.001)
+    # through the unit: `build_pooled_meta_models` would fall back to per_model
+    # here, which is the subject of its own test
+    m = MM._fit_one(rows, MODEL_NAMES, exclude_dataset_index=-1, n_estimators=10,
+                    max_depth=2, random_state=0, metric="smape", objective="fforma")
+    assert m.degenerate is True
+    scores, _ = m.predict_scores(rows[0].features)
+    assert scores["good_on_trend"] == pytest.approx(scores["good_on_flat"])
+
+
+def test_the_per_model_objective_is_never_flagged_degenerate():
+    """The flag describes an fforma-only failure mode; independent regressors do
+    not share it."""
+    rows = _dataset(25, seed=11)
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, random_state=0, objective="per_model")
+    assert all(not m.degenerate for m in models.values())
+
+
+def test_predict_scores_on_a_per_model_fit_returns_errors():
+    rows = _dataset(30, seed=4)
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, random_state=0, objective="per_model")
+    m = next(iter(models.values()))
+    scores, kind = m.predict_scores(rows[0].features)
+    assert kind == "error"
+    assert set(scores) == set(MODEL_NAMES)
+
+
+def test_predict_errors_refuses_an_fforma_fit_with_a_readable_message():
+    rows = _dataset(25, seed=6)
+    m = MM._fit_one(rows, MODEL_NAMES, exclude_dataset_index=-1, n_estimators=10,
+                    max_depth=2, random_state=0, metric="smape", objective="fforma")
+    with pytest.raises(ValueError, match="per_model"):
+        m.predict_errors(rows[0].features, MODEL_NAMES)
+
+
+def test_fforma_handles_nan_contributions_by_penalising_not_dropping():
+    rows = _dataset(30, seed=7)
+    for r in rows[5:12]:
+        r.errors["good_on_flat"] = float("nan")
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, random_state=0, objective="fforma")
+    m = next(iter(models.values()))
+    assert m.n_train_series == len(rows) - 1, "NaN rows are kept (penalised), not dropped"
+    scores, _ = m.predict_scores(rows[0].features)
+    assert all(np.isfinite(v) for v in scores.values())
+
+
+def test_an_unknown_objective_is_rejected():
+    rows = _dataset(25, seed=8)
+    with pytest.raises(ValueError, match="unknown objective"):
+        MM.build_pooled_meta_models(rows, MODEL_NAMES, objective="banana")
+
+
+def test_loso_still_holds_under_the_fforma_objective():
+    rows = _dataset(30, seed=9)
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, random_state=0, objective="fforma")
+    for row in rows:
+        assert models[row.dataset_index].n_train_series == len(rows) - 1
+
+
+def test_an_all_degenerate_fforma_run_falls_back_to_per_model():
+    """Caught on a 25-series smoke run: every fforma fit came back degenerate (the
+    gradient is proportional to the contributions, so a small run never moves
+    `base_score`), leaving uniform weights that are silently just the mean. The
+    full 182-series run learns fine, so this is a small-sample floor, not a bug in
+    the objective — and `per_model` has no such floor."""
+    rows = [_row(i, trend_strength=0.95, seed=10) for i in range(12)]
+    rows += [_row(i + 100, trend_strength=0.05, seed=20) for i in range(12)]
+    _scale_errors(rows, 0.001)  # forces every fforma fit to learn nothing
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, min_series=1,
+                                         random_state=0, objective="fforma")
+    assert all(m.objective == "per_model" for m in models.values())
+    assert all(not m.degenerate for m in models.values())
+    scores, kind = next(iter(models.values())).predict_scores(rows[0].features)
+    assert kind == "error"
+
+
+def test_a_healthy_fforma_run_is_not_downgraded():
+    rows = [_row(i, trend_strength=0.95, seed=10) for i in range(15)]
+    rows += [_row(i + 100, trend_strength=0.05, seed=20) for i in range(15)]
+    _scale_errors(rows, 20.0)
+    models = MM.build_pooled_meta_models(rows, MODEL_NAMES, min_series=1,
+                                         random_state=0, objective="fforma")
+    assert all(m.objective == "fforma" for m in models.values())

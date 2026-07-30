@@ -637,3 +637,152 @@ def test_real_anp_end_to_end():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# dataset prior + final_strategy="prior_blend"
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_blended_score_is_the_raw_score_without_a_prior():
+    """The default path must be bit-identical to before this existed."""
+    s = make_state()
+    POOL.run_phase2(s, s.config)
+    assert s.strategy_prior is None
+    for a in s.attempts:
+        assert s.blended_score(a) == pytest.approx(a.score)
+
+
+def test_alpha_zero_ignores_the_prior_entirely():
+    from orchestrator_react.state import _spec_label
+
+    s = make_state(config=ReactConfig(final_prior_alpha=0.0))
+    POOL.run_phase2(s, s.config)
+    s.strategy_prior = {_spec_label(a.spec): 999.0 for a in s.attempts}
+    for a in s.attempts:
+        assert s.blended_score(a) == pytest.approx(a.score)
+
+
+def test_blending_moves_the_score_toward_the_prior():
+    from orchestrator_react.state import _spec_label
+
+    s = make_state(config=ReactConfig(final_prior_alpha=0.5))
+    POOL.run_phase2(s, s.config)
+    a = s.attempts[0]
+    s.strategy_prior = {_spec_label(a.spec): a.score + 1.0}
+    assert s.blended_score(a) == pytest.approx(a.score + 0.5)
+
+
+def test_a_strategy_absent_from_the_prior_keeps_its_own_score():
+    s = make_state(config=ReactConfig(final_prior_alpha=0.9))
+    POOL.run_phase2(s, s.config)
+    s.strategy_prior = {"something_else": 0.1}
+    for a in s.attempts:
+        assert s.blended_score(a) == pytest.approx(a.score)
+
+
+def test_blended_ranking_can_reorder_but_the_plain_ranking_does_not():
+    """The history the agent reads must stay the honest per-series ordering; only
+    the Phase-4 pick uses the blended one."""
+    from orchestrator_react.state import _spec_label
+
+    s = make_state(config=ReactConfig(final_prior_alpha=1.0))
+    POOL.run_phase2(s, s.config)
+    plain = s.ranked_attempts()
+    # make the raw runner-up look best under the prior
+    s.strategy_prior = {_spec_label(a.spec): float(i) for i, a in enumerate(plain)}
+    s.strategy_prior[_spec_label(plain[-1].spec)] = -100.0
+    assert s.ranked_attempts(blended=True)[0] is plain[-1]
+    assert s.ranked_attempts()[0] is plain[0], "the raw ranking must be untouched"
+
+
+def test_prior_blend_applies_the_blended_winner_and_says_so(fake_repo):
+    out = run(fake_repo, config=ReactConfig(
+        combinator=LLMRole(model=None), final_strategy="prior_blend",
+        final_prior_alpha=1.0, dataset_card=False))
+    # single-series run has no prior, so it must degrade to the argmin contract
+    direct, _ = out.state.apply_to_test(out.react.final_attempt.spec)
+    assert out.forecast == pytest.approx(direct)
+
+
+def test_run_dataset_builds_a_leave_one_series_out_prior(fake_repo):
+    cfg = ReactConfig(combinator=LLMRole(model=None), final_strategy="prior_blend",
+                      final_prior_alpha=0.5, pooled_meta_model=False)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg,
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        read_external_baselines=False,
+    ))
+    assert all(o.state.strategy_prior for o in outs)
+    # the prior for series i must NOT be series i's own score: build it by hand
+    from orchestrator_react.state import _spec_label
+    own = {o.dataset_index: {_spec_label(a.spec): a.score for a in o.state.attempts}
+           for o in outs}
+    for o in outs:
+        lbl = _spec_label(o.react.final_attempt.spec)
+        if lbl in o.state.strategy_prior and len(outs) > 1:
+            others = [own[j][lbl] for j in own if j != o.dataset_index and lbl in own[j]]
+            if others:
+                assert o.state.strategy_prior[lbl] == pytest.approx(float(np.mean(others)))
+
+
+def test_the_prior_is_not_built_when_nothing_needs_it(fake_repo):
+    cfg = ReactConfig(combinator=LLMRole(model=None), final_strategy="argmin",
+                      dataset_card=False, pooled_meta_model=False)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg,
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        read_external_baselines=False,
+    ))
+    assert all(o.state.strategy_prior is None for o in outs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# the resume trap: a chunk smaller than the minimum silently changes the architecture
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_a_resume_chunk_below_the_minimum_explains_itself(fake_repo):
+    """Found in the ANP v4 artifacts: the run was finished with indices 165-181 —
+    17 series, under the default minimum of 20 — so the pooled meta-model was never
+    trained and `weights_pooled_meta_model` was withheld for exactly those 17. The
+    tool being unavailable is correct; being unavailable SILENTLY is not."""
+    cfg = ReactConfig(combinator=LLMRole(model=None), pooled_meta_model=True,
+                      pooled_meta_model_min_series=N_SERIES + 5, dataset_card=False)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg, indices=[0, 1],
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        read_external_baselines=False,
+    ))
+    assert all(o.state.pooled_meta_model is None for o in outs)
+    for o in outs:
+        assert any("pooled meta-model NOT trained" in w for w in o.warnings)
+
+
+def test_the_warning_names_the_chunk_size_when_the_dataset_is_big_enough(fake_repo):
+    """A small CHUNK of a big dataset is the trap; a small DATASET is just a fact.
+    The two must not read the same."""
+    cfg = ReactConfig(combinator=LLMRole(model=None), pooled_meta_model=True,
+                      pooled_meta_model_min_series=3, dataset_card=False)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg, indices=[0, 1],
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        read_external_baselines=False,
+    ))
+    warned = [w for o in outs for w in o.warnings if "pooled meta-model NOT trained" in w]
+    assert warned, "2 series under a minimum of 3 must still warn"
+    assert "Resuming in chunks" in warned[0]
+    assert f"the dataset has {N_SERIES}" in warned[0]
+
+
+def test_no_warning_when_the_pre_pass_actually_ran(fake_repo):
+    pytest.importorskip("xgboost")
+    cfg = ReactConfig(combinator=LLMRole(model=None), pooled_meta_model=True,
+                      pooled_meta_model_min_series=2, dataset_card=False)
+    outs = list(PL.run_dataset(
+        MODELS, "FAKE", source_file="fake.tsf", config=cfg,
+        source_dir=fake_repo["source_dir"], results_dir=fake_repo["results_dir"],
+        read_external_baselines=False,
+    ))
+    assert all(o.state.pooled_meta_model is not None for o in outs)
+    assert not any("NOT trained" in w for o in outs for w in o.warnings)

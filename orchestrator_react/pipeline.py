@@ -421,6 +421,7 @@ def run_series(
     read_external_baselines: bool = True,
     on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
     pooled_meta_model: Optional[meta_model_mod.PooledMetaModel] = None,
+    strategy_prior: Optional[Dict[str, float]] = None,
 ) -> SeriesOutcome:
     """Runs Phases 0 to 5 for one series.
 
@@ -455,6 +456,7 @@ def run_series(
     )
     state = ingested.state
     state.pooled_meta_model = pooled_meta_model
+    state.strategy_prior = strategy_prior
     outcome = SeriesOutcome(
         dataset=dataset,
         dataset_index=int(dataset_index),
@@ -507,7 +509,19 @@ def run_series(
         outcome.error = "no strategy was selected"
         return outcome
 
-    if config.final_strategy == "ensemble":
+    if config.final_strategy == "prior_blend":
+        # Same single-strategy contract as "argmin"; only the ranking key differs.
+        ranked = state.ranked_attempts(blended=True)
+        if ranked and ranked[0] is not attempt:
+            outcome.warnings.append(
+                f"prior_blend chose {ranked[0].attempt_id} over the raw-score winner "
+                f"{attempt.attempt_id} (alpha={config.final_prior_alpha})"
+            )
+            attempt = ranked[0]
+            outcome.react.final_attempt = attempt
+        forecast, debug = state.apply_to_test(attempt.spec)
+        debug["method"] = f"{debug.get('method')} (prior_blend)"
+    elif config.final_strategy == "ensemble":
         forecast, debug = state.apply_ensemble(
             top_m=config.final_top_m, eta=config.final_eta
         )
@@ -571,15 +585,50 @@ def run_dataset(
     todo = list(indices) if indices is not None else list(range(n_series))
 
     meta_models: Dict[int, meta_model_mod.PooledMetaModel] = {}
+    prepass_warning = ""
     if config.pooled_meta_model:
         meta_models = _build_pooled_meta_models(
             models, dataset, todo, config=config, source=source,
             results_dir=results_dir, frames=frames,
         )
+        if not meta_models:
+            # Distinguish "this dataset is small" from "you resumed in a small
+            # chunk", because the second one is a trap that already bit us: the ANP
+            # v4 run was finished with indices 165-181 — 17 series, under the
+            # default minimum of 20 — so `weights_pooled_meta_model` was withheld
+            # for exactly those 17 and nothing said so. The pooled model trains on
+            # the series of THIS CALL, so a resume chunk is a different (smaller)
+            # dataset as far as the pre-pass is concerned.
+            n_avail = n_series
+            if len(todo) < int(config.pooled_meta_model_min_series) <= n_avail:
+                prepass_warning = (
+                    f"pooled meta-model NOT trained: this call covers {len(todo)} "
+                    f"series (minimum {config.pooled_meta_model_min_series}), though "
+                    f"the dataset has {n_avail}. Resuming in chunks smaller than the "
+                    f"minimum silently disables it — run the whole dataset in one "
+                    f"call, or lower pooled_meta_model_min_series, to keep the same "
+                    f"architecture across every series."
+                )
+            else:
+                prepass_warning = (
+                    f"pooled meta-model NOT trained: {len(todo)} series is below the "
+                    f"minimum of {config.pooled_meta_model_min_series}, or xgboost is "
+                    f"unavailable."
+                )
+
+    # Dataset prior over seeded strategies, leave-one-series-out. Needed by
+    # `final_strategy="prior_blend"` and by the DATASET CARD in the prompt, so it is
+    # computed whenever either wants it — both read validation only.
+    priors: Dict[int, Dict[str, float]] = {}
+    if config.dataset_card or config.final_strategy == "prior_blend":
+        priors = _build_strategy_priors(
+            models, dataset, todo, config=config, source=source,
+            results_dir=results_dir, frames=frames, meta_models=meta_models,
+        )
 
     for idx in todo:
         try:
-            yield run_series(
+            outcome = run_series(
                 models=models,
                 dataset=dataset,
                 dataset_index=idx,
@@ -589,8 +638,12 @@ def run_dataset(
                 frames=frames,
                 client=client,
                 pooled_meta_model=meta_models.get(idx),
+                strategy_prior=priors.get(idx),
                 **kwargs,
             )
+            if prepass_warning:
+                outcome.warnings.append(prepass_warning)
+            yield outcome
         except SeriesAlignmentError:
             raise
         except Exception as exc:
@@ -655,8 +708,73 @@ def _build_pooled_meta_models(
             )
         )
     return meta_model_mod.build_pooled_meta_models(
-        rows, models, min_series=config.pooled_meta_model_min_series
+        rows, models,
+        min_series=config.pooled_meta_model_min_series,
+        objective=config.pooled_meta_model_objective,
     )
+
+
+def _build_strategy_priors(
+    models: Sequence[str],
+    dataset: str,
+    todo: Sequence[int],
+    config: ReactConfig,
+    source: Optional[SeriesSource],
+    results_dir: str,
+    frames: Dict[str, Any],
+    meta_models: Dict[int, Any],
+) -> Dict[int, Dict[str, float]]:
+    """Leave-one-series-out prior over the SEEDED strategies, validation only.
+
+    Second deterministic pre-pass: seed Phase 2 on every series, record each
+    seeded strategy's validation score, then give series *i* the mean score of each
+    strategy over every series except *i*. Excluding the series is what makes it a
+    prior rather than a restatement of its own number.
+
+    Nothing here reads the test window — `run_phase2` scores strategies on the
+    validation windows only, exactly as it does in the real run. The cross-series
+    dependency this introduces is the same class ADE and FFORMA already have (they
+    fit one model over the whole dataset), so the comparison stays like-for-like.
+    """
+    from orchestrator_react.state import _spec_label
+
+    per_series: Dict[int, Dict[str, float]] = {}
+    for idx in todo:
+        try:
+            ingested = ingest_mod.load_series(
+                models=models, dataset=dataset, dataset_index=idx,
+                source=source, config=config, results_dir=results_dir, frames=frames,
+            )
+        except SeriesAlignmentError:
+            raise
+        except Exception:
+            continue
+        state = ingested.state
+        state.pooled_meta_model = meta_models.get(idx)
+        try:
+            pool_mod.run_phase2(state, config)
+        except Exception:
+            continue
+        per_series[int(idx)] = {
+            _spec_label(a.spec): float(a.score)
+            for a in state.attempts
+            if np.isfinite(a.score)
+        }
+
+    if len(per_series) < 2:
+        return {}
+
+    out: Dict[int, Dict[str, float]] = {}
+    for idx in per_series:
+        others = [v for j, v in per_series.items() if j != idx]
+        labels = {lbl for v in others for lbl in v}
+        prior: Dict[str, float] = {}
+        for lbl in labels:
+            vals = [v[lbl] for v in others if lbl in v]
+            if vals:
+                prior[lbl] = float(np.mean(vals))
+        out[idx] = prior
+    return out
 
 
 def _provenance_columns(state: Optional[ReactState]) -> Dict[str, Any]:

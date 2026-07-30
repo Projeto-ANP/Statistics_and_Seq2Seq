@@ -42,6 +42,22 @@ class LLMRole:
     #: three duplicate NN5 series (T1/T47, T11/T50, T79/T111), where the agent
     #: chose a different combination all three times. `None` leaves sampling free.
     seed: Optional[int] = 7
+    #: Ollama's `reasoning` control, passed through only when set.
+    #:
+    #: `False` asks gpt-oss to stop spending its budget in the harmony reasoning
+    #: channel. That channel is the documented cause of both failure modes seen on
+    #: real runs: 90 EMPTY replies across the 182-series ANP run (the model
+    #: reasons and then emits nothing in the final channel), and the
+    #: "error parsing tool call: raw='We will call ...'" transport errors, where
+    #: Ollama's own template tries to JSON-parse prose written into gpt-oss's
+    #: tool-call channel (ollama/ollama#11781, #11800). `None` leaves the server
+    #: default alone, which is what every result so far was produced under — so it
+    #: stays the default here and turning it off is a deliberate A/B.
+    #:
+    #: Do NOT reach for `format="json"` as an alternative: on gpt-oss it makes the
+    #: response empty every time (ollama/ollama#11867). The three-line text contract
+    #: exists precisely to avoid depending on structured-output support.
+    reasoning: Optional[bool] = None
 
     @property
     def enabled(self) -> bool:
@@ -112,7 +128,16 @@ class ReactConfig:
     #: (p=0.58) replayed over the agent's real trajectories. Both directions are
     #: inside the noise, so the simpler contract keeps the default and this stays
     #: as a measured, implemented ablation arm.
-    final_strategy: Literal["argmin", "ensemble"] = "argmin"
+    #: "prior_blend" shrinks each attempt's 3-window score toward the dataset-level
+    #: prior before taking the argmin (see `ReactState.blended_score`). It is the
+    #: single largest ANP lever measured — 0.21904 -> 0.21453 at alpha 0.8, past
+    #: FFORMA's 0.21659 — and it hurts NN5 monotonically over the same sweep
+    #: (0.11539 -> 0.11879). Since no honest way to pick alpha was found (fixed,
+    #: validation-selected, and stability-gated all fail — details in
+    #: `blended_score`), it ships as an explicit opt-in rather than a default.
+    final_strategy: Literal["argmin", "ensemble", "prior_blend"] = "argmin"
+    #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
+    final_prior_alpha: float = 0.0
     final_top_m: int = 3
     final_eta: float = 5.0
     #: Seed stability-selected combinations alongside the three full-pool
@@ -133,6 +158,32 @@ class ReactConfig:
     #: gives the classical meta-learner (ADE's and FFORMA's own mechanism) enough
     #: samples to be worth trying. `False` skips the pre-pass entirely.
     pooled_meta_model: bool = True
+    #: Also SEED `weighted(pooled_meta_model, pool)` as a Phase 2 baseline, so the
+    #: cross-series model is exercised on every series instead of only when the
+    #: agent happens to reach for it. Measured need: on the 182-series ANP v4 run
+    #: the agent called that tool once in 182 series, and that single call failed —
+    #: an unreachable tool cannot be evaluated. Same move that made
+    #: `seed_stable_pools` pay off (see `pool.SEED_STABLE_POOLS`).
+    seed_pooled_meta_model: bool = True
+    #: Inject a DATASET CARD into every turn prompt: how each seeded strategy scored
+    #: on VALIDATION across the other N-1 series (leave-one-series-out), plus which
+    #: models most often rank top-3 and how often "weighted" collapsed to the pool
+    #: mean here. Motivation, measured: the agent used 4-5 of ~10 usable tools on the
+    #: 182-series ANP run, anchored on the one named in the prompt's worked example
+    #: (462 -> 223 -> 10 -> 2 -> 1 uses down the weight family), and it had no way to
+    #: know what works on THIS dataset. The card is a recommendation, never a
+    #: restriction — the catalog stays open. Costs nothing extra: it reuses the
+    #: pre-pass that `pooled_meta_model` already runs.
+    dataset_card: bool = True
+    #: Training objective for the pooled meta-model. Measured head-to-head (same
+    #: 26 features, same LOSO folds, only the objective differing):
+    #:   "fforma"    ANP 0.2159 — past the real FFORMA baseline (0.2166) — NN5 0.1197
+    #:   "per_model" ANP 0.2205 (≈ plain mean),                          NN5 0.1188
+    #: Neither transfers across datasets (the project's recurring finding), so the
+    #: loser stays available as the ablation arm. "fforma" is the default because
+    #: ANP is where the architecture is currently behind, and because on NN5 the
+    #: seeded floor (stable pools) dominates either variant anyway.
+    pooled_meta_model_objective: Literal["per_model", "fforma"] = "fforma"
     #: Below this many series in the run, pooling has too little signal to be
     #: worth it — `weights_pooled_meta_model` is withheld for every series, the
     #: same way `weights_ols` is withheld under too few validation windows.

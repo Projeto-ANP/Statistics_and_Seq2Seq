@@ -241,6 +241,48 @@ def build_row(
     return row
 
 
+def _cross_series_block(outcome: Any) -> Dict[str, Any]:
+    """The dataset-level context this series was given, for post-run analysis.
+
+    All of it is validation-only and leave-one-series-out by construction (see
+    `pipeline._build_strategy_priors` and `meta_model.build_pooled_meta_models`);
+    recording it here does not put anything in the artifact that was not already
+    available to the run.
+    """
+    state = outcome.state
+    if state is None:
+        return {}
+
+    out: Dict[str, Any] = {}
+    prior = getattr(state, "strategy_prior", None)
+    if prior:
+        ranked = sorted(prior.items(), key=lambda kv: kv[1])
+        out["strategy_prior"] = {k: round(float(v), 5) for k, v in ranked}
+        out["prior_best"] = ranked[0][0]
+        out["prior_worst"] = ranked[-1][0]
+
+    try:
+        from orchestrator_react.prompts import build_dataset_card
+
+        card = build_dataset_card(state)
+        if card:
+            out["dataset_card_shown"] = card
+    except Exception:  # never let bookkeeping break a written artifact
+        pass
+
+    meta = getattr(state, "pooled_meta_model", None)
+    if meta is not None:
+        out["pooled_meta_model"] = {
+            "objective": getattr(meta, "objective", None),
+            "n_train_series": getattr(meta, "n_train_series", None),
+            "n_features": len(getattr(meta, "feature_names", ()) or ()),
+            # True means the fit produced identical margins for every model, i.e.
+            # its weights are uniform and it is indistinguishable from the mean.
+            "degenerate": getattr(meta, "degenerate", None),
+        }
+    return out
+
+
 def artifacts_payload(outcome: Any) -> Dict[str, Any]:
     """Full per-series audit trail, written next to the CSV.
 
@@ -257,6 +299,11 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
         "series_card": outcome.series_card,
         "pool_card": outcome.pool_card,
         "diagnosis": outcome.diagnosis,
+        # Everything the cross-series machinery decided for this series. Without it
+        # a v5 run cannot be analysed the way v3/v4 were: which strategies the
+        # dataset prior favoured, what the agent was shown in the DATASET CARD, and
+        # whether the pooled meta-model actually learned anything for this series.
+        "cross_series": _cross_series_block(outcome),
         "phase2": {
             "pool": outcome.phase2.get("pool"),
             "baselines": outcome.phase2.get("baselines"),

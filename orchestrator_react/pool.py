@@ -92,6 +92,7 @@ def seed_baselines(
     pool: str = FULL_POOL,
     methods: Sequence[str] = SEED_BASELINES,
     stable_pools: Optional[Sequence[Any]] = None,
+    seed_pooled_meta_model: bool = False,
 ) -> List[Attempt]:
     """Evaluates the deterministic baselines and puts them in the history first.
 
@@ -132,6 +133,30 @@ def seed_baselines(
             iteration=0,
         )
         seeded.append(attempt)
+
+    if seed_pooled_meta_model and getattr(state, "pooled_meta_model", None) is not None:
+        # Promoting the cross-series meta-model from "an option in the catalog" to
+        # "part of the floor". The reason is measured, not stylistic: on the
+        # 182-series ANP run the agent called `weights_pooled_meta_model` exactly
+        # ONCE, and that call failed. A tool the agent never reaches cannot be
+        # evaluated, so seeding it is the only way to get it exercised on 100% of
+        # series — and it is the same move that made `SEED_STABLE_POOLS` pay off.
+        # Failures degrade to "no seed" rather than killing the series: this is a
+        # floor, and a missing floor entry is strictly better than a lost series.
+        try:
+            handle = T.weights_pooled_meta_model(state, pool=pool)["weights"]
+            attempt, _ = state.evaluate(
+                {"combine": "weighted", "pool": pool, "weights": handle},
+                rationale=(
+                    "deterministic baseline: weights from a gradient-boosted model "
+                    "trained across every other series in this run (leave-one-series-out)"
+                ),
+                origin="baseline",
+                iteration=0,
+            )
+            seeded.append(attempt)
+        except Exception:
+            pass
     return seeded
 
 
@@ -195,6 +220,7 @@ def run_phase2(
         state,
         pool=pool["pool"],
         stable_pools=SEED_STABLE_POOLS if config.seed_stable_pools else (),
+        seed_pooled_meta_model=config.seed_pooled_meta_model,
     )
     report = pool_report(state, top_n=top_n)
     gate = calibration_gate(state, config)

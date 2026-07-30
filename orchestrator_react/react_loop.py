@@ -57,7 +57,20 @@ EMPTY_RESPONSE_RETRIES = 2
 #: `exec_dataset_orchestrator` raise under `allow_baseline_fallback=False` — this
 #: only removes the false positives where one bad token would have killed an
 #: otherwise-healthy run.
-LLM_ERROR_RETRIES = 2
+#:
+#: Raised from 2 to 4 after a second real occurrence (ANP_MONTHLY series 80)
+#: exhausted 2 retries with the SAME narrated-plan-instead-of-JSON pattern three
+#: times in a row ("We will call weights_softmax_neg_error on pool1. We need to
+#: specify arguments: ..."), not three unrelated glitches. That is weak evidence
+#: this failure mode is somewhat prompt-triggered rather than purely random
+#: sampling noise, which means a small retry budget is more likely to exhaust on
+#: exactly the turns that need it most. Doubling the budget is a cheap hedge
+#: either way: on a true one-off it costs nothing extra (the first retry already
+#: succeeds), and on a semi-systematic case it roughly doubles the chance of
+#: escaping before the whole run stops. It does not fix the underlying cause —
+#: Ollama's own tool-call channel detection on gpt-oss's harmony format — which
+#: would need a server-side change to address properly.
+LLM_ERROR_RETRIES = 4
 
 
 @dataclass

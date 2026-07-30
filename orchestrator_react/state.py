@@ -150,6 +150,11 @@ class ReactState:
         #: the dataset, or xgboost unavailable — and the tool that reads this is
         #: withheld from the catalog rather than offered and left to fail.
         self.pooled_meta_model: Optional[Any] = None
+        #: Dataset-level prior: strategy label -> mean VALIDATION score of that
+        #: strategy across every OTHER series of the run (leave-one-series-out).
+        #: Set by the Phase-2 pre-pass. Never touches test data. `None` means the
+        #: run has no prior (single series, or the pre-pass was skipped).
+        self.strategy_prior: Optional[Dict[str, float]] = None
         self.pool_recipes: Dict[str, PoolRecipe] = {}
         self.weights: Dict[str, WeightsRecipe] = {}
         self._weights_by_spec: Dict[str, str] = {}
@@ -361,21 +366,6 @@ class ReactState:
         self._nested_pool_cache[key] = list(idx)
         return list(idx)
 
-    def pool_is_fold_invariant(self, handle: str) -> bool:
-        """False when `pool_for_window` can return different members per fold.
-
-        `weights_pooled_meta_model` computes its weight vector once, against
-        `get_pool(handle)`'s membership at call time, and reuses it unchanged
-        across every backtest fold (see `weighting.resolve_recipe`'s
-        `pooled_meta_model` branch). That is only sound when the pool itself does
-        not change per fold — otherwise the stored vector's length would disagree
-        with a fold whose `pool_for_window` picked a different subset.
-        """
-        recipe = self.pool_recipes.get(handle)
-        if recipe is None or not recipe.refittable:
-            return True
-        return not self.config.nested_selection
-
     def get_pool(self, handle: str) -> List[int]:
         if handle not in self.pools:
             raise KeyError(f"unknown pool: {handle!r}. Available: {sorted(self.pools)}")
@@ -404,7 +394,10 @@ class ReactState:
 
         idx = self.get_pool(recipe.pool_handle)
         fit = self._fit_windows(recipe.fit_windows, exclude=None)
-        resolved, meta = resolve_recipe(recipe, self.y_true[fit], self.y_preds[np.ix_(fit, idx)])
+        resolved, meta = resolve_recipe(
+            recipe, self.y_true[fit], self.y_preds[np.ix_(fit, idx)],
+            names=[self.model_names[i] for i in idx],
+        )
         recipe.resolved = np.asarray(resolved, dtype=float)
         recipe.meta = {**meta, "fit_windows": [int(i) for i in fit]}
 
@@ -535,7 +528,8 @@ class ReactState:
                 weights = np.ones(len(idx), dtype=float) / len(idx)
             else:
                 weights, _ = resolve_recipe(
-                    recipe, self.y_true[fit], self.y_preds[np.ix_(fit, idx)]
+                    recipe, self.y_true[fit], self.y_preds[np.ix_(fit, idx)],
+                    names=[self.model_names[i] for i in idx],
                 )
         return apply_combination(
             preds,
@@ -688,11 +682,64 @@ class ReactState:
         self._attempt_by_spec[key] = attempt
         return attempt, True
 
-    def ranked_attempts(self) -> List[Attempt]:
-        return sorted(
-            self.attempts,
-            key=lambda a: (float("inf") if not np.isfinite(a.score) else a.score),
+    def numerical_twin(self, attempt: Attempt) -> Optional[Attempt]:
+        """An EARLIER attempt whose validation forecasts are numerically identical.
+
+        Exists because the agent's exploration is much narrower than it looks: on
+        the 182-series ANP run, 591 of 756 `evaluate_strategy` calls asked for
+        `weighted`, and 62% of the winning weighted strategies were arithmetically
+        the plain mean of their own pool (fitted weights land within a few percent
+        of uniform on three windows). Different names, same point in forecast
+        space. Nothing told the agent, so it kept spending iterations re-deriving
+        the mean. Comparing residuals — which every attempt already stores for the
+        Diebold-Mariano test — is enough to say so out loud.
+        """
+        for other in self.attempts:
+            if other is attempt:
+                continue
+            if _numerically_identical(other.residuals, attempt.residuals):
+                return other
+        return None
+
+    def blended_score(self, attempt: Attempt) -> float:
+        """The attempt's own 3-window score, shrunk toward the dataset prior.
+
+        A 3-window score is a high-variance estimate of how good a strategy is on
+        THIS series; the same strategy's mean validation score across the other
+        N-1 series is a low-variance estimate of how good it is on this DATASET.
+        `final_prior_alpha` is the shrinkage weight — classic empirical-Bayes.
+
+        Measured, deterministic arm, both datasets (alpha sweep):
+
+            ANP  alpha 0.0 -> 0.21904   0.6 -> 0.21665   0.8 -> 0.21453 (best)
+            NN5  alpha 0.0 -> 0.11539 (best)             0.8 -> 0.11879
+
+        Opposite directions, monotonically — which is why this is NOT the default
+        and why alpha is not tuned here. Three ways to choose alpha honestly were
+        tried and all failed: a fixed value (helps one dataset, hurts the other);
+        leave-one-window-out inside validation (picks 0.8 on NN5, where 0.0 is
+        right — the held-out signal is inside the noise); and gating on
+        strategy-ranking stability (ANP tau +0.135 > NN5 +0.091, i.e. it separates
+        the two datasets backwards). Returns the raw score when there is no prior
+        or alpha is 0, so the default path is bit-identical to before.
+        """
+        own = float("inf") if not np.isfinite(attempt.score) else float(attempt.score)
+        alpha = float(self.config.final_prior_alpha)
+        if alpha <= 0.0 or not self.strategy_prior or not np.isfinite(own):
+            return own
+        prior = self.strategy_prior.get(_spec_label(attempt.spec))
+        if prior is None or not np.isfinite(prior):
+            return own
+        return (1.0 - alpha) * own + alpha * float(prior)
+
+    def ranked_attempts(self, blended: bool = False) -> List[Attempt]:
+        """Best first. `blended=True` ranks by `blended_score` instead of the raw
+        validation score — used only by `final_strategy="prior_blend"`, so the
+        history the agent reads stays the honest per-series ordering."""
+        key = self.blended_score if blended else (
+            lambda a: (float("inf") if not np.isfinite(a.score) else a.score)
         )
+        return sorted(self.attempts, key=key)
 
     def best_attempt(self) -> Optional[Attempt]:
         ranked = self.ranked_attempts()

@@ -83,10 +83,12 @@ class OllamaClient:
                 "base_url": self.role.base_url,
                 "num_ctx": int(self.num_ctx),
             }
-            # Only pass the seed when one is configured: `seed=None` is not the
-            # same as omitting it for every Ollama build.
+            # Only pass these when configured: `None` is not the same as omitting
+            # them for every Ollama build.
             if getattr(self.role, "seed", None) is not None:
                 kwargs["seed"] = int(self.role.seed)
+            if getattr(self.role, "reasoning", None) is not None:
+                kwargs["reasoning"] = bool(self.role.reasoning)
             self._chat = ChatOllama(**kwargs)
         return self._chat
 

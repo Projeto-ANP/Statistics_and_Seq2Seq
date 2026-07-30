@@ -734,6 +734,40 @@ def test_a_persistent_llm_error_still_ends_the_loop():
     assert llm.calls == LLM_ERROR_RETRIES + 1, "no more calls than the bounded retry allows"
 
 
+def test_a_three_times_repeated_failure_now_survives():
+    """The real ANP_MONTHLY series-80 case: the SAME narrated-plan-instead-of-JSON
+    failure three times in a row used to exhaust the old budget of 2 retries (3
+    total attempts). At 4 retries the same three failures are just the opening of
+    the budget, and a normal answer on the 4th attempt still succeeds."""
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    narrated_plan = (
+        "We will call weights_softmax_neg_error on pool1. We need to specify "
+        "arguments: pool='pool1', windows=None, metric='rmse', eta=1.0, "
+        "per_horizon=False. We will then evaluate weighted. We need to produce "
+        "output lines."
+    )
+
+    class RepeatedlyConfusedLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, system: str, user: str) -> str:
+            self.calls += 1
+            if self.calls <= 3:
+                raise LLMError(
+                    f"error parsing tool call: raw='{narrated_plan}', "
+                    "err=invalid character 'W' looking for beginning of value "
+                    "(status code: -1)"
+                )
+            return step("accept", {"attempt_id": "a1"})
+
+    llm = RepeatedlyConfusedLLM()
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.stop_reason == "agent_accepted"
+    assert r.llm_error_retries == 3
+    assert r.iterations_used == 1, "none of the three failures were charged"
+
+
 def test_llm_error_retries_and_empty_response_retries_have_independent_budgets():
     """One turn hitting both failure modes must not let one budget eat the other's."""
     s, series, pool = prepared(ReactConfig(max_iterations=3))
@@ -1157,4 +1191,114 @@ def test_the_seed_is_part_of_the_run_fingerprint():
     a = ReactConfig()
     b = ReactConfig()
     b.combinator.seed = 999
+    assert a.fingerprint() != b.fingerprint()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# P1 dataset card / P2 anti-aliasing / P3 de-anchored example
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_dataset_card_is_absent_without_a_prior():
+    s, series, pool = prepared()
+    assert P.build_dataset_card(s) is None
+    assert "DATASET CARD" not in P.build_turn_prompt(s, series, pool, [], 1, 8)
+
+
+def test_dataset_card_ranks_by_the_cross_series_prior():
+    from orchestrator_react.state import _spec_label
+
+    s, series, pool = prepared()
+    labels = [_spec_label(a.spec) for a in s.attempts]
+    s.strategy_prior = {lbl: float(i) for i, lbl in enumerate(labels)}
+    card = P.build_dataset_card(s, top_n=2)
+    assert [e["strategy"] for e in card["best_on_this_dataset"]] == labels[:2]
+    text = P.build_turn_prompt(s, series, pool, [], 1, 8)
+    assert "DATASET CARD" in text
+    assert labels[0] in text
+
+
+def test_dataset_card_says_it_is_a_recommendation_not_a_rule():
+    """It must not read as an instruction: which strategy wins is series-specific,
+    and the ordering reverses between our two datasets."""
+    s, series, pool = prepared()
+    s.strategy_prior = {"mean": 0.5, "median": 0.6}
+    card = P.build_dataset_card(s)
+    assert "not a rule" in card["how_to_use"]
+    assert "outranks" in card["how_to_use"]
+
+
+def test_dataset_card_carries_no_test_values():
+    s, series, pool = prepared()
+    s.strategy_prior = {"mean": 0.5, "median": 0.6}
+    text = P.build_turn_prompt(s, series, pool, [], 1, 8)
+    for v in s.test_preds.ravel()[:20]:
+        assert f"{v:.4f}" not in text
+
+
+def test_a_numerically_identical_proposal_is_called_out():
+    """trimmed_mean with trim 0 is arithmetically the mean: the observation has to
+    say so, or the agent spends turns re-deriving the same forecast."""
+    s, series, pool = prepared()
+    ev = T.evaluate_strategy(s, {"combine": "trimmed_mean", "pool": FULL_POOL, "trim_pct": 0.0})
+    assert "numerically_identical_to" in ev
+    assert "adds nothing new" in ev["note"]
+    line = P.summarize_observation("evaluate_strategy", True, ev)
+    assert "SAME forecasts as" in line
+
+
+def test_a_genuinely_different_proposal_is_not_called_out():
+    s, series, pool = prepared()
+    ev = T.evaluate_strategy(s, {"combine": "best_single", "model": "bad"})
+    assert "numerically_identical_to" not in ev
+    assert "SAME forecasts" not in P.summarize_observation("evaluate_strategy", True, ev)
+
+
+def test_the_worked_example_no_longer_names_one_weight_method():
+    """462 of the weight-family calls on the ANP run went to the single method the
+    example named. The example must show the choice, not one option."""
+    sp = P.build_system_prompt()
+    assert "weights_<method>" in sp
+    assert "weights_inverse_error {\"pool\"" not in sp
+    for name in ("weights_error_trend", "weights_pooled_meta_model"):
+        assert name in sp
+
+
+def test_the_prompt_explains_that_near_zero_concentration_means_the_mean():
+    sp = P.build_system_prompt()
+    assert "concentration near 0" in sp
+    assert "same forecasts as the" in sp.lower()
+
+
+def test_reasoning_is_omitted_unless_configured():
+    """Every result so far was produced with the server default, so passing nothing
+    has to stay the default behaviour."""
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    captured = {}
+
+    class FakeChat:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    mod = types.ModuleType("langchain_ollama")
+    mod.ChatOllama = FakeChat
+    sys.modules["langchain_ollama"] = mod
+    try:
+        OllamaClient(role=LLMRole(model="m"))._client()
+        assert "reasoning" not in captured
+        captured.clear()
+        OllamaClient(role=LLMRole(model="m", reasoning=False))._client()
+        assert captured["reasoning"] is False
+    finally:
+        sys.modules.pop("langchain_ollama", None)
+
+
+def test_reasoning_is_part_of_the_run_fingerprint():
+    """An A/B on reasoning must not look like the same ablation."""
+    from orchestrator_react.config import ReactConfig
+
+    a, b = ReactConfig(), ReactConfig()
+    b.combinator.reasoning = False
     assert a.fingerprint() != b.fingerprint()

@@ -178,6 +178,11 @@ def exec_dataset_orchestrator(
     seed_stable_pools: bool = True,
     pooled_meta_model: bool = True,
     pooled_meta_model_min_series: int = 20,
+    pooled_meta_model_objective: str = "fforma",
+    seed_pooled_meta_model: bool = True,
+    dataset_card: bool = True,
+    final_prior_alpha: float = 0.0,
+    combinator_reasoning: Optional[bool] = None,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -189,6 +194,7 @@ def exec_dataset_orchestrator(
     log_agent_steps: bool = True,
     stop_on_error: bool = False,
     allow_baseline_fallback: bool = False,
+    max_llm_failures: int = 5,
     save_artifacts: bool = True,
     dry_run: bool = False,
     version: str = "react_v1",
@@ -247,6 +253,39 @@ def exec_dataset_orchestrator(
             has too little signal to be worth it and the tool is withheld for
             every series, the same way weights_ols is withheld under too few
             validation windows.
+        pooled_meta_model_objective: "fforma" (default) trains ONE multi-class
+            booster whose softmax output IS the weight vector, using Montero-Manso
+            et al.'s custom gradient to minimise the COMBINED error — measured
+            0.21596 sMAPE on the 182 ANP series, past the real FFORMA baseline
+            (0.21659). "per_model" is the earlier design (N independent regressors
+            predicting each model's own error, weights post-hoc); it scores 0.22047
+            on ANP and slightly better than fforma on NN5, and stays as the
+            ablation arm.
+        seed_pooled_meta_model: seed `weighted(pooled_meta_model)` as a Phase 2
+            baseline. Without it the agent essentially never reaches the tool: on
+            the ANP v4 run it called it once in 182 series. Seeded, it wins the
+            deterministic floor in 28% of series.
+        dataset_card: inject a DATASET CARD in every turn prompt — how each seeded
+            strategy scored on VALIDATION across the other N-1 series
+            (leave-one-series-out). Cross-series context the agent never had, which
+            is what ADE and FFORMA get by construction. Recommendation only; the
+            catalog stays open.
+        combinator_reasoning: passed to Ollama only when set. False asks gpt-oss to
+            stop spending its budget in the harmony reasoning channel, which is the
+            documented source of both failure modes seen on real runs: 90 empty
+            replies across the 182-series ANP run, and the "error parsing tool call"
+            transport errors where Ollama's template JSON-parses prose written into
+            gpt-oss's tool-call channel (ollama/ollama#11781, #11800). Leave unset to
+            keep the server default that every result so far used, so an A/B is a
+            deliberate change. Never use format="json" instead: on gpt-oss it returns
+            an empty response every time (#11867).
+        final_prior_alpha: >0 switches Phase 4 to shrink each attempt's 3-window
+            score toward that dataset prior before the argmin. This is the largest
+            ANP lever found (0.21904 -> 0.21453 at alpha 0.8, past FFORMA) and it
+            hurts NN5 monotonically over the same sweep (0.11539 -> 0.11879). No
+            honest way to pick alpha was found — fixed, validation-selected and
+            stability-gated all fail — so it defaults to 0.0 (off) and is an
+            explicit opt-in per dataset.
         min_windows_for_ols: `weights_ols` needs more independent equations than a
             3-window backtest gives it — below this threshold the simplex
             projection collapses to a vertex, i.e. `weights_ols` silently turns
@@ -258,6 +297,14 @@ def exec_dataset_orchestrator(
         log_agent_steps: print every Thought / Action / Observation as it happens.
             A run with an agent is mostly waiting, and the interesting part is what
             it decided to look at; without this the log only shows the conclusion.
+        max_llm_failures: how many series may fail before the run aborts. The
+            failure mode this exists for is real: an isolated gpt-oss glitch on ONE
+            series used to end a 182-series run, and resuming the remainder in a
+            small chunk silently disabled the pooled meta-model for that chunk (see
+            EXTRA_DEPENDENCIES.txt 7b). With a budget, one bad series costs one row
+            — clearly marked in the log and the CSV — while a genuinely broken
+            server still stops the run within a few series. Ignored when
+            `allow_baseline_fallback=True` (never aborts).
         allow_baseline_fallback: what to do when a configured agent does not answer.
             Default False: raise, with the underlying error. The point of this
             architecture is the agent, so a run that silently degrades to the
@@ -300,6 +347,10 @@ def exec_dataset_orchestrator(
     cfg.seed_stable_pools = bool(seed_stable_pools)
     cfg.pooled_meta_model = bool(pooled_meta_model)
     cfg.pooled_meta_model_min_series = int(pooled_meta_model_min_series)
+    cfg.pooled_meta_model_objective = pooled_meta_model_objective
+    cfg.seed_pooled_meta_model = bool(seed_pooled_meta_model)
+    cfg.dataset_card = bool(dataset_card)
+    cfg.final_prior_alpha = float(final_prior_alpha)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -307,6 +358,8 @@ def exec_dataset_orchestrator(
     cfg.calibration_gate = bool(calibration_gate)
 
     cfg.combinator = _as_role(combinator_model)
+    if combinator_reasoning is not None:
+        cfg.combinator.reasoning = bool(combinator_reasoning)
     cfg.diagnostician = _as_role(diagnostician_model)
     cfg.reporter = _as_role(reporter_model)
 
@@ -349,7 +402,11 @@ def exec_dataset_orchestrator(
         f"final        : {cfg.final_strategy}"
         f"{' top_m=' + str(cfg.final_top_m) if cfg.final_strategy == 'ensemble' else ''}"
         f" | stable seeds: {cfg.seed_stable_pools}"
-        f" | pooled meta-model: {cfg.pooled_meta_model}"
+        f" | pooled: {cfg.pooled_meta_model}"
+        f"{'/' + cfg.pooled_meta_model_objective if cfg.pooled_meta_model else ''}"
+        f"{' seeded' if cfg.seed_pooled_meta_model else ''}"
+        f" | card: {cfg.dataset_card}"
+        f"{f' | prior_alpha={cfg.final_prior_alpha}' if cfg.final_prior_alpha else ''}"
         f"{f' (min {cfg.pooled_meta_model_min_series} series)' if cfg.pooled_meta_model else ''}"
         f" | budget: {cfg.max_iterations} iters, patience {cfg.early_stop_patience}"
     )
@@ -359,10 +416,24 @@ def exec_dataset_orchestrator(
         f"{' (weights_ols WITHHELD this run)' if cfg.n_validation_windows < cfg.min_windows_for_ols else ''}"
     )
     log(
-        f"llm          : combinator={cfg.combinator.label()} "
+        f"llm          : combinator={cfg.combinator.label()}"
+        f"{' reasoning=' + str(cfg.combinator.reasoning) if cfg.combinator.reasoning is not None else ''} "
         f"diagnostician={cfg.diagnostician.label()} reporter={cfg.reporter.label()}"
     )
     log(f"series       : {'all' if todo is None else todo}")
+    # The pooled meta-model trains on the series of THIS call, so a resume chunk is
+    # a smaller dataset as far as the pre-pass is concerned. Say it up front rather
+    # than let it be discovered in the artifacts afterwards (which is how the ANP v4
+    # run ended up with the tool withheld on its last 17 series).
+    if cfg.pooled_meta_model and todo is not None and len(todo) < cfg.pooled_meta_model_min_series:
+        log(
+            f"WARNING      : this call covers {len(todo)} series but "
+            f"pooled_meta_model_min_series={cfg.pooled_meta_model_min_series}, so the "
+            f"pooled meta-model will NOT be trained and weights_pooled_meta_model "
+            f"will be withheld for every series in this run. Run the whole dataset in "
+            f"one call, or lower the minimum, to keep the architecture identical "
+            f"across series."
+        )
     if dry_run:
         log("dry run      : nothing will be written")
     log("-" * 74)
@@ -492,17 +563,32 @@ def exec_dataset_orchestrator(
             if outcome.react.stop_reason == "llm_error":
                 llm_failures += 1
                 detail = outcome.react.errors[-1] if outcome.react.errors else "no detail recorded"
+                budget = "unlimited" if allow_baseline_fallback else str(max_llm_failures)
                 message = (
                     f"THE AGENT FAILED ON dataset_index={outcome.dataset_index} and the row "
                     f"below is a DETERMINISTIC BASELINE, not an agent result.\n"
                     f"  error: {detail}\n"
-                    f"  model: {cfg.combinator.label()} at {cfg.combinator.base_url}"
+                    f"  model: {cfg.combinator.label()} at {cfg.combinator.base_url}\n"
+                    f"  failures so far: {llm_failures} (tolerated: {budget})"
                 )
                 print(message, flush=True)
-                if not allow_baseline_fallback:
+                # Abort only once the failures stop looking isolated. Aborting on the
+                # FIRST one — the old behaviour — meant a single flaky series ended a
+                # 182-series run and forced a resume, and resuming in a chunk smaller
+                # than `pooled_meta_model_min_series` silently changes the
+                # architecture for that chunk. A budget keeps the original guarantee
+                # (a systematically broken server still stops the run, loudly) while
+                # letting one bad series cost one row instead of the whole dataset.
+                if not allow_baseline_fallback and llm_failures >= int(max_llm_failures):
                     if writer is not None:
                         writer.write(outcome, regressor=experiment)
-                    raise RuntimeError(message)
+                    raise RuntimeError(
+                        message
+                        + f"\n  ABORTING: {llm_failures} series have now failed, which is "
+                        f"the max_llm_failures budget. This no longer looks like an "
+                        f"isolated glitch. Raise max_llm_failures to tolerate more, or "
+                        f"use allow_baseline_fallback=True to never abort."
+                    )
         else:
             failed += 1
             failures.append(f"{outcome.dataset_index}: {outcome.error}")
@@ -646,6 +732,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pooled-meta-model-min-series", type=int, default=20,
                    help="withhold weights_pooled_meta_model below this many series "
                         "in the run (default 20)")
+    p.add_argument("--pooled-objective", choices=["fforma", "per_model"], default="fforma",
+                   help="fforma (default): one booster, softmax output IS the weights, "
+                        "trained on the combined error. per_model: the earlier design "
+                        "(ablation arm)")
+    p.add_argument("--no-seed-pooled", action="store_true",
+                   help="ablation: do not seed weighted(pooled_meta_model) in Phase 2")
+    p.add_argument("--no-dataset-card", action="store_true",
+                   help="ablation: do not show the cross-series dataset card in the prompt")
+    p.add_argument("--no-reasoning", action="store_true",
+                   help="ask gpt-oss to skip the harmony reasoning channel (the source "
+                        "of the empty replies and tool-call parse errors). A/B only: "
+                        "every result so far used the server default")
+    p.add_argument("--final-prior-alpha", type=float, default=0.0,
+                   help="shrink each attempt's score toward the dataset prior before "
+                        "the final pick. 0=off. Measured best on ANP around 0.6-0.8; "
+                        "hurts NN5 at any value >0 (see ARQUITETURA.md)")
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
     p.add_argument("--score-preset", default="balanced")
@@ -662,6 +764,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet-agent", action="store_true",
                    help="do not print the agent's Thought/Action/Observation per turn")
     p.add_argument("--stop-on-error", action="store_true")
+    p.add_argument("--max-llm-failures", type=int, default=5,
+                   help="abort after this many series fail with an LLM error "
+                        "(default 5). One flaky series no longer ends the run; a dead "
+                        "server still stops it quickly")
     p.add_argument("--allow-baseline-fallback", action="store_true",
                    help="do not abort when the agent fails; fall back to the baseline "
                         "per series (off by default: a silent fallback is worse than a crash)")
@@ -696,6 +802,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             seed_stable_pools=not args.no_stable_seeds,
             pooled_meta_model=not args.no_pooled_meta_model,
             pooled_meta_model_min_series=args.pooled_meta_model_min_series,
+            pooled_meta_model_objective=args.pooled_objective,
+            seed_pooled_meta_model=not args.no_seed_pooled,
+            dataset_card=not args.no_dataset_card,
+            final_prior_alpha=args.final_prior_alpha,
+            combinator_reasoning=False if args.no_reasoning else None,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,
@@ -706,6 +817,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             log_agent_steps=not args.quiet_agent,
             stop_on_error=args.stop_on_error,
             allow_baseline_fallback=args.allow_baseline_fallback,
+            max_llm_failures=args.max_llm_failures,
             save_artifacts=not args.no_artifacts,
             dry_run=args.dry_run,
             version=args.version,
@@ -721,6 +833,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    # Command-line arguments win. Without this dispatch the block below ran no
+    # matter what was typed, so every flag `build_parser` defines — including
+    # --dataset itself — was silently ignored and the hardcoded NN5 run happened
+    # instead. Running with no arguments still uses the editable block, which is
+    # how this file has always been driven on the server.
+    if len(sys.argv) > 1:
+        raise SystemExit(main())
+
     models = DEFAULT_MODELS
 
     dataset = "NN5_WEEKLY_DATASET"

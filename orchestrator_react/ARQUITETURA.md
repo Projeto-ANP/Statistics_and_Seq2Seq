@@ -116,6 +116,14 @@ Semear também combinações selecionadas por estabilidade (`SEED_STABLE_POOLS`)
 
 Passa o ADE (0.11780), a média (0.11994), a mediana (0.12013) e o DBA (0.12256).
 
+> ⚠️ **Ressalva medida depois (ver `RELATORIO_TECNICO_COMBINACAO.md` §2):** este
+> ganho é **específico do NN5**. Comparando 16 estratégias de seleção nos dois
+> datasets, o ranking praticamente não transfere (Spearman +0.121, p=0.66):
+> `stable5_mean` é **1º de 16 no NN5 e 11º de 16 no ANP_MONTHLY**. As sementes de
+> estabilidade continuam sendo um default defensável (nunca são catastróficas em
+> nenhum dos dois), mas o número 0.12036→0.11536 não deve ser reportado como
+> ganho geral do método.
+
 **Por que `select_stable` e não `select_top_k`.** `select_top_k` ranqueia modelos
 pelo mesmo erro que a estratégia depois é pontuada — ajusta o ruído da validação
 duas vezes. `select_stable` ranqueia por consistência entre janelas, uma estatística
@@ -632,10 +640,11 @@ Referência cruzada com `insights_trabalhos.md`:
 | `prompts.py` | prompt de sistema e de turno |
 | `react_loop.py` | Fase 3 — laço Thought/Action/Observation |
 | `pipeline.py` | orquestra as fases, `SeriesOutcome`, `reducibility()` |
+| `meta_model.py` | meta-modelo cross-series, LOSO, 2 objetivos (§13-14) |
 | `csv_writer.py` | contrato de 58 colunas |
 | `llm.py` | cliente Ollama, parser de passo, `ScriptedLLM` |
 
-**419 testes**, todos em CPU, sem servidor.
+**471 testes**, todos em CPU, sem servidor.
 
 ---
 
@@ -825,3 +834,178 @@ decisiva. Fica disponível para o agente combinar com seleção de pool fixa; n�
 testei ainda seu comportamento sobre subconjuntos menores (onde `error_trend`
 mostrou alguma vantagem antes).
 
+
+
+---
+
+## 14. v5 — objetivo FFORMA, prior de dataset, e o leque do agente 📊
+
+Sessão de 2026-07-30. Todos os números do braço **determinístico** (sem LLM),
+medidos com `run_dataset` de verdade, nos dois datasets.
+
+### 14.1 O que decidiu: o OBJETIVO, não as features
+
+Investigando por que o FFORMA nos batia no ANP, li `combinations/fforma.py` e
+isolei a diferença com features e folds idênticos:
+
+| | nosso desenho anterior | FFORMA |
+|---|---|---|
+| estrutura | 19 regressores independentes, cada um prevendo o erro do *seu* modelo | 1 booster multi-classe cuja saída softmax **é** o vetor de pesos |
+| objetivo | erro individual | gradiente custom que minimiza o **erro da combinação** |
+| aprende interação? | não | sim |
+
+```
+ANP (182 séries, LOSO, mesmas 26 features):
+  regressores por modelo : 0.220466
+  objetivo FFORMA        : 0.215938   p=0.030   ← passa o FFORMA real (0.216593)
+```
+
+**Isso reconcilia uma contradição aberta do relatório anterior.** A busca gulosa
+(que também otimiza erro combinado) era a *pior* estratégia nos dois datasets — mas
+com 24 pontos por série. O mesmo objetivo com 182 séries de amostra é o *melhor*.
+Otimização direta do erro combinado **falha por série e funciona pooled** — é a
+fronteira exata do *forecast combination puzzle* nos nossos dados.
+
+### 14.2 A métrica das contribuições é load-bearing
+
+O gradiente soma contribuições entre séries. Quatro variantes, ANP:
+
+| contribuição | sMAPE | por quê |
+|---|---|---|
+| RMSE cru | 0.2224 | poluição de escala: séries em milhões dominam o gradiente |
+| **sMAPE cru** | **0.2160** | **o que ficou** — já é livre de escala por ponto |
+| sMAPE normalizado por linha | 0.2202 | achata séries difíceis e fáceis; a perda é o erro TOTAL, difícil deve pesar mais |
+| sMAPE reescalado globalmente | 0.2196 | razões preservadas, mas o divisor age como mudança de passo do boosting |
+
+Efeito colateral documentado: com erros uniformemente minúsculos o gradiente não
+move o `base_score` e o booster devolve margens iguais. `PooledMetaModel.degenerate`
+reporta isso em vez de aplicar pesos uniformes disfarçados.
+
+catch22 (4→26 features): **efeito ≈ 0** nos dois datasets (p=0.81 / 0.97). Mantido
+por fidelidade ao FFORMA, mas **não** é a explicação da vantagem dele.
+
+### 14.3 Piso determinístico final
+
+| | ANP | NN5 |
+|---|---|---|
+| piso sem a semente pooled | 0.220287 | 0.115361 |
+| **piso com a semente pooled (default v5)** | **0.219040** | **0.115394** |
+| semente pooled aplicada sozinha | 0.215957 | 0.119702 |
+| a semente vence o piso em | 51/182 (28%) | 10/111 (9%) |
+
+ANP melhora (+0.0012, p=0.13), NN5 neutro (−0.00003, p=0.39). Seguro como default.
+
+### 14.4 `prior_blend` — o maior lever do ANP, e por que NÃO é default
+
+Encolher o score de 3 janelas de cada tentativa em direção ao prior LOSO do dataset
+(empirical Bayes). Produção reproduz o offline exatamente:
+
+| α | ANP | NN5 |
+|---|---|---|
+| 0.0 (default) | 0.219040 | **0.115394** |
+| 0.6 | 0.216653 | 0.117808 |
+| **0.8** | **0.214529** ← passa o FFORMA | 0.118786 |
+
+**Direções opostas e monotônicas.** Tentei três formas honestas de escolher α, todas
+falharam:
+
+1. **α fixo** — ajuda um dataset, prejudica o outro.
+2. **α por leave-one-window-out dentro da validação** — no ANP escolhe 0.60 (bom,
+   0.2167); no NN5 escolhe 0.80 quando 0.00 é o certo. Os scores de validação ficam
+   dentro de 0.005 uns dos outros: ruído.
+3. **α por estabilidade do ranking de estratégias** — discrimina **ao contrário**:
+   ANP tau +0.135 > NN5 +0.091, quando é o ANP que precisa desconfiar da própria
+   validação.
+
+Então `final_prior_alpha=0.0` (off) por padrão, opt-in explícito por dataset. **É aqui
+que o agente tem um papel que o braço determinístico não pode preencher:** ele recebe
+o prior no DATASET CARD e decide por série quanto pesar — um julgamento contextual,
+não uma constante que eu tenha que fixar.
+
+### 14.5 O leque do agente (P1–P3)
+
+Três mudanças vindas da forense das 182 trajetórias do v4:
+
+**Dataset card** (`dataset_card=True`): as estratégias semeadas ranqueadas pelo
+score de validação nas *outras* N−1 séries, com a ressalva de que a ordem não
+sempre vale e que o histórico da própria série manda mais. Recomendação, nunca
+restrição — o catálogo continua aberto.
+
+**Anti-aliasing** (`ReactState.numerical_twin`): 591/756 avaliações do v4 pediram
+`weighted` e 62% dos vencedores eram aritmeticamente a média do pool. Agora a
+observação diz `SAME forecasts as a3 — adds nothing new`, com a instrução de mudar
+o pool ou o tipo de combinação em vez do método de peso.
+
+**Prompt desancorado:** o exemplo trabalhado citava `weights_inverse_error`
+literalmente e recebeu 462 das chamadas da família (462→223→10→2→1 por posição).
+Agora mostra `weights_<method>` mais uma seção explicando que sinal cada família lê,
+e uma regra: concentração ≈ 0 significa que aquela estratégia é a média do pool.
+
+### 14.6 P4 — a armadilha do resume, e as opções de servidor
+
+**O mistério das 17 séries, resolvido.** No v4 do ANP, `weights_pooled_meta_model`
+apareceu como retirada em 17 séries. Minha hipótese anterior (artefato do resume
+81–181) estava errada. Os índices são **165–181, contíguos** — exatamente 17 séries,
+e `pooled_meta_model_min_series` é 20. A rodada foi terminada num chunk de 17, o
+pré-passo devolveu `{}`, e a tool foi retirada para aquelas 17 linhas.
+
+Causa estrutural: **o meta-modelo pooled treina nas séries DA CHAMADA, não do
+dataset.** Um chunk de resume é, para o pré-passo, um dataset menor. Consequência: um
+resume pequeno troca a arquitetura de parte do CSV, silenciosamente.
+
+Corrigido em três lugares:
+- `run_dataset` distingue "dataset pequeno" de "chunk de resume pequeno" e anexa o
+  motivo aos `warnings` de cada série afetada (vai para o CSV e o artifact);
+- `exec_dataset_orchestrator` avisa no início do log, antes de gastar horas;
+- `EXTRA_DEPENDENCIES.txt` §7b documenta para o servidor.
+
+**Opções de servidor (`LLMRole.reasoning`).** Os 90 vazios e os erros
+`error parsing tool call` do v4 vêm do canal de raciocínio do formato harmony do
+gpt-oss (ollama/ollama#11781, #11800). `--no-reasoning` passa `reasoning=False`,
+verificado como parâmetro real do `langchain-ollama` instalado. Fica **unset por
+padrão** — todos os resultados até aqui usaram o default do servidor, então mudar
+isso é um braço de A/B deliberado, e entra no `fingerprint()`. `format="json"` está
+descartado por documentação: no gpt-oss devolve vazio sempre (#11867).
+
+### 14.7 P5 — preparação, e dois bugs que a preparação encontrou
+
+Rodar o smoke pelo ponto de entrada real (não pelos scripts de medição) expôs dois
+problemas que teriam contaminado a rodada v5 inteira.
+
+**1. O CLI nunca era despachado.** `run_tsf_orchestrator.py` tem `build_parser()` e
+`main()` completos, mas o bloco `if __name__ == "__main__":` chamava
+`exec_dataset_orchestrator` direto com NN5 fixo. Ou seja: `python
+run_tsf_orchestrator.py --dataset ANP_MONTHLY ...` **ignorava todos os flags** e
+rodava NN5. Todo flag adicionado nas últimas sessões (`--final-prior-alpha`,
+`--pooled-objective`, `--no-reasoning`, `--no-dataset-card`) era inalcançável.
+Agora, havendo argumentos, o `__main__` despacha para `main()`; sem argumentos, o
+bloco editável continua valendo, que é como o servidor sempre foi dirigido.
+
+**2. O objetivo fforma degenera em amostra pequena.** O bloco `cross_series` novo
+(§14.7 abaixo) mostrou `degenerate=True` num smoke de 25 séries: com 24 linhas de
+treino o gradiente — proporcional às contribuições — não move o `base_score`, e
+todo modelo sai com a mesma margem, isto é, pesos uniformes com nome de
+meta-modelo. O run completo de 182 séries aprende normalmente (0.2160), então é
+piso de amostra, não defeito do objetivo. `build_pooled_meta_models` agora cai para
+`per_model` quando **todos** os fits saem degenerados — `per_model` ajusta
+regressores independentes e não tem esse piso. Confirmado em produção:
+`objective=per_model, degenerate=False` no mesmo smoke.
+
+### 14.8 Observabilidade cross-series (`cross_series` no artifact)
+
+Sem isto, uma rodada v5 não poderia ser analisada como analisei v3 e v4. Cada
+artifact passa a trazer:
+
+```json
+"cross_series": {
+  "strategy_prior":   {"dba": 0.6612, "mean": 0.6698, ...},
+  "prior_best": "dba", "prior_worst": "mean pool=pool1",
+  "dataset_card_shown": { ... o que o agente de fato leu ... },
+  "pooled_meta_model": {"objective": "fforma", "n_train_series": 181,
+                        "n_features": 26, "degenerate": false}
+}
+```
+
+Tudo validação-only e leave-one-series-out por construção — registrar não expõe
+nada que a rodada já não tivesse. `degenerate` é o campo que impede uma rodada de
+*parecer* ter usado meta-modelo sem ter usado.
