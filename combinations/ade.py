@@ -33,6 +33,7 @@ from .dataset_specs import (
     output_csv_path,
     prepare_output,
     read_all_model_dfs,
+    resolve_active_models,
     resolve_spec,
     validate_models_have_dataset,
     window_dates,
@@ -210,6 +211,7 @@ def ade_combination(
     horizon: int | None = None,
     resume: bool = False,
     on_error: str = "raise",
+    drop_misaligned: bool = True,
 ) -> None:
     """
     Gera previsões combinadas via ADE para todas as séries do dataset.
@@ -224,18 +226,24 @@ def ade_combination(
         on_error:     'raise' aborta na primeira série que falhar (default,
                       porque saída incompleta desalinha a comparação no MCM);
                       'skip' registra a falha e segue.
+        drop_misaligned: remove modelos cujo alvo de teste diverge do modelo
+                      de referência (caso real: ETTM1/ETTM2). Ver
+                      `dataset_specs.detect_misaligned_models`.
     """
     models = list(models or DEFAULT_MODELS)
     if on_error not in ("raise", "skip"):
         raise ValueError("on_error deve ser 'raise' ou 'skip'")
 
-    spec = resolve_spec(dataset_name, models, horizon=horizon)
-    freq_ade = normalize_freq_for_ade(spec)
-    print(f"[ADE] {describe(spec)} modelos={len(models)}")
-
     validate_models_have_dataset(models, dataset_name)
     model_dfs = read_all_model_dfs(models, dataset_name)
     check_windows_alignment(model_dfs)
+    models, model_dfs = resolve_active_models(
+        models, model_dfs, models[0], drop_misaligned=drop_misaligned, label="ADE"
+    )
+
+    spec = resolve_spec(dataset_name, models, horizon=horizon)
+    freq_ade = normalize_freq_for_ade(spec)
+    print(f"[ADE] {describe(spec)} modelos={len(models)}")
 
     if spec.n_windows < 2:
         raise ValueError(
@@ -314,6 +322,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--horizon", type=int, default=None, help="default: lido do CSV")
     p.add_argument("--resume", action="store_true", help="continua em vez de apagar a saída")
     p.add_argument("--on-error", choices=["raise", "skip"], default="raise")
+    p.add_argument(
+        "--keep-misaligned", action="store_true",
+        help="não dropar modelos cujo alvo de teste diverge do de referência (default: dropa)",
+    )
     args = p.parse_args(argv)
 
     ade_combination(
@@ -324,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         horizon=args.horizon,
         resume=args.resume,
         on_error=args.on_error,
+        drop_misaligned=not args.keep_misaligned,
     )
     return 0
 

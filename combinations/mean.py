@@ -1,52 +1,65 @@
-from . import aux
+"""
+Combinação de previsões por média simples (não ponderada) entre modelos base.
 
-import pandas as pd
-     
-def mean_combination(models, dataset_name, dataset_index, val_type="final"):
-    # grab the full structure from the aux module
-    model_preds = aux.get_predictions_models(models, dataset_index, dataset_name)
+Não precisa de env dedicado: usa só numpy/pandas, já presentes no `agno`.
 
-    # make a DataFrame whose columns are models and rows are time steps
-    df = pd.DataFrame({m: model_preds[m][val_type]["predictions"] for m in models})
-    test_series = model_preds[models[0]][val_type]["test"] 
+    conda activate agno
+    cd Statistics_and_Seq2Seq
+    python -m combinations.mean --dataset ANP_MONTHLY
+"""
 
-    mean_preds = df.mean(axis=1)
-    return mean_preds, test_series, model_preds[models[0]][val_type]["start_test"], model_preds[models[0]][val_type]["final_test"]
+from __future__ import annotations
+
+import argparse
+
+from .simple_combiners import run_simple_combination
+
+
+def mean_combination(
+    dataset_name: str,
+    models: list[str] | None = None,
+    exp_name: str = "mean",
+    horizon: int | None = None,
+    resume: bool = False,
+    drop_misaligned: bool = True,
+) -> None:
+    run_simple_combination(
+        dataset_name=dataset_name,
+        aggregate=lambda m: m.mean(axis=0),
+        exp_name=exp_name,
+        models=models,
+        horizon=horizon,
+        resume=resume,
+        drop_misaligned=drop_misaligned,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        prog="python -m combinations.mean",
+        description="Combinação de previsões por média simples entre modelos base.",
+    )
+    p.add_argument("--dataset", required=True, help="ex: ANP_MONTHLY, M4_WEEKLY_DATASET")
+    p.add_argument("--models", nargs="+", default=None, help="default: os 19 modelos base")
+    p.add_argument("--exp-name", default="mean", help="subpasta de saída em resultados/")
+    p.add_argument("--horizon", type=int, default=None, help="default: lido do CSV")
+    p.add_argument("--resume", action="store_true", help="continua em vez de apagar a saída")
+    p.add_argument(
+        "--keep-misaligned", action="store_true",
+        help="não dropar modelos cujo alvo de teste diverge do de referência (default: dropa)",
+    )
+    args = p.parse_args(argv)
+
+    mean_combination(
+        dataset_name=args.dataset,
+        models=args.models,
+        exp_name=args.exp_name,
+        horizon=args.horizon,
+        resume=args.resume,
+        drop_misaligned=not args.keep_misaligned,
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    models = [
-        "ARIMA",
-        "ETS",
-        "THETA",
-        #"ridge",
-        "rf",
-        "catboost",
-        #"CWT_ridge",
-        #"DWT_ridge",
-        #"FT_ridge",
-        "CWT_rf",
-        "DWT_rf",
-        "FT_rf",
-        "CWT_catboost",
-        "DWT_catboost",
-        "FT_catboost",
-        "ONLY_CWT_catboost",
-        "ONLY_CWT_rf",
-        #"ONLY_CWT_ridge",
-        "ONLY_DWT_catboost",
-        "ONLY_DWT_rf",
-        #"ONLY_DWT_ridge",
-        "ONLY_FT_catboost",
-        "ONLY_FT_rf",
-        #"ONLY_FT_ridge",
-        "NaiveSeasonal",
-        "NaiveMovingAverage",
-    ]
-    
-    dataset_name = "ANP_MONTHLY"
-    
-    len_datasets = aux.get_dataset_size(models[0], dataset_name=dataset_name)
-    for dataset_index in range(len_datasets):
-        mean_result, test_values, start_test, final_test = mean_combination(models, dataset_name=dataset_name, dataset_index=dataset_index)
-        aux.save_to_csv(exp_name="mean", predictions=mean_result, test_values=test_values, dataset_name=dataset_name, dataset_index=dataset_index, horizon=12, start_test=start_test, final_test=final_test)
+    raise SystemExit(main())

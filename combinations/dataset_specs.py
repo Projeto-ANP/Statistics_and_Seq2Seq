@@ -188,6 +188,86 @@ def check_windows_alignment(model_dfs: dict[str, pd.DataFrame]) -> None:
             )
 
 
+def detect_misaligned_models(
+    model_dfs: dict[str, pd.DataFrame],
+    ref_model: str,
+    mismatch_frac_threshold: float = 0.5,
+) -> list[str]:
+    """
+    Modelos cujo alvo de teste (coluna `test` da janela mais recente) diverge
+    sistematicamente do modelo de referência, mesmo que `check_windows_alignment`
+    já tenha confirmado que o número de janelas por série bate.
+
+    Caso real que motivou isso: no ETTM1/ETTM2, cinco modelos `ONLY_*` foram
+    gerados com passo de 15min (em vez de 30min) e começam um dia depois. O CSV
+    tem o mesmo formato e o mesmo número de janelas — só que a "janela de teste"
+    deles cobre um trecho diferente da série. Combinar esses modelos com os
+    demais soma previsões para alvos diferentes; RMSE explode para a casa dos
+    bilhões sem nenhum erro em tempo de execução.
+
+    Um modelo é marcado quando o alvo diverge do de referência em mais de
+    `mismatch_frac_threshold` das séries — maioria sistemática, não ruído
+    pontual numa série isolada.
+    """
+    ref_df = model_dfs[ref_model]
+    ref_finals: dict[int, np.ndarray] = {}
+    for ds_idx, g in ref_df.groupby("dataset_index"):
+        row = g.sort_values("start_test").iloc[-1]
+        ref_finals[int(ds_idx)] = np.array(aux.extract_values(row["test"]))
+
+    misaligned = []
+    for name, df in model_dfs.items():
+        if name == ref_model:
+            continue
+        mismatches = 0
+        total = 0
+        for ds_idx, g in df.groupby("dataset_index"):
+            ref = ref_finals.get(int(ds_idx))
+            if ref is None or len(ref) == 0:
+                continue
+            row = g.sort_values("start_test").iloc[-1]
+            t = np.array(aux.extract_values(row["test"]))
+            total += 1
+            if len(t) != len(ref) or not np.allclose(t, ref, rtol=1e-4, atol=1e-6):
+                mismatches += 1
+        if total and (mismatches / total) > mismatch_frac_threshold:
+            misaligned.append(name)
+    return misaligned
+
+
+def resolve_active_models(
+    models: list[str],
+    model_dfs: dict[str, pd.DataFrame],
+    ref_model: str,
+    drop_misaligned: bool = True,
+    label: str = "",
+) -> tuple[list[str], dict[str, pd.DataFrame]]:
+    """
+    Roda `detect_misaligned_models` e, se `drop_misaligned`, remove os modelos
+    sinalizados. Chame depois de `check_windows_alignment` — aquela função só
+    garante que a CONTAGEM de janelas bate; esta pega o caso em que a contagem
+    bate mas o CONTEÚDO da janela de teste não.
+    """
+    misaligned = detect_misaligned_models(model_dfs, ref_model)
+    if not misaligned:
+        return models, model_dfs
+
+    prefix = f"[{label}] " if label else ""
+    if not drop_misaligned:
+        print(
+            f"{prefix}Aviso: {len(misaligned)} modelo(s) com alvo de teste divergente "
+            f"do de referência ('{ref_model}'), MANTIDOS por configuração: {misaligned}"
+        )
+        return models, model_dfs
+
+    print(
+        f"{prefix}Aviso: {len(misaligned)} modelo(s) com alvo de teste divergente "
+        f"do de referência ('{ref_model}') e por isso DROPADOS: {misaligned}"
+    )
+    kept = [m for m in models if m not in misaligned]
+    return kept, {m: model_dfs[m] for m in kept}
+
+
 def window_dates(start: pd.Timestamp, n: int, freq: str) -> pd.DatetimeIndex:
     """
     Eixo temporal de uma janela com **exatamente** `n` timestamps.

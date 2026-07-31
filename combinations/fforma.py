@@ -35,6 +35,7 @@ from .dataset_specs import (
     output_csv_path,
     prepare_output,
     read_all_model_dfs,
+    resolve_active_models,
     resolve_spec,
     validate_models_have_dataset,
     window_dates,
@@ -287,6 +288,7 @@ def fforma_combination(
     force_softmax: bool = False,
     smape_threshold: float = 1.5,
     resume: bool = False,
+    drop_misaligned: bool = True,
 ) -> None:
     """
     Gera previsões combinadas via FFORMA para todas as séries do dataset.
@@ -302,15 +304,21 @@ def fforma_combination(
         force_softmax: pula o meta-learner e usa softmax direto dos erros
         smape_threshold: no fallback, modelos com SMAPE ≥ isso recebem peso zero
         resume:        continua de onde parou em vez de apagar a saída
+        drop_misaligned: remove modelos cujo alvo de teste diverge do modelo
+                      de referência (caso real: ETTM1/ETTM2). Ver
+                      `dataset_specs.detect_misaligned_models`.
     """
     models = list(models or DEFAULT_MODELS)
-    spec = resolve_spec(dataset_name, models, seasonality=seasonality, horizon=horizon)
-    print(f"[FFORMA] {describe(spec)} modelos={len(models)}")
-
     validate_models_have_dataset(models, dataset_name)
     model_dfs = read_all_model_dfs(models, dataset_name)
     check_windows_alignment(model_dfs)
     ref_model = models[0]
+    models, model_dfs = resolve_active_models(
+        models, model_dfs, ref_model, drop_misaligned=drop_misaligned, label="FFORMA"
+    )
+
+    spec = resolve_spec(dataset_name, models, seasonality=seasonality, horizon=horizon)
+    print(f"[FFORMA] {describe(spec)} modelos={len(models)}")
 
     if spec.n_windows < 2:
         raise ValueError(
@@ -408,6 +416,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force-softmax", action="store_true", help="pula o meta-learner")
     p.add_argument("--smape-threshold", type=float, default=1.5)
     p.add_argument("--resume", action="store_true", help="continua em vez de apagar a saída")
+    p.add_argument(
+        "--keep-misaligned", action="store_true",
+        help="não dropar modelos cujo alvo de teste diverge do de referência (default: dropa)",
+    )
     args = p.parse_args(argv)
 
     fforma_combination(
@@ -420,6 +432,7 @@ def main(argv: list[str] | None = None) -> int:
         force_softmax=args.force_softmax,
         smape_threshold=args.smape_threshold,
         resume=args.resume,
+        drop_misaligned=not args.keep_misaligned,
     )
     return 0
 
