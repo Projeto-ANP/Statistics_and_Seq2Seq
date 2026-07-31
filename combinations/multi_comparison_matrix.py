@@ -38,20 +38,26 @@ METHODS = {
     "dba":          f"{BASE}/dba",
     "mean":         f"{BASE}/mean",
     "median":       f"{BASE}/median",
-    # Update this to whichever orchestrator_react_react_vN is the run you want
-    # to compare — v3 is the latest present on disk as of this comparison.
-    "orchestrator_react_v3": f"{BASE}/orchestrator_react_react_v3",
+    # Point these at whichever runs you want in the comparison. Keeping more than
+    # one version in at a time is how the MCM shows whether a change actually moved
+    # anything — the pairwise p-values are the whole point of the matrix.
+    # "orchestrator_react_v3": f"{BASE}/orchestrator_react_react_v3",
+    # "orchestrator_react_v4": f"{BASE}/orchestrator_react_v4_baseline",
+    # "orchestrator_react_v5": f"{BASE}/orchestrator_react_v5",
+    # "orchestrator_react_v4_baseline": f"{BASE}/orchestrator_react_v4_baseline",
+    "orchestrator_react_v5": f"{BASE}/orchestrator_react_v5",
     "FFORMA":       f"{BASE}/FFORMA",
     "ADE":          f"{BASE}/ADE",
 }
 
 DATASETS = [
     "NN5_WEEKLY_DATASET", 
-            # "ETTH1", "ETTH2", "ETTM1", "ETTM2",
-            # "ANP_MONTHLY"
+            "ETTH1", "ETTH2", 
+            # "ETTM1", "ETTM2",
+            "ANP_MONTHLY"
             ]
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output_v5")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------

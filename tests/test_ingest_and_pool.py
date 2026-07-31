@@ -320,7 +320,7 @@ def test_mislabelled_timestamps_warn_but_do_not_block(fake_repo):
     """Timestamps may diverge between models; position is what defines a window.
 
     This is the project's own convention, stated in
-    `combinations/ade.py::_check_windows_alignment`: the real dates may differ
+    `combinations/dataset_specs.py::check_windows_alignment`: the real dates may differ
     between models, the relative position must not, and the first model's dates are
     the canonical axis. The real ETTH1 case is six `ONLY_*` models that wrote their
     index with freq="15min" on hourly data, so the identical 24 observations carry

@@ -232,6 +232,28 @@ def load_series_source(
     )
 
 
+#: Aggregations tried when the raw `.tsf` tail does not match the results. The ETT
+#: forecasts were generated on a MEAN-RESAMPLED series, not the raw file: ETTM2.tsf
+#: is 15-minute data, and the recorded `test` column matches the raw series
+#: averaged in blocks of 2 (i.e. 30-minute bars) to 1e-6. Reading the raw file and
+#: refusing was correct-but-unhelpful — the file IS the right one, at a different
+#: resolution. Only mean-aggregation by a small integer factor is attempted, and
+#: only after the raw comparison fails, so nothing that already worked changes.
+RESAMPLE_FACTORS: Tuple[int, ...] = (2, 3, 4, 6, 12)
+
+
+def mean_resample(series: np.ndarray, factor: int) -> np.ndarray:
+    """Non-overlapping block mean. Trailing points that do not fill a block are
+    dropped from the FRONT, so the tail — the part being verified — stays aligned
+    with the end of the series."""
+    series = np.asarray(series, dtype=float)
+    factor = int(factor)
+    if factor <= 1 or series.size < factor:
+        return series
+    usable = (series.size // factor) * factor
+    return series[series.size - usable:].reshape(-1, factor).mean(axis=1)
+
+
 def verify_alignment(
     series: np.ndarray,
     expected_tail: Sequence[float],
@@ -239,11 +261,18 @@ def verify_alignment(
     source_name: str = "",
     rtol: float = 1e-4,
     atol: float = 1e-4,
+    allow_resample: bool = True,
 ) -> Dict[str, Any]:
     """Guardrail: the tail of the series must equal the recorded test window.
 
     This is the check that makes it impossible to combine one series' forecasts
     with another series' profile. Raises `SeriesAlignmentError` on mismatch.
+
+    `allow_resample` additionally accepts a series that matches after mean
+    aggregation by one of `RESAMPLE_FACTORS` — the ETT case, where the forecasts
+    were produced on 30-minute bars built from a 15-minute file. The factor used is
+    returned in `resample_factor` so the series the agent profiles is the same one
+    the models actually saw, and so the CSV records which resolution was used.
     """
     series = np.asarray(series, dtype=float)
     expected = np.asarray(expected_tail, dtype=float)
@@ -258,6 +287,21 @@ def verify_alignment(
         )
 
     tail = series[-h:]
+    if allow_resample and not np.allclose(tail, expected, rtol=rtol, atol=atol, equal_nan=True):
+        for factor in RESAMPLE_FACTORS:
+            candidate = mean_resample(series, factor)
+            if candidate.size < h:
+                continue
+            if np.allclose(candidate[-h:], expected, rtol=rtol, atol=atol, equal_nan=True):
+                return {
+                    "verified": True,
+                    "horizon": int(h),
+                    "n_points": int(candidate.size),
+                    "max_abs_diff": float(np.nanmax(np.abs(candidate[-h:] - expected))),
+                    "resample_factor": factor,
+                    "series": candidate,
+                }
+
     if not np.allclose(tail, expected, rtol=rtol, atol=atol, equal_nan=True):
         diff = np.abs(tail - expected)
         worst = int(np.nanargmax(diff))
@@ -275,4 +319,6 @@ def verify_alignment(
         "horizon": int(h),
         "n_points": int(series.size),
         "max_abs_diff": float(np.nanmax(np.abs(tail - expected))),
+        "resample_factor": 1,
+        "series": series,
     }

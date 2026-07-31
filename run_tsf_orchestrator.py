@@ -182,7 +182,7 @@ def exec_dataset_orchestrator(
     seed_pooled_meta_model: bool = True,
     dataset_card: bool = True,
     final_prior_alpha: float = 0.0,
-    combinator_reasoning: Optional[bool] = None,
+    combinator_reasoning: Any = None,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -740,10 +740,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ablation: do not seed weighted(pooled_meta_model) in Phase 2")
     p.add_argument("--no-dataset-card", action="store_true",
                    help="ablation: do not show the cross-series dataset card in the prompt")
-    p.add_argument("--no-reasoning", action="store_true",
-                   help="ask gpt-oss to skip the harmony reasoning channel (the source "
-                        "of the empty replies and tool-call parse errors). A/B only: "
-                        "every result so far used the server default")
+    p.add_argument("--reasoning", default=None,
+                   metavar="LEVEL",
+                   help="gpt-oss reasoning: low|medium|high, or off. Unset = the "
+                        "model's own default, which for gpt-oss is already ON — that "
+                        "is what every run so far used. 'low' caps the reasoning "
+                        "budget (candidate fix for the empty replies); 'off' removes "
+                        "the harmony channel behind the tool-call parse errors")
     p.add_argument("--final-prior-alpha", type=float, default=0.0,
                    help="shrink each attempt's score toward the dataset prior before "
                         "the final pick. 0=off. Measured best on ANP around 0.6-0.8; "
@@ -806,7 +809,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             seed_pooled_meta_model=not args.no_seed_pooled,
             dataset_card=not args.no_dataset_card,
             final_prior_alpha=args.final_prior_alpha,
-            combinator_reasoning=False if args.no_reasoning else None,
+            combinator_reasoning=(
+                None if args.reasoning is None
+                else False if str(args.reasoning).lower() in {"off", "false", "no"}
+                else str(args.reasoning).lower()
+            ),
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,

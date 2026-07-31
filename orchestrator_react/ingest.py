@@ -124,6 +124,58 @@ class IngestedSeries:
         }
 
 
+def find_misaligned_models(
+    models: Sequence[str],
+    dataset: str,
+    dataset_index: int,
+    results_dir: str = DEFAULT_RESULTS_DIR,
+    frames: Optional[Dict[str, pd.DataFrame]] = None,
+    reference: Optional[str] = None,
+    n_windows: int = 3,
+) -> Dict[str, str]:
+    """Models whose ACTUALS disagree with the reference model, and why.
+
+    A forecast can only be combined with another if both are predicting the same
+    points in time. On ETTM1 and ETTM2 five models — ONLY_CWT_catboost,
+    ONLY_DWT_catboost, ONLY_DWT_rf, ONLY_FT_catboost, ONLY_FT_rf — were generated
+    over a different window than the other fourteen (2018-06-25 20:00 at 15-minute
+    steps versus 2018-06-24 20:00 at 30-minute steps), so their "test" column holds
+    different numbers entirely. Averaging across that is not a combination, it is
+    two unrelated quantities added together.
+
+    Returns `{}` when everything lines up, which is the case on ANP and NN5.
+    """
+    frames = frames or load_dataset_frames(models, dataset, results_dir)
+    reference = reference or models[0]
+    ref = frames[reference]
+    ref_rows = ref[ref["dataset_index"] == dataset_index].sort_values("start_test")
+    if ref_rows.empty:
+        return {}
+    horizon = len(extract_values(ref_rows.iloc[-1]["test"]))
+
+    out: Dict[str, str] = {}
+    for m in models:
+        if m == reference:
+            continue
+        df = frames[m]
+        rows = df[df["dataset_index"] == dataset_index].sort_values("start_test")
+        if len(rows) != len(ref_rows):
+            out[m] = f"{len(rows)} windows vs {len(ref_rows)} in {reference!r}"
+            continue
+        for pos in range(-(n_windows + 1), 0):
+            a = np.asarray(extract_values(rows.iloc[pos]["test"]), dtype=float)[:horizon]
+            r = np.asarray(extract_values(ref_rows.iloc[pos]["test"]), dtype=float)[:horizon]
+            if a.size == horizon and r.size == horizon and not np.allclose(
+                a, r, rtol=1e-4, atol=1e-4, equal_nan=True
+            ):
+                out[m] = (
+                    f"different actuals from {reference!r} "
+                    f"(starts {rows.iloc[pos]['start_test']} vs {ref_rows.iloc[pos]['start_test']})"
+                )
+                break
+    return out
+
+
 def load_series(
     models: Sequence[str],
     dataset: str,
@@ -134,8 +186,14 @@ def load_series(
     source_file: Optional[str] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     frames: Optional[Dict[str, pd.DataFrame]] = None,
+    drop_models: Sequence[str] = (),
 ) -> IngestedSeries:
     """Builds the `ReactState` for one series.
+
+    `drop_models` removes models from the pool before anything is read. Used for
+    datasets where some models were generated over a different window than the
+    rest (see `find_misaligned_models`); dropping them yields a smaller but
+    coherent pool, which is the only kind that can be combined honestly.
 
     Args:
         models: pool model names (folder names under `results_dir`).
@@ -153,10 +211,18 @@ def load_series(
     n_windows = int(config.n_validation_windows)
     if n_windows < 1:
         raise IngestionError("n_validation_windows must be >= 1")
-    if not models:
-        raise IngestionError("empty model pool")
 
     warnings: List[str] = []
+    if drop_models:
+        dropped = [m for m in models if m in set(drop_models)]
+        models = [m for m in models if m not in set(drop_models)]
+        if dropped:
+            warnings.append(
+                f"dropped {len(dropped)} model(s) whose windows do not match the rest "
+                f"of the pool: {dropped}"
+            )
+    if not models:
+        raise IngestionError("empty model pool")
 
     # ── per-model rows for this series ───────────────────────────────────────
     per_model: Dict[str, pd.DataFrame] = {}
@@ -270,6 +336,18 @@ def load_series(
             dataset_index=int(dataset_index),
             source_name=source_info.get("file", ""),
         )
+        # `verify_alignment` may have matched a MEAN-RESAMPLED version of the file
+        # (the ETT case: 30-minute bars built from a 15-minute .tsf). Profile the
+        # resolution the models were actually generated on, not the raw file, or
+        # every seasonality and autocorrelation feature would describe a different
+        # series than the forecasts do.
+        full = np.asarray(alignment.get("series", full), dtype=float)
+        factor = int(alignment.get("resample_factor", 1))
+        if factor > 1:
+            warnings.append(
+                f"the .tsf is finer than the forecasts: matched after mean-resampling "
+                f"by {factor} ({source_info.get('frequency')} -> blocks of {factor})"
+            )
         # Same split the generation pipeline used: train = series[:-horizon].
         train_series = full[: full.size - horizon]
     else:

@@ -422,6 +422,7 @@ def run_series(
     on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
     pooled_meta_model: Optional[meta_model_mod.PooledMetaModel] = None,
     strategy_prior: Optional[Dict[str, float]] = None,
+    drop_models: Sequence[str] = (),
 ) -> SeriesOutcome:
     """Runs Phases 0 to 5 for one series.
 
@@ -453,6 +454,7 @@ def run_series(
         source_file=source_file,
         source_dir=source_dir,
         frames=frames,
+        drop_models=drop_models,
     )
     state = ingested.state
     state.pooled_meta_model = pooled_meta_model
@@ -584,12 +586,34 @@ def run_dataset(
 
     todo = list(indices) if indices is not None else list(range(n_series))
 
+    # Detect once, on the first series: a model generated over the wrong window is
+    # wrong for the whole dataset, not per series.
+    drop: List[str] = []
+    if config.drop_misaligned_models and todo:
+        try:
+            bad = ingest_mod.find_misaligned_models(
+                models, dataset, todo[0], results_dir=results_dir, frames=frames,
+                n_windows=config.n_validation_windows,
+            )
+        except Exception:
+            bad = {}
+        drop = sorted(bad)
+        if drop:
+            print(
+                f"WARNING: {len(drop)} model(s) do not share the pool's windows on "
+                f"{dataset} and are being DROPPED for every series: {drop}\n"
+                f"         reason (first): {bad[drop[0]]}\n"
+                f"         the remaining {len(models) - len(drop)} models are combined; "
+                f"set drop_misaligned_models=False to fail instead.",
+                flush=True,
+            )
+
     meta_models: Dict[int, meta_model_mod.PooledMetaModel] = {}
     prepass_warning = ""
     if config.pooled_meta_model:
         meta_models = _build_pooled_meta_models(
             models, dataset, todo, config=config, source=source,
-            results_dir=results_dir, frames=frames,
+            results_dir=results_dir, frames=frames, drop_models=drop,
         )
         if not meta_models:
             # Distinguish "this dataset is small" from "you resumed in a small
@@ -624,6 +648,7 @@ def run_dataset(
         priors = _build_strategy_priors(
             models, dataset, todo, config=config, source=source,
             results_dir=results_dir, frames=frames, meta_models=meta_models,
+            drop_models=drop,
         )
 
     for idx in todo:
@@ -639,6 +664,7 @@ def run_dataset(
                 client=client,
                 pooled_meta_model=meta_models.get(idx),
                 strategy_prior=priors.get(idx),
+                drop_models=drop,
                 **kwargs,
             )
             if prepass_warning:
@@ -671,6 +697,7 @@ def _build_pooled_meta_models(
     source: Optional[SeriesSource],
     results_dir: str,
     frames: Dict[str, Any],
+    drop_models: Sequence[str] = (),
 ) -> Dict[int, meta_model_mod.PooledMetaModel]:
     """One pre-pass over the dataset, before any series' Phase 3 opens.
 
@@ -695,6 +722,7 @@ def _build_pooled_meta_models(
             ingested = ingest_mod.load_series(
                 models=models, dataset=dataset, dataset_index=idx,
                 source=source, config=config, results_dir=results_dir, frames=frames,
+                drop_models=drop_models,
             )
         except SeriesAlignmentError:
             raise
@@ -723,6 +751,7 @@ def _build_strategy_priors(
     results_dir: str,
     frames: Dict[str, Any],
     meta_models: Dict[int, Any],
+    drop_models: Sequence[str] = (),
 ) -> Dict[int, Dict[str, float]]:
     """Leave-one-series-out prior over the SEEDED strategies, validation only.
 
@@ -744,6 +773,7 @@ def _build_strategy_priors(
             ingested = ingest_mod.load_series(
                 models=models, dataset=dataset, dataset_index=idx,
                 source=source, config=config, results_dir=results_dir, frames=frames,
+                drop_models=drop_models,
             )
         except SeriesAlignmentError:
             raise

@@ -1,14 +1,25 @@
 """
-conda activate fforma
-cd Statistics_and_Seq2Seq
-python -m combinations.fforma
+Combinação de previsões via FFORMA (Feature-based FORecast Model Averaging).
+
+Referência: Montero-Manso, Athanasopoulos, Hyndman & Talagala (2020),
+"FFORMA: Feature-based forecast model averaging", IJF 36(1):86-92.
+
+Primeira vez na máquina (o env `fforma-combinations` ainda não existe):
+    conda env create -f fforma_environment.yml
+
+Toda execução:
+    conda activate fforma-combinations
+    cd Statistics_and_Seq2Seq
+    python -m combinations.fforma --dataset ANP_MONTHLY
+
+Datasets, frequências, sazonalidades e horizontes vêm de
+`combinations/dataset_specs.py` (o horizonte é lido do próprio CSV).
 """
 
 from __future__ import annotations
 
-import os
+import argparse
 import warnings
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -17,56 +28,21 @@ from scipy.special import softmax
 from tsfeatures import tsfeatures
 
 from . import aux, metrics
+from .dataset_specs import (
+    DEFAULT_MODELS,
+    check_windows_alignment,
+    describe,
+    output_csv_path,
+    prepare_output,
+    read_all_model_dfs,
+    resolve_spec,
+    validate_models_have_dataset,
+    window_dates,
+)
 
-BASE_RESULTS = "./timeseries/mestrado/resultados"
-
-# Número mínimo de séries para treinar o meta-learner com sentido.
-# Abaixo disso, usamos softmax direto dos erros de validação.
-_MIN_SERIES_FOR_LGB = 10
-
-
-# ---------------------------------------------------------------------------
-# Helpers de I/O (mesmos de ade.py)
-# ---------------------------------------------------------------------------
-
-def _model_csv_path(model_name: str, dataset_name: str) -> str:
-    return f"{BASE_RESULTS}/{model_name}/normal/{dataset_name}.csv"
-
-
-def validate_models_have_dataset(models: Iterable[str], dataset_name: str) -> None:
-    """Levanta FileNotFoundError se algum modelo não tiver o CSV do dataset."""
-    missing = [m for m in models if not os.path.exists(_model_csv_path(m, dataset_name))]
-    if missing:
-        paths = "\n  - ".join(_model_csv_path(m, dataset_name) for m in missing)
-        raise FileNotFoundError(
-            f"Os modelos abaixo não possuem resultados para '{dataset_name}':\n"
-            f"  - {paths}"
-        )
-
-
-def _read_model_df(model_name: str, dataset_name: str) -> pd.DataFrame:
-    df = pd.read_csv(_model_csv_path(model_name, dataset_name), sep=";")
-    df["start_test"] = pd.to_datetime(df["start_test"], errors="coerce")
-    df["final_test"] = pd.to_datetime(df["final_test"], errors="coerce")
-    return df.sort_values(["dataset_index", "start_test"]).reset_index(drop=True)
-
-
-def _check_windows_alignment(model_dfs: dict[str, pd.DataFrame]) -> None:
-    """Verifica que todos os modelos têm o mesmo número de janelas por série."""
-    ref_name = next(iter(model_dfs))
-    ref_counts = {int(k): len(v) for k, v in model_dfs[ref_name].groupby("dataset_index")}
-    for name, df in model_dfs.items():
-        cur_counts = {int(k): len(v) for k, v in df.groupby("dataset_index")}
-        if cur_counts.keys() != ref_counts.keys():
-            raise ValueError(
-                f"Modelo '{name}' tem dataset_index diferentes de '{ref_name}'."
-            )
-        for k in ref_counts:
-            if cur_counts[k] != ref_counts[k]:
-                raise ValueError(
-                    f"Modelo '{name}' tem {cur_counts[k]} janelas para "
-                    f"dataset_index={k}, mas '{ref_name}' tem {ref_counts[k]}."
-                )
+# Abaixo disso o meta-learner não tem amostra para generalizar entre séries e
+# caímos no softmax direto dos erros de validação.
+_MIN_SERIES_FOR_META = 10
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +59,9 @@ def _split_val_test(
     dict[int, list[float]],                    # test_actual[ds_idx] = [step...]
 ]:
     """
-    Separa janelas de validação (todas menos a última) da janela de teste
-    (a mais recente por dataset_index).
-
-    A janela de teste nunca é usada no treinamento do meta-learner.
+    Separa as janelas de validação (todas menos a última) da janela de teste (a
+    mais recente por dataset_index). A janela de teste nunca entra no treino do
+    meta-learner — só no cálculo das métricas finais.
     """
     dataset_indices = sorted(model_dfs[ref_model]["dataset_index"].unique().astype(int))
 
@@ -126,9 +101,12 @@ def _compute_errors(
 ) -> pd.DataFrame:
     """
     SMAPE médio de cada modelo em cada série nas janelas de validação.
-
     Retorna DataFrame (index=unique_id str, colunas=modelos).
-    Remove modelos que nunca ganham (SMAPE mínimo) com aviso.
+
+    SMAPE (e não RMSE) porque o gradiente do objetivo FFORMA **soma as
+    contribuições entre séries**: com erro em escala bruta, as séries de maior
+    magnitude dominam o gradiente e o meta-modelo aprende escala em vez de
+    competência. O FFORMA original usa OWA pelo mesmo motivo.
     """
     rows = []
     for ds_idx, actual_windows in val_actual.items():
@@ -139,6 +117,8 @@ def _compute_errors(
             for preds, actuals in zip(pred_windows, actual_windows):
                 a = np.array(actuals)
                 p = np.array(preds[: len(a)])
+                if len(a) == 0 or len(p) != len(a):
+                    continue
                 s = metrics.calculate_smape(p.reshape(1, -1), a.reshape(1, -1))[0]
                 smapes.append(float(s))
             row[model_name] = float(np.mean(smapes)) if smapes else np.nan
@@ -146,13 +126,18 @@ def _compute_errors(
 
     errors_df = pd.DataFrame(rows).set_index("unique_id")
 
-    # Remove modelos com erros sempre inválidos
     bad = errors_df.columns[errors_df.isna().all() | np.isinf(errors_df).all()].tolist()
     if bad:
         print(f"[FFORMA] Modelos com erros inválidos removidos: {bad}")
         errors_df = errors_df.drop(columns=bad)
 
-    # Avisa modelos que nunca são os melhores (nunca venceriam na multiclasse)
+    # NaN residual (série sem janela válida para um modelo) vira o pior erro
+    # daquela série; sem isso o softmax propaga NaN e a combinação sai vazia.
+    if errors_df.isna().any().any():
+        n_nan = int(errors_df.isna().sum().sum())
+        print(f"[FFORMA] {n_nan} par(es) (série, modelo) sem erro válido — preenchidos com o pior da série.")
+        errors_df = errors_df.apply(lambda r: r.fillna(r.max()), axis=1)
+
     best_per_series = errors_df.idxmin(axis=1)
     never_best = [m for m in errors_df.columns if m not in best_per_series.values]
     if never_best:
@@ -162,7 +147,7 @@ def _compute_errors(
 
 
 # ---------------------------------------------------------------------------
-# Features tsfeatures dos valores reais de validação
+# Features (tsfeatures) sobre os valores reais de validação
 # ---------------------------------------------------------------------------
 
 def _build_series_df(
@@ -172,9 +157,9 @@ def _build_series_df(
     freq: str,
 ) -> pd.DataFrame:
     """
-    Monta DataFrame long (unique_id, ds, y) com os valores reais das janelas
-    de validação, usando datas canônicas do modelo de referência.
-    Usado exclusivamente para extração de tsfeatures — sem dados de teste.
+    DataFrame long (unique_id, ds, y) com os valores reais das janelas de
+    validação, no eixo canônico do modelo de referência. Usado só para extrair
+    tsfeatures — sem nenhum dado de teste.
     """
     ref_df = model_dfs[ref_model]
     rows = []
@@ -186,27 +171,28 @@ def _build_series_df(
         )
         val_group = group.iloc[:-1]  # todas menos a última (teste)
         for (_, meta_row), actual_vals in zip(val_group.iterrows(), actual_windows):
-            start_ds = pd.Timestamp(meta_row["start_test"])
-            end_ds = pd.Timestamp(meta_row["final_test"])
-            dates = pd.date_range(start=start_ds, end=end_ds, freq=freq)
+            if not len(actual_vals):
+                continue
+            dates = window_dates(pd.Timestamp(meta_row["start_test"]), len(actual_vals), freq)
             for dt, y in zip(dates, actual_vals):
                 rows.append({"unique_id": str(int(ds_idx)), "ds": dt, "y": y})
 
-    return (
-        pd.DataFrame(rows)
-        .sort_values(["unique_id", "ds"])
-        .reset_index(drop=True)
-    )
+    return pd.DataFrame(rows).sort_values(["unique_id", "ds"]).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
-# Meta-learner: LightGBM (FFORMA) ou fallback softmax de erros
+# Meta-learner
 # ---------------------------------------------------------------------------
 
 def _fforma_objective(
     predt: np.ndarray, dtrain: xgb.DMatrix, contribution_to_error: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Gradiente e hessiana do objetivo FFORMA (Montero-Manso et al. 2020).
+    """
+    Gradiente e hessiana do objetivo FFORMA (Montero-Manso et al. 2020).
+
+    Não otimiza "acertar o modelo vencedor" (cross-entropy); minimiza o erro
+    combinado esperado  L = softmax(score) · erro_por_modelo. A saída softmax do
+    booster **é** o vetor de pesos.
 
     XGBoost 2.1+ passa predt com shape (n_samples, n_classes).
     """
@@ -218,26 +204,24 @@ def _fforma_objective(
     return grad, hess
 
 
-def _train_lgb_fforma(
+def _train_fforma_booster(
     feats: pd.DataFrame,
     errors_df: pd.DataFrame,
     params: dict | None,
     n_estimators: int = 100,
     seed: int = 42,
-) -> xgb.Booster:
+) -> tuple[xgb.Booster, np.ndarray]:
     """
     Treina o meta-learner XGBoost com o objetivo FFORMA.
 
-    Usa XGBoost em vez de LightGBM porque o `fobj` customizado do LightGBM
-    falha com `reset_parameter(objective=none)` nesta plataforma.
+    XGBoost em vez de LightGBM porque o `fobj` customizado do LightGBM falha com
+    `reset_parameter(objective=none)` nesta plataforma.
 
-    feats:       (n_series, n_features)  — tsfeatures, index=unique_id
-    errors_df:   (n_series, n_models)    — SMAPE validação, index=unique_id
+    feats:     (n_series, n_features) — tsfeatures, index=unique_id
+    errors_df: (n_series, n_models)   — SMAPE de validação, index=unique_id
     """
     X = feats.loc[errors_df.index].fillna(0).values.astype(float)
     contribution = errors_df.values.astype(float)
-
-    fobj = lambda predt, dtrain: _fforma_objective(predt, dtrain, contribution)
 
     base_params = {
         "num_class": errors_df.shape[1],
@@ -249,28 +233,27 @@ def _train_lgb_fforma(
         base_params.update(params)
 
     dtrain = xgb.DMatrix(X, label=np.arange(len(X)))
-
     booster = xgb.train(
         params=base_params,
         dtrain=dtrain,
         num_boost_round=n_estimators,
-        obj=fobj,
+        obj=lambda predt, dm: _fforma_objective(predt, dm, contribution),
         verbose_eval=False,
     )
     return booster, contribution
 
 
-def _compute_weights_lgb(
+def _compute_weights_booster(
     booster: xgb.Booster,
     feats: pd.DataFrame,
     errors_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Aplica softmax nos raw scores do XGBoost para obter pesos por série."""
+    """Softmax dos raw scores do XGBoost -> pesos por série."""
     X = feats.loc[errors_df.index].fillna(0).values.astype(float)
-    dmat = xgb.DMatrix(X)
-    raw_scores = booster.predict(dmat, output_margin=True)  # shape: (n_series, n_models)
-    weights = softmax(raw_scores, axis=1)
-    return pd.DataFrame(weights, index=errors_df.index, columns=errors_df.columns)
+    raw_scores = booster.predict(xgb.DMatrix(X), output_margin=True)
+    return pd.DataFrame(
+        softmax(raw_scores, axis=1), index=errors_df.index, columns=errors_df.columns
+    )
 
 
 def _compute_weights_softmax(
@@ -278,20 +261,15 @@ def _compute_weights_softmax(
     smape_threshold: float = 1.5,
 ) -> pd.DataFrame:
     """
-    Fallback: pesos como softmax(−SMAPE) por série.
-    Modelos com SMAPE médio de validação acima de `smape_threshold` recebem
-    peso zero antes da normalização — evita que predições absurdas contaminem
-    a combinação final mesmo com peso pequeno.
+    Fallback: pesos = softmax(−SMAPE) por série. Modelos com SMAPE de validação
+    acima de `smape_threshold` recebem peso zero antes da normalização — evita
+    que previsões numericamente absurdas contaminem a combinação.
     """
     values = errors_df.values.astype(float).copy()
-
-    # Zera (peso mínimo antes do softmax) modelos acima do threshold
-    mask_bad = values >= smape_threshold  # shape (n_series, n_models)
-    values[mask_bad] = np.inf            # softmax(−inf) → 0
-
-    neg_errors = -values
-    weights_arr = softmax(neg_errors, axis=1)
-    return pd.DataFrame(weights_arr, index=errors_df.index, columns=errors_df.columns)
+    values[values >= smape_threshold] = np.inf  # softmax(−inf) -> 0
+    return pd.DataFrame(
+        softmax(-values, axis=1), index=errors_df.index, columns=errors_df.columns
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -299,86 +277,98 @@ def _compute_weights_softmax(
 # ---------------------------------------------------------------------------
 
 def fforma_combination(
-    models: list[str],
     dataset_name: str,
-    seasonality: int,
-    horizon: int,
-    freq: str = "h",
+    models: list[str] | None = None,
     exp_name: str = "FFORMA",
+    seasonality: int | None = None,
+    horizon: int | None = None,
     lgb_params: dict | None = None,
     n_estimators: int = 100,
     force_softmax: bool = False,
     smape_threshold: float = 1.5,
+    resume: bool = False,
 ) -> None:
     """
     Gera previsões combinadas via FFORMA para todas as séries do dataset.
 
     Args:
-        models:       modelos base — precisam ter CSV em resultados/<M>/normal/<D>.csv
-        dataset_name: ex. 'ETTH1', 'ETTH2', 'ANP_MONTHLY'
-        seasonality:  período sazonal para tsfeatures (48 = half-hourly, 24 = horário, 12 = mensal)
-        horizon:      tamanho do horizonte de previsão
-        freq:         frequência pandas para reconstruir os date_range ('30min', 'H', 'D', 'W', etc.)
-        exp_name:     nome da subpasta de saída em resultados/ (default 'FFORMA')
-        lgb_params:   parâmetros extras para o meta-learner XGBoost (None = defaults)
-        n_estimators: número de árvores do XGBoost (default 100)
-        force_softmax: se True, pula o XGBoost e usa softmax direto dos erros
+        dataset_name:  'ANP_MONTHLY', 'NN5_WEEKLY_DATASET', 'M4_WEEKLY_DATASET', …
+        models:        modelos base; default = os 19 de `DEFAULT_MODELS`
+        exp_name:      subpasta de saída em resultados/ (default 'FFORMA')
+        seasonality:   sobrescreve a sazonalidade do registro (tsfeatures)
+        horizon:       sobrescreve o horizonte lido do CSV
+        lgb_params:    parâmetros extras do XGBoost
+        n_estimators:  número de rodadas de boosting (default 100)
+        force_softmax: pula o meta-learner e usa softmax direto dos erros
+        smape_threshold: no fallback, modelos com SMAPE ≥ isso recebem peso zero
+        resume:        continua de onde parou em vez de apagar a saída
     """
-    # 1) Validar disponibilidade dos CSVs
-    validate_models_have_dataset(models, dataset_name)
+    models = list(models or DEFAULT_MODELS)
+    spec = resolve_spec(dataset_name, models, seasonality=seasonality, horizon=horizon)
+    print(f"[FFORMA] {describe(spec)} modelos={len(models)}")
 
-    # 2) Carregar e verificar alinhamento
-    model_dfs = {m: _read_model_df(m, dataset_name) for m in models}
-    _check_windows_alignment(model_dfs)
+    validate_models_have_dataset(models, dataset_name)
+    model_dfs = read_all_model_dfs(models, dataset_name)
+    check_windows_alignment(model_dfs)
     ref_model = models[0]
 
-    # 3) Separar validação e teste (sem leakage)
-    val_preds, val_actual, test_preds, test_actual = _split_val_test(model_dfs, ref_model)
+    if spec.n_windows < 2:
+        raise ValueError(
+            f"'{dataset_name}' tem {spec.n_windows} janela por série; o FFORMA precisa "
+            f"de pelo menos 2 (uma de validação + uma de teste)."
+        )
 
-    # 4) Calcular erros de validação por modelo por série
+    val_preds, val_actual, test_preds, test_actual = _split_val_test(model_dfs, ref_model)
     errors_df = _compute_errors(val_preds, val_actual, models)
     active_models = errors_df.columns.tolist()
     n_series = len(errors_df)
 
-    # 5) Extrair tsfeatures das janelas de validação (sem dados de teste)
-    series_df = _build_series_df(val_actual, model_dfs, ref_model, freq=freq)
+    series_df = _build_series_df(val_actual, model_dfs, ref_model, freq=spec.freq)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        feats = tsfeatures(series_df, freq=seasonality)
+        feats = tsfeatures(series_df, freq=spec.seasonality)
 
     feats = feats.set_index("unique_id") if "unique_id" in feats.columns else feats
+    feats.index = feats.index.astype(str)
     feats = feats.reindex(errors_df.index)
+    print(f"[FFORMA] modelos ativos={len(active_models)} features={feats.shape[1]}")
 
-    print(
-        f"[FFORMA] Dataset={dataset_name}  séries={n_series}  "
-        f"modelos={len(active_models)}  features={feats.shape[1]}"
-    )
-
-    # 6) Meta-learner: LightGBM (FFORMA) se tiver séries suficientes, softmax caso contrário
-    use_lgb = (n_series >= _MIN_SERIES_FOR_LGB) and not force_softmax
-    if use_lgb:
-        print("[FFORMA] Treinando meta-learner LightGBM...")
+    use_meta = (n_series >= _MIN_SERIES_FOR_META) and not force_softmax
+    if use_meta:
+        print(f"[FFORMA] Treinando meta-learner XGBoost (objetivo FFORMA, {n_estimators} rodadas)...")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            booster, _ = _train_lgb_fforma(feats, errors_df, lgb_params, n_estimators)
-        weights = _compute_weights_lgb(booster, feats, errors_df)
+            booster, _ = _train_fforma_booster(feats, errors_df, lgb_params, n_estimators)
+        weights = _compute_weights_booster(booster, feats, errors_df)
     else:
-        reason = "force_softmax=True" if force_softmax else f"poucas séries ({n_series} < {_MIN_SERIES_FOR_LGB})"
+        reason = (
+            "force_softmax=True" if force_softmax
+            else f"poucas séries ({n_series} < {_MIN_SERIES_FOR_META})"
+        )
         print(f"[FFORMA] Usando softmax direto dos erros ({reason}).")
         weights = _compute_weights_softmax(errors_df, smape_threshold=smape_threshold)
 
-    # 7) Aplicar pesos sobre previsões de teste e salvar
-    dataset_indices = sorted(val_actual.keys())
-    for ds_idx in dataset_indices:
-        uid = str(ds_idx)
-        w = weights.loc[uid]
+    done = prepare_output(exp_name, dataset_name, resume)
+    dataset_indices = [i for i in sorted(val_actual.keys()) if i not in done]
+    print(f"[FFORMA] {len(dataset_indices)} série(s) a gravar de {len(val_actual)}")
 
+    for ds_idx in dataset_indices:
+        w = weights.loc[str(ds_idx)]
         horizon_len = len(test_actual[ds_idx])
         combined = np.zeros(horizon_len)
+        used = 0.0
         for model_name in active_models:
             preds_arr = np.array(test_preds[ds_idx].get(model_name, [])[:horizon_len])
             if len(preds_arr) == horizon_len:
                 combined += w[model_name] * preds_arr
+                used += w[model_name]
+        if used <= 0:
+            raise RuntimeError(
+                f"Série {ds_idx}: nenhum modelo tem previsão com {horizon_len} passos. "
+                f"CSVs inconsistentes para '{dataset_name}'."
+            )
+        # renormaliza se algum modelo ficou de fora por comprimento incompatível
+        combined /= used
 
         ref_group = (
             model_dfs[ref_model][model_dfs[ref_model]["dataset_index"] == ds_idx]
@@ -392,68 +382,47 @@ def fforma_combination(
             test_values=np.array(test_actual[ds_idx]),
             dataset_name=dataset_name,
             dataset_index=ds_idx,
-            horizon=horizon,
+            horizon=spec.horizon,
             start_test=last_row["start_test"],
             final_test=last_row["final_test"],
         )
-        print(f"  [{ds_idx}] salvo em resultados/{exp_name}/{dataset_name}.csv")
+
+    print(f"\n[FFORMA] Concluído: {output_csv_path(exp_name, dataset_name)}")
 
 
 # ---------------------------------------------------------------------------
-# Execução padrão
+# CLI
 # ---------------------------------------------------------------------------
-#conda activate fforma
-#cd Statistics_and_Seq2Seq
-#python -m combinations.fforma
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        prog="python -m combinations.fforma",
+        description="Combinação de previsões via FFORMA (Montero-Manso et al. 2020).",
+    )
+    p.add_argument("--dataset", required=True, help="ex: ANP_MONTHLY, M4_WEEKLY_DATASET")
+    p.add_argument("--models", nargs="+", default=None, help="default: os 19 modelos base")
+    p.add_argument("--exp-name", default="FFORMA", help="subpasta de saída em resultados/")
+    p.add_argument("--seasonality", type=int, default=None, help="default: dataset_specs.py")
+    p.add_argument("--horizon", type=int, default=None, help="default: lido do CSV")
+    p.add_argument("--n-estimators", type=int, default=100)
+    p.add_argument("--force-softmax", action="store_true", help="pula o meta-learner")
+    p.add_argument("--smape-threshold", type=float, default=1.5)
+    p.add_argument("--resume", action="store_true", help="continua em vez de apagar a saída")
+    args = p.parse_args(argv)
+
+    fforma_combination(
+        dataset_name=args.dataset,
+        models=args.models,
+        exp_name=args.exp_name,
+        seasonality=args.seasonality,
+        horizon=args.horizon,
+        n_estimators=args.n_estimators,
+        force_softmax=args.force_softmax,
+        smape_threshold=args.smape_threshold,
+        resume=args.resume,
+    )
+    return 0
+
 
 if __name__ == "__main__":
-    models = [
-        "ARIMA",
-        "ETS",
-        "THETA",
-        "rf",
-        "catboost",
-        "CWT_rf",
-        "DWT_rf",
-        "FT_rf",
-        "CWT_catboost",
-        "DWT_catboost",
-        "FT_catboost",
-        "ONLY_CWT_catboost",
-        "ONLY_CWT_rf",
-        "ONLY_DWT_catboost",
-        "ONLY_DWT_rf",
-        "ONLY_FT_catboost",
-        "ONLY_FT_rf",
-        "NaiveSeasonal",
-        "NaiveMovingAverage",
-    ]
-
-    dataset_name = "ANP_MONTHLY"  # 'ETTH1', 'ETTH2', 'ETTM1', 'ETTM2', 'ANP_MONTHLY', 'NN5_WEEKLY_DATASET'
-    map_dataset_name_to_freq = {
-        "ETTH1": {"horizon": 24, "freq": "h"},
-        "ETTH2": {"horizon": 24, "freq": "h"},
-        "ETTM1": {"horizon": 24, "freq": "30min"},
-        "ETTM2": {"horizon": 24, "freq": "30min"},
-        "ANP_MONTHLY": {"horizon": 12, "freq": "ME"},
-        "NN5_WEEKLY_DATASET": {"horizon": 8, "freq": "W"},
-    }
-    seasonality_map = {
-        "ETTH1": 24,
-        "ETTH2": 24,
-        "ETTM1": 48,
-        "ETTM2": 48,
-        "ANP_MONTHLY": 12,
-        "NN5_WEEKLY_DATASET": 7,
-    }
-    freq = map_dataset_name_to_freq[dataset_name]["freq"]
-    horizon = map_dataset_name_to_freq[dataset_name]["horizon"]
-    seasonality = seasonality_map[dataset_name]
-    fforma_combination(
-        models=models,
-        dataset_name=dataset_name,
-        seasonality=seasonality,
-        horizon=horizon,
-        freq=freq,
-        exp_name="FFORMA",
-    )
+    raise SystemExit(main())

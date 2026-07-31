@@ -1287,10 +1287,15 @@ def test_reasoning_is_omitted_unless_configured():
     sys.modules["langchain_ollama"] = mod
     try:
         OllamaClient(role=LLMRole(model="m"))._client()
-        assert "reasoning" not in captured
+        assert "reasoning" not in captured, "unset must mean the model's own default"
         captured.clear()
         OllamaClient(role=LLMRole(model="m", reasoning=False))._client()
         assert captured["reasoning"] is False
+        # an intensity level must reach Ollama as the STRING, not coerced to a bool:
+        # bool("low") is True, which would silently mean something else
+        captured.clear()
+        OllamaClient(role=LLMRole(model="m", reasoning="low"))._client()
+        assert captured["reasoning"] == "low"
     finally:
         sys.modules.pop("langchain_ollama", None)
 

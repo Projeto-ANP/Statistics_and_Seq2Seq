@@ -12,14 +12,14 @@ Referência: Montero-Manso et al. (2020) — <https://robjhyndman.com/publicatio
 FFORMA combina previsões de vários modelos usando **pesos aprendidos** a partir de
 **características da série temporal** (tsfeatures). Em vez de uma média fixa, o método:
 
-1. Extrai ~42 features estatísticas de cada série (autocorrelação, sazonalidade,
+1. Extrai as features estatísticas de cada série (autocorrelação, sazonalidade,
    hurst, unitroot, etc.) via a biblioteca `tsfeatures`.
 2. Calcula o erro de cada modelo base numa janela de **validação** (nunca teste).
-3. Treina um **meta-learner LightGBM** que aprende a prever qual modelo terá
+3. Treina um **meta-learner XGBoost** que aprende a prever qual modelo terá
    menor erro dado as features da série.
-4. Usa `softmax(raw_score_LGB)` como pesos → aplica sobre as previsões de teste.
+4. Usa `softmax(raw_score)` como pesos → aplica sobre as previsões de teste.
 
-Com poucas séries (<10), o LightGBM não tem dados suficientes para generalizar;
+Com poucas séries (<10), o meta-learner não tem dados suficientes para generalizar;
 o script detecta isso e usa **softmax direto dos erros de validação** como fallback
 (modelos com menor erro histórico recebem maior peso — simples e robusto).
 
@@ -45,13 +45,41 @@ vistos pelo meta-learner.
 
 ## Como rodar
 
+Primeira vez na máquina:
+
 ```bash
-cd Statistics_and_Seq2Seq
-conda run -n agno python -m combinations.fforma
+conda env create -f fforma_environment.yml
 ```
 
-O bloco `if __name__ == "__main__":` no fim do arquivo define os modelos,
-dataset, sazonalidade e horizonte padrão (ETTH1, seasonality=24, horizon=24).
+Depois, a partir da pasta `Statistics_and_Seq2Seq/`:
+
+```bash
+conda activate fforma-combinations
+python -m combinations.fforma --dataset ANP_MONTHLY
+```
+
+Não há mais bloco `__main__` com dataset hardcoded: frequência, sazonalidade e
+horizonte vêm de `combinations/dataset_specs.py` (o horizonte é lido direto da
+coluna `horizon` do CSV). Rodar um dataset novo é só trocar `--dataset`.
+
+### Flags
+
+| flag | default | para quê |
+|------|---------|----------|
+| `--dataset` | (obrigatória) | `ANP_MONTHLY`, `M4_WEEKLY_DATASET`, `US_BIRTHS_DATASET`, … |
+| `--models` | os 19 modelos base | lista de modelos base |
+| `--exp-name` | `FFORMA` | subpasta de saída em `resultados/` |
+| `--seasonality` | de `dataset_specs.py` | período sazonal do `tsfeatures` |
+| `--horizon` | lido do CSV | sobrescreve o horizonte |
+| `--n-estimators` | `100` | rodadas de boosting |
+| `--force-softmax` | desligado | pula o meta-learner |
+| `--smape-threshold` | `1.5` | no fallback, zera modelos acima disso |
+| `--resume` | desligado | continua de onde parou em vez de apagar a saída |
+
+**Sobre `--resume`:** `aux.save_to_csv` faz *append*. Sem `--resume`, o script
+apaga o CSV de saída antes de começar — de propósito, porque rerodar sem apagar
+duplica as linhas e o `drop_duplicates(keep="first")` do MCM passa a ler as
+linhas **antigas**, ou seja, o resultado novo nunca apareceria na comparação.
 
 ### API programática
 
@@ -59,10 +87,8 @@ dataset, sazonalidade e horizonte padrão (ETTH1, seasonality=24, horizon=24).
 from combinations.fforma import fforma_combination
 
 fforma_combination(
-    models=["ARIMA", "ETS", "rf", "catboost", "median"],
     dataset_name="ETTH1",
-    seasonality=24,      # período sazonal para tsfeatures (24h → diário)
-    horizon=24,
+    models=["ARIMA", "ETS", "rf", "catboost"],  # default: os 19
     exp_name="FFORMA",   # subpasta de saída em resultados/
 )
 ```
@@ -73,83 +99,82 @@ fforma_combination(
 
 | Parâmetro        | Tipo            | Default    | Descrição |
 |------------------|-----------------|------------|-----------|
-| `models`         | `list[str]`     | —          | Modelos base. Cada um precisa ter `resultados/<M>/normal/<D>.csv` |
 | `dataset_name`   | `str`           | —          | Nome do dataset (ex: `'ETTH1'`) |
-| `seasonality`    | `int`           | —          | Período sazonal para tsfeatures (24 = horário, 12 = mensal, 7 = diário com sazonalidade semanal) |
-| `horizon`        | `int`           | —          | Horizonte de previsão |
+| `models`         | `list[str]\|None` | `None`   | Modelos base; `None` = os 19 de `DEFAULT_MODELS`. Cada um precisa ter `resultados/<M>/normal/<D>.csv` |
 | `exp_name`       | `str`           | `"FFORMA"` | Nome da pasta de saída em `resultados/` |
-| `lgb_params`     | `dict\|None`   | `None`     | Parâmetros extras para o LightGBM (só usado se ≥10 séries) |
-| `n_estimators`   | `int`           | `100`      | Número de árvores LightGBM |
-| `force_softmax`  | `bool`          | `False`    | Se `True`, ignora o LightGBM e usa softmax dos erros mesmo com muitas séries |
+| `seasonality`    | `int\|None`     | `None`     | `None` = usa `dataset_specs.py` (24 = horário, 12 = mensal, 7 = diário com sazonalidade semanal, 1 = não-sazonal) |
+| `horizon`        | `int\|None`     | `None`     | `None` = lê da coluna `horizon` do CSV |
+| `lgb_params`     | `dict\|None`    | `None`     | Parâmetros extras para o XGBoost (só usado se ≥10 séries) |
+| `n_estimators`   | `int`           | `100`      | Rodadas de boosting |
+| `force_softmax`  | `bool`          | `False`    | Se `True`, ignora o meta-learner e usa softmax dos erros |
 | `smape_threshold`| `float`         | `1.5`      | Modelos com SMAPE de validação ≥ este valor recebem peso zero. Evita que previsões numericamente absurdas contaminem o ensemble. |
+| `resume`         | `bool`          | `False`    | Continua de onde parou em vez de apagar a saída |
 
 ---
 
 ## Testando outras configurações
 
-### Outro dataset (mensal)
+```bash
+# Outro dataset — sazonalidade e horizonte saem de dataset_specs.py / do CSV
+python -m combinations.fforma --dataset ANP_MONTHLY --exp-name FFORMA_anp
+
+# Subconjunto de modelos base
+python -m combinations.fforma --dataset ETTH1 --models ARIMA ETS rf catboost
+
+# Só softmax dos erros (sem tsfeatures, sem meta-learner)
+python -m combinations.fforma --dataset ETTH1 --force-softmax
+
+# Threshold mais agressivo para excluir modelos ruins no fallback
+python -m combinations.fforma --dataset ETTH1 --force-softmax --smape-threshold 1.0
+
+# Mais rodadas de boosting
+python -m combinations.fforma --dataset ANP_MONTHLY --n-estimators 200
+
+# Sobrescrever a sazonalidade do registro
+python -m combinations.fforma --dataset NN5_WEEKLY_DATASET --seasonality 52
+```
+
+Parâmetros extras do XGBoost não têm flag (são um dict); use a API:
 
 ```python
 fforma_combination(
-    models=["ARIMA", "ETS", "rf", "catboost"],
     dataset_name="ANP_MONTHLY",
-    seasonality=12,
-    horizon=12,
-    exp_name="FFORMA_anp",
-)
-```
-
-### Forçar o meta-learner LightGBM (mesmo com poucas séries)
-
-```python
-fforma_combination(
-    models=["ARIMA", "ETS", "rf"],
-    dataset_name="ETTH1",
-    seasonality=24,
-    horizon=24,
-    exp_name="FFORMA_lgb",
-    force_softmax=False,        # padrão; mas com 7 séries vai usar softmax anyway
-    smape_threshold=1.5,
-)
-```
-
-### Ajustar threshold de exclusão de modelos ruins
-
-```python
-# Modelos com SMAPE ≥ 1.0 (em vez de 1.5) recebem peso zero
-fforma_combination(
-    models=[...],
-    dataset_name="ETTH1",
-    seasonality=24,
-    horizon=24,
-    smape_threshold=1.0,
-)
-```
-
-### Usar apenas softmax de erros (sem tsfeatures, sem LightGBM)
-
-```python
-fforma_combination(
-    models=[...],
-    dataset_name="ETTH1",
-    seasonality=24,
-    horizon=24,
-    force_softmax=True,
-)
-```
-
-### LightGBM com parâmetros customizados (quando tiver ≥10 séries)
-
-```python
-fforma_combination(
-    models=[...],
-    dataset_name="GRANDE_DATASET",
-    seasonality=12,
-    horizon=12,
     lgb_params={"eta": 0.05, "max_depth": 6, "subsample": 0.8},
     n_estimators=200,
 )
 ```
+
+### Datasets registrados
+
+`combinations/dataset_specs.py` guarda a sazonalidade de cada dataset — a única
+coisa que é escolha do pesquisador. Frequência é conferida contra os timestamps
+reais e o horizonte é lido da coluna `horizon` do CSV.
+
+| dataset | freq | seasonality | séries |
+|---|---|---|---|
+| `ETTH1` / `ETTH2` | `h` | 24 | 7 |
+| `ETTM1` / `ETTM2` | `30min` | 48 | 7 |
+| `ANP_MONTHLY` | `ME` | 12 | 182 |
+| `NN5_WEEKLY_DATASET` | `W` | 7 † | 111 |
+| `M4_WEEKLY_DATASET` | `7D` | 1 ‡ | 359 |
+| `US_BIRTHS_DATASET` | `D` | 7 | 1 |
+
+† Para dado semanal o período natural seria 52 (anual) ou 1 (não-sazonal); o 7
+vem de uma confusão com a versão **diária** do NN5. Está mantido porque é o
+valor com que os resultados já publicados (`mcm_output_v5`) foram gerados —
+trocar exige regerar o FFORMA e refazer as comparações.
+
+‡ A competição M4 trata as séries semanais como não-sazonais (Makridakis et al.
+2020).
+
+Um dataset não registrado **já roda**: `resolve_spec` mede o passo entre os
+timestamps, infere a frequência e imprime o que inferiu.
+
+> **Atenção com `US_BIRTHS_DATASET`:** tem **1 série só**. Abaixo de 10 séries o
+> meta-learner não tem amostra para aprender nada entre séries, então o script
+> cai automaticamente no softmax dos erros de validação. O resultado é válido,
+> mas **não é FFORMA de verdade** — é ponderação inversa ao erro. Vale dizer isso
+> explicitamente se esse dataset entrar na comparação do paper.
 
 ---
 
@@ -195,11 +220,12 @@ dataset_index ; horizon ; regressor ; mape ; pocid ; smape ; rmse ; msmape ; mae
 4. _split_val_test()                → separa val (posições 0..N-2) e teste (N-1)
 5. _compute_errors()                → SMAPE médio por (série, modelo) na validação
 6. _build_series_df()               → valores reais de val em formato long (uid,ds,y)
-7. tsfeatures(series_df, freq=...)  → ~42 features por série
+7. tsfeatures(series_df, freq=...)  → features por série (42 com sazonalidade,
+                                       37 quando seasonality=1)
 8. meta-learner:
      se n_series >= 10 e não force_softmax:
-       _train_lgb_fforma()          → LightGBM com objetivo FFORMA
-       _compute_weights_lgb()       → softmax(raw_scores) por série
+       _train_fforma_booster()      → XGBoost com objetivo FFORMA
+       _compute_weights_booster()   → softmax(raw_scores) por série
      else:
        _compute_weights_softmax()   → softmax(-SMAPE), threshold zera modelos ruins
 9. para cada série:
@@ -220,7 +246,7 @@ L = E[softmax(score) · erro_por_modelo]
 
 Isso penaliza mais dar peso alto a modelos ruins, em vez de apenas prever o rótulo
 da classe vencedora. O gradiente/hessiana personalizado (`_fforma_objective`) é
-passado ao LightGBM via `fobj`.
+passado ao XGBoost via `obj`.
 
 Com poucas séries, esse objetivo mais complexo não estabiliza — daí o fallback
 para softmax direto dos erros, que é matematicamente equivalente ao "1 rodada
@@ -231,8 +257,30 @@ de FFORMA" sem aprendizado de features.
 ## Instalação das dependências
 
 ```bash
-conda run -n agno pip install tsfeatures lightgbm
+conda env create -f fforma_environment.yml
+conda activate fforma-combinations
 ```
 
-`lightgbm` já deve estar instalado (`metaforecast` puxa ele). O `tsfeatures`
-instala também `antropy` e `supersmoother`.
+Env separado do `ade-combinations`: o FFORMA não precisa de torch/lightning, e
+o `tsfeatures` exige statsmodels/numba, que o ADE não usa.
+
+O yml pina `xgboost==2.1.4`: a partir da 2.1 o XGBoost entrega `predt` com
+shape `(n_amostras, n_classes)` para objetivos customizados, que é o formato que
+`_fforma_objective` espera. Versões anteriores entregam achatado e o gradiente
+sai errado **sem levantar erro**.
+
+### Reprodutibilidade
+
+Rodar duas vezes no mesmo env dá resultado bit-a-bit idêntico (verificado no
+ANP: `max |diff| = 0.0`).
+
+Os resultados publicados em `resultados/FFORMA/` foram gerados num env `fforma`
+antigo que não existe mais, com outra versão de XGBoost. Regerando com o env
+pinado, o ANP dá SMAPE médio **0.216600** contra **0.216593** publicado
+(diferença de 0.003%, máximo de 0.00196 numa série). A lógica é a mesma — só a
+versão do booster mudou. Para ter todos os números vindos de um ambiente
+reprodutível, regere a baseline:
+
+```bash
+python -m combinations.fforma --dataset ANP_MONTHLY
+```

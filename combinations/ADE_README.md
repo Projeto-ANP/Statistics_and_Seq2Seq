@@ -31,15 +31,45 @@ ponderamento (default 1.0 = mantém todos).
 
 ## Como rodar
 
-A partir da pasta `Statistics_and_Seq2Seq/`:
+Primeira vez na máquina:
 
 ```bash
-conda run -n agno python -m combinations.ade
+conda env create -f ade_environment.yml
 ```
 
-O bloco `if __name__ == "__main__":` no fim de `ade.py` define modelos,
-dataset, freq e horizon padrão (ETTH1, freq=H, horizon=24). Edite esse bloco ou
-chame a função pela API.
+Depois, a partir da pasta `Statistics_and_Seq2Seq/`:
+
+```bash
+conda activate ade-combinations
+python -m combinations.ade --dataset ANP_MONTHLY
+```
+
+Não há mais bloco `__main__` com dataset hardcoded: frequência, sazonalidade e
+horizonte vêm de `combinations/dataset_specs.py` (e o horizonte é lido direto da
+coluna `horizon` do CSV). Rodar um dataset novo é só trocar `--dataset`.
+
+### Flags
+
+| flag | default | para quê |
+|------|---------|----------|
+| `--dataset` | (obrigatória) | `ANP_MONTHLY`, `M4_WEEKLY_DATASET`, `US_BIRTHS_DATASET`, … |
+| `--models` | os 19 modelos base | lista de modelos base |
+| `--exp-name` | `ADE` | subpasta de saída em `resultados/` |
+| `--trim-ratio` | `1.0` | fração dos melhores especialistas a manter |
+| `--horizon` | lido do CSV | sobrescreve o horizonte |
+| `--resume` | desligado | continua de onde parou em vez de apagar a saída |
+| `--on-error` | `raise` | `skip` para pular séries que falharem |
+
+Rodadas longas (M4 semanal tem 359 séries, ~50 s no total):
+
+```bash
+nohup python -m combinations.ade --dataset M4_WEEKLY_DATASET > logs/ade_m4.log 2>&1 &
+```
+
+**Sobre `--resume`:** `aux.save_to_csv` faz *append*. Sem `--resume`, o script
+apaga o CSV de saída antes de começar — de propósito, porque rerodar sem apagar
+duplica as linhas e o `drop_duplicates(keep="first")` do MCM passa a ler as
+linhas **antigas**, ou seja, o resultado novo nunca apareceria na comparação.
 
 ### API programática
 
@@ -47,10 +77,8 @@ chame a função pela API.
 from combinations.ade import ade_combination
 
 ade_combination(
-    models=["ARIMA", "ETS", "THETA", "rf", "catboost"],
     dataset_name="ETTH1",
-    freq="H",           # horário
-    horizon=24,
+    models=["ARIMA", "ETS", "THETA", "rf", "catboost"],  # default: os 19
     exp_name="ADE",     # subpasta de saída em resultados/
     trim_ratio=1.0,     # 1.0 = usa todos; 0.5 = só metade superior
 )
@@ -59,6 +87,12 @@ ade_combination(
 ---
 
 ## Frequências aceitas
+
+`dataset_specs.py` guarda dois campos de frequência por dataset porque são
+vocabulários diferentes: `freq` é o alias pandas usado para reconstruir o eixo
+temporal (aliases modernos — `h`, `ME`; `H` e `M` foram removidos no pandas 3),
+e `freq_ade` é a chave que o ADE aceita. Meia-hora não existe na tabela do ADE,
+então `ETTM1/ETTM2` mapeiam para `H` e o script avisa no console.
 
 ADE só aceita estas chaves (definidas em `metaforecast.ensembles.ADE.WINDOW_SIZE_BY_FREQ`):
 
@@ -146,39 +180,44 @@ do ADE contra os valores reais (coluna `test` do **modelo de referência**, que
 
 ## Trocando para outros datasets/modelos
 
-Edite o bloco final de `ade.py` ou chame a função:
+```bash
+python -m combinations.ade --dataset ANP_MONTHLY
+python -m combinations.ade --dataset M4_WEEKLY_DATASET
+python -m combinations.ade --dataset US_BIRTHS_DATASET
+python -m combinations.ade --dataset ETTH1 --models ARIMA ETS rf catboost --exp-name ADE_4models
+```
+
+### Adicionando um dataset que ainda não existe
+
+Um dataset não registrado **já roda**: `resolve_spec` mede o passo entre os
+timestamps e infere a frequência, imprimindo o que inferiu. Só a sazonalidade
+(usada pelo FFORMA, não pelo ADE) é palpite. Para fixar, adicione uma linha em
+`DATASET_SPECS` (`combinations/dataset_specs.py`):
 
 ```python
-# Mensal
-ade_combination(
-    models=["ARIMA", "ETS", "rf", "catboost"],
-    dataset_name="ANP_MONTHLY",
-    freq="ME",
-    horizon=12,
-    exp_name="ADE_anp",
-)
-
-# Diário
-ade_combination(
-    models=["ARIMA", "ETS", "rf"],
-    dataset_name="NN5_DAILY_DATASET_WITHOUT_MISSING_VALUES",
-    freq="D",
-    horizon=56,
-    exp_name="ADE_nn5d",
-)
+"MEU_DATASET": DatasetSpec("MEU_DATASET", freq="D", freq_ade="D", seasonality=7),
 ```
+
+O horizonte nunca precisa ser declarado — sai da coluna `horizon` do CSV.
+Se a frequência declarada não bater com os timestamps reais, `resolve_spec`
+aborta com a diferença explícita (foi assim que o problema de resolução do ETTM
+teria sido pego).
 
 ---
 
 ## Instalação (uma vez)
 
 ```bash
-conda run -n agno pip install metaforecast
+conda env create -f ade_environment.yml
 ```
 
-`metaforecast` puxa também `lightgbm` e `lightning-fabric`. Você pode ver um
-aviso de `pkg_resources is deprecated` na importação — é cosmético e vem do
-`lightning-fabric`.
+`metaforecast` puxa `lightgbm`, `neuralforecast`, `pytorch-lightning` e `torch`
+— por isso o env é separado do `agno`.
+
+O yml pina `setuptools<81` de propósito: a partir da 81 o `pkg_resources` foi
+removido, e o `lightning_fabric` ainda chama `pkg_resources.declare_namespace()`
+no import. Sem o pin, `from metaforecast.ensembles import ADE` quebra com
+`ModuleNotFoundError: No module named 'pkg_resources'`.
 
 ---
 

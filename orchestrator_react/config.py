@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Union
 
 
 # Composite-score weights (lower is better). Kept compatible with the historical
@@ -175,6 +175,22 @@ class ReactConfig:
     #: restriction — the catalog stays open. Costs nothing extra: it reuses the
     #: pre-pass that `pooled_meta_model` already runs.
     dataset_card: bool = True
+    #: Drop models whose windows do not match the rest of the pool, instead of
+    #: failing the series. On ETTM1/ETTM2 five models (ONLY_CWT_catboost,
+    #: ONLY_DWT_catboost, ONLY_DWT_rf, ONLY_FT_catboost, ONLY_FT_rf) were generated
+    #: over a different period at a different sampling step than the other fourteen,
+    #: so their actuals are different numbers — combining across them is adding two
+    #: unrelated quantities, not averaging forecasts.
+    #:
+    #: The existing baselines do not fail there because they never look: `mean.py`
+    #: takes the actuals from `models[0]` alone, and `ade.py`'s alignment check
+    #: compares window COUNTS only, documenting that dates "podem divergir". So
+    #: their ETTM numbers combine mismatched windows silently. Matching that
+    #: behaviour would make our number comparable to theirs and equally
+    #: meaningless; dropping the five gives a smaller pool that is actually
+    #: coherent. Which models were dropped is recorded per series, so the smaller
+    #: pool is never invisible in the comparison.
+    drop_misaligned_models: bool = True
     #: Training objective for the pooled meta-model. Measured head-to-head (same
     #: 26 features, same LOSO folds, only the objective differing):
     #:   "fforma"    ANP 0.2159 — past the real FFORMA baseline (0.2166) — NN5 0.1197

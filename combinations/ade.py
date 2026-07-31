@@ -1,145 +1,80 @@
 """
 Combinação de previsões via ADE (Arbitrated Dynamic Ensemble) — metaforecast.
 
-Segue a mesma estrutura de chamada de `combinations/mean.py` e `combinations/dba.py`:
-configura `models`, `dataset_name`, `freq` e `horizon`, e o script gera as
-previsões combinadas para cada série (dataset_index) do dataset.
+Todas as janelas de validação do CSV de cada modelo (as mais antigas) viram
+treino do meta-modelo; a janela mais recente (teste) é a que se prevê.
 
-Como ADE precisa de histórico para aprender os pesos por especialista, todos os
-rows de validação presentes no CSV de cada modelo são usados como treino
-(janelas mais antigas), e o row mais recente (test) é usado para predição.
+Primeira vez na máquina (o env `ade-combinations` ainda não existe):
+    conda env create -f ade_environment.yml
 
-Para rodar:
+Toda execução:
     conda activate ade-combinations
-cd Statistics_and_Seq2Seq
-python -m combinations.ade
+    cd Statistics_and_Seq2Seq
+    python -m combinations.ade --dataset ANP_MONTHLY
 
+Datasets, frequências e horizontes vêm de `combinations/dataset_specs.py`
+(o horizonte é lido do próprio CSV). Rodar um dataset novo é só passar --dataset.
 """
 
 from __future__ import annotations
 
-import os
+import argparse
+import time
 import warnings
-from typing import Iterable
 
-import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_percentage_error as mape
 
-from . import aux, metrics
+from . import aux
+from .dataset_specs import (
+    DEFAULT_MODELS,
+    DatasetSpec,
+    check_windows_alignment,
+    describe,
+    output_csv_path,
+    prepare_output,
+    read_all_model_dfs,
+    resolve_spec,
+    validate_models_have_dataset,
+    window_dates,
+)
 
-# Import metaforecast só quando rodar (é pesado e o erro fica claro se faltar)
 try:
     from metaforecast.ensembles import ADE
-except ImportError as e:
+except ImportError as e:  # pragma: no cover - depende do ambiente
     raise ImportError(
-        "metaforecast não está instalado no ambiente. Rode:\n"
-        "    conda run -n agno pip install metaforecast"
+        "metaforecast não está instalado neste ambiente.\n"
+        "    conda env create -f ade_environment.yml\n"
+        "    conda activate ade-combinations"
     ) from e
 
 
-BASE_RESULTS = "./timeseries/mestrado/resultados"
-
-# Frequências nativamente suportadas por ADE (metaforecast.ensembles.ADE.WINDOW_SIZE_BY_FREQ).
-# Half-hourly ('30min') não existe na lista — mapeamos para 'H' (window_size=48, ~2 dias),
-# que é a aproximação mais próxima. Um aviso é emitido em _normalize_freq.
-_ADE_FREQ_ALIASES = {
-    "h": "H", "H": "H",
-    "30min": "H", "30T": "H", "30t": "H",  # half-hourly → H (melhor aproximação disponível)
-    "d": "D", "D": "D",
-    "w": "W", "W": "W",
-    "m": "M", "M": "M", "ME": "ME", "MS": "MS",
-    "q": "Q", "Q": "Q", "QS": "QS",
-    "y": "Y", "Y": "Y",
-}
-
-# Mapeamentos que precisam de aviso por serem aproximações
-_ADE_FREQ_WARNINGS = {
-    "30min": "H", "30T": "H", "30t": "H",
+# Frequências que o ADE aceita (metaforecast.ensembles.ADE.WINDOW_SIZE_BY_FREQ).
+_ADE_WINDOW_BY_FREQ = {
+    "H": 48, "D": 14, "W": 16, "M": 12, "ME": 12, "MS": 12, "Q": 4, "QS": 4, "Y": 6,
 }
 
 
-def _normalize_freq(freq: str) -> str:
-    if freq not in _ADE_FREQ_ALIASES:
+def normalize_freq_for_ade(spec: DatasetSpec) -> str:
+    """
+    `spec.freq_ade` já vem no vocabulário do ADE; aqui só validamos e avisamos
+    quando o mapeamento é aproximação (meia-hora não existe na tabela do ADE).
+    """
+    freq_ade = spec.freq_ade
+    if freq_ade not in _ADE_WINDOW_BY_FREQ:
         raise ValueError(
-            f"freq='{freq}' não é suportado pelo ADE. "
-            f"Use uma de: {sorted(set(_ADE_FREQ_ALIASES.values()))}"
+            f"freq_ade='{freq_ade}' não é suportado pelo ADE. "
+            f"Use uma de: {sorted(_ADE_WINDOW_BY_FREQ)}"
         )
-    if freq in _ADE_FREQ_WARNINGS:
-        mapped = _ADE_FREQ_ALIASES[freq]
+    if spec.freq in ("30min", "15min"):
         print(
-            f"[ADE] Aviso: freq='{freq}' não é suportado nativamente pelo ADE. "
-            f"Usando '{mapped}' como aproximação (window_size=48)."
+            f"[ADE] Aviso: dados em '{spec.freq}' não têm janela nativa no ADE. "
+            f"Usando '{freq_ade}' (window_size={_ADE_WINDOW_BY_FREQ[freq_ade]}) como aproximação."
         )
-    return _ADE_FREQ_ALIASES[freq]
+    return freq_ade
 
 
 # ---------------------------------------------------------------------------
-# Validação e leitura
-# ---------------------------------------------------------------------------
-
-def _model_csv_path(model_name: str, dataset_name: str) -> str:
-    return f"{BASE_RESULTS}/{model_name}/normal/{dataset_name}.csv"
-
-
-def validate_models_have_dataset(models: Iterable[str], dataset_name: str) -> None:
-    """Garante que cada modelo possui o CSV do dataset. Senão, levanta FileNotFoundError."""
-    missing = [m for m in models if not os.path.exists(_model_csv_path(m, dataset_name))]
-    if missing:
-        paths = "\n  - ".join(_model_csv_path(m, dataset_name) for m in missing)
-        raise FileNotFoundError(
-            f"Os modelos abaixo não possuem resultados para o dataset '{dataset_name}':\n"
-            f"  - {paths}"
-        )
-
-
-def _read_model_df(model_name: str, dataset_name: str) -> pd.DataFrame:
-    df = pd.read_csv(_model_csv_path(model_name, dataset_name), sep=";")
-    df["start_test"] = pd.to_datetime(df["start_test"], errors="coerce")
-    df["final_test"] = pd.to_datetime(df["final_test"], errors="coerce")
-    df = df.sort_values(by=["dataset_index", "start_test"]).reset_index(drop=True)
-    return df
-
-
-def _windows_count_per_series(df: pd.DataFrame) -> dict[int, int]:
-    """{dataset_index: número de janelas}"""
-    out: dict[int, int] = {}
-    for ds_idx, group in df.groupby("dataset_index"):
-        out[int(ds_idx)] = len(group)
-    return out
-
-
-def _check_windows_alignment(model_dfs: dict[str, pd.DataFrame]) -> None:
-    """
-    Confere que todos os modelos têm:
-      - o mesmo conjunto de dataset_index
-      - o mesmo número de janelas por dataset_index
-    As datas reais (start_test/final_test) podem divergir entre modelos
-    (cada modelo pode ter sido treinado/testado num split temporal distinto),
-    mas a *posição relativa* (val mais antiga → val mais recente → test) tem
-    que ser consistente. As datas canônicas do primeiro modelo são usadas
-    como eixo temporal comum.
-    """
-    ref_name = next(iter(model_dfs))
-    ref_counts = _windows_count_per_series(model_dfs[ref_name])
-    for name, df in model_dfs.items():
-        cur_counts = _windows_count_per_series(df)
-        if cur_counts.keys() != ref_counts.keys():
-            raise ValueError(
-                f"Modelo '{name}' tem dataset_index diferente de '{ref_name}': "
-                f"{sorted(cur_counts.keys())} vs {sorted(ref_counts.keys())}"
-            )
-        for k in ref_counts:
-            if cur_counts[k] != ref_counts[k]:
-                raise ValueError(
-                    f"Modelo '{name}' tem {cur_counts[k]} janelas para "
-                    f"dataset_index={k}, mas '{ref_name}' tem {ref_counts[k]}. "
-                    f"Os modelos precisam ter o mesmo número de janelas por série."
-                )
-
-
-# ---------------------------------------------------------------------------
-# Construção dos DataFrames no formato ADE
+# Construção dos DataFrames no formato metaforecast
 # ---------------------------------------------------------------------------
 
 def _build_long_dataframes(
@@ -148,69 +83,69 @@ def _build_long_dataframes(
     freq: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[int, pd.Series]]:
     """
-    Constrói dois DataFrames longos no formato esperado pelo metaforecast:
+    Dois DataFrames longos no formato esperado pelo metaforecast:
 
-    - combined_df  → linhas de treino/validação: unique_id, ds, y, MODEL1, MODEL2, …
-    - df_predictions → linhas do horizonte de teste: unique_id, ds, MODEL1, MODEL2, …
+    - combined_df    -> janelas de validação: unique_id, ds, y, MODEL1, MODEL2, …
+    - df_predictions -> janela de teste:      unique_id, ds,    MODEL1, MODEL2, …
 
-    Também devolve test_per_series: {dataset_index: pd.Series dos valores reais do teste}.
+    Também devolve {dataset_index: Series com os valores reais do teste}.
+
+    As datas do primeiro modelo são o eixo canônico: modelos podem ter splits
+    temporais distintos, mas a posição relativa das janelas é a mesma (garantido
+    por `check_windows_alignment`).
     """
-    # 1) Pegar as datas canônicas do primeiro modelo (referência).
-    #    Para cada dataset_index → lista de (start_test, final_test) ordenadas crescentes.
     ref_name = models[0]
     ref_df = model_dfs[ref_name]
-    canonical_windows: dict[int, list[tuple[pd.Timestamp, pd.Timestamp]]] = {}
-    for ds_idx, group in ref_df.groupby("dataset_index"):
-        sorted_group = group.sort_values("start_test")
-        canonical_windows[int(ds_idx)] = list(
-            zip(sorted_group["start_test"], sorted_group["final_test"])
-        )
 
-    # 2) Coletar predições e y em estrutura long por modelo, usando as datas canônicas
+    canonical_starts: dict[int, list[pd.Timestamp]] = {}
+    for ds_idx, group in ref_df.groupby("dataset_index"):
+        canonical_starts[int(ds_idx)] = list(group.sort_values("start_test")["start_test"])
+
     combined_df = pd.DataFrame()
     df_predictions = pd.DataFrame()
     test_per_series: dict[int, pd.Series] = {}
 
     for model_name in models:
-        model_data_train: list[dict] = []
-        model_data_test: list[dict] = []
-
+        rows_train: list[dict] = []
+        rows_test: list[dict] = []
         df = model_dfs[model_name]
 
         for ds_idx, group in df.groupby("dataset_index"):
             unique_id = str(int(ds_idx))
             group = group.sort_values("start_test").reset_index(drop=True)
-            windows = canonical_windows[int(ds_idx)]  # mesma ordem cronológica
+            starts = canonical_starts[int(ds_idx)]
+            n_windows = len(starts)
 
             for pos, row in group.iterrows():
-                start_ds, end_ds = windows[pos]
-                date_range = pd.date_range(start=start_ds, end=end_ds, freq=freq)
                 preds = aux.extract_values(row["predictions"])
                 tests = aux.extract_values(row["test"])
+                # o eixo cobre o maior dos dois; window_dates garante o
+                # comprimento exato, então nada é descartado em silêncio
+                n_points = max(len(preds), len(tests))
+                if n_points == 0:
+                    continue
+                dates = window_dates(starts[pos], n_points, freq)
 
-                is_test_window = pos == len(windows) - 1
-
-                if is_test_window:
+                if pos == n_windows - 1:  # janela de teste
                     if model_name == ref_name:
                         test_per_series[int(unique_id)] = pd.Series(tests)
-                    for i in range(len(date_range)):
-                        entry = {"unique_id": unique_id, "ds": date_range[i]}
+                    for i in range(n_points):
+                        entry = {"unique_id": unique_id, "ds": dates[i]}
                         if i < len(preds):
                             entry[model_name] = preds[i]
-                        model_data_test.append(entry)
-                else:
-                    for i in range(len(date_range)):
-                        entry = {"unique_id": unique_id, "ds": date_range[i]}
+                        rows_test.append(entry)
+                else:                      # janelas de validação
+                    for i in range(n_points):
+                        entry = {"unique_id": unique_id, "ds": dates[i]}
                         if i < len(tests):
                             entry["y"] = tests[i]
                         if i < len(preds):
                             entry[model_name] = preds[i]
-                        model_data_train.append(entry)
+                        rows_train.append(entry)
 
-        model_df_train = pd.DataFrame(model_data_train)
-        model_df_test = pd.DataFrame(model_data_test)
+        model_df_train = pd.DataFrame(rows_train)
+        model_df_test = pd.DataFrame(rows_test)
 
-        # merge wide
         if df_predictions.empty:
             df_predictions = model_df_test
         else:
@@ -245,19 +180,19 @@ def _ade_predict_one_series(
     df_predictions: pd.DataFrame,
     unique_id: str,
     horizon: int,
-    freq: str,
+    freq_ade: str,
     trim_ratio: float = 1.0,
 ) -> pd.Series:
     df_train = combined_df[combined_df["unique_id"] == unique_id].copy()
     df_test = df_predictions[df_predictions["unique_id"] == unique_id].copy()
     main_df = df_train[["unique_id", "ds", "y"]].dropna(subset=["y"])
 
-    # meta_lags não pode passar do tamanho da série de treino disponível
+    # meta_lags não pode passar do tamanho do histórico disponível
     n_train = len(main_df)
     max_lag = max(1, min(horizon, max(1, n_train - 1)))
     meta_lags = list(range(1, max_lag + 1))
 
-    ensemble = ADE(freq=freq, meta_lags=meta_lags, trim_ratio=trim_ratio)
+    ensemble = ADE(freq=freq_ade, meta_lags=meta_lags, trim_ratio=trim_ratio)
     ensemble.fit(df_train)
     ade_fcst = ensemble.predict(df_test, train=main_df, h=horizon)
     return pd.Series(ade_fcst.tolist())
@@ -268,124 +203,130 @@ def _ade_predict_one_series(
 # ---------------------------------------------------------------------------
 
 def ade_combination(
-    models: list[str],
     dataset_name: str,
-    freq: str,
-    horizon: int,
+    models: list[str] | None = None,
     exp_name: str = "ADE",
     trim_ratio: float = 1.0,
+    horizon: int | None = None,
+    resume: bool = False,
+    on_error: str = "raise",
 ) -> None:
     """
     Gera previsões combinadas via ADE para todas as séries do dataset.
 
     Args:
-        models: lista de modelos base (precisam ter CSV em resultados/<MODEL>/normal/<DATASET>.csv)
-        dataset_name: ex: 'ETTH1', 'ETTH2', 'ANP_MONTHLY'
-        freq: frequência pandas. 'h' para horário, 'ME' para mês final, 'D' para diário, etc.
-        horizon: tamanho do horizonte de previsão (ex: 12, 24)
-        exp_name: nome da pasta de saída em resultados/ (default 'ADE')
-        trim_ratio: fração de modelos top a manter no ensemble (default 1.0 = todos)
+        dataset_name: 'ANP_MONTHLY', 'NN5_WEEKLY_DATASET', 'M4_WEEKLY_DATASET', …
+        models:       modelos base; default = os 19 de `DEFAULT_MODELS`
+        exp_name:     subpasta de saída em resultados/ (default 'ADE')
+        trim_ratio:   fração dos melhores especialistas a manter (1.0 = todos)
+        horizon:      sobrescreve o horizonte lido do CSV
+        resume:       continua de onde parou em vez de apagar a saída
+        on_error:     'raise' aborta na primeira série que falhar (default,
+                      porque saída incompleta desalinha a comparação no MCM);
+                      'skip' registra a falha e segue.
     """
-    # 0) freq_data = frequência real do dataset (para date_range)
-    #    freq_ade  = frequência mapeada para o ADE (que não suporta '30min')
-    freq_data = freq
-    freq_ade = _normalize_freq(freq)
+    models = list(models or DEFAULT_MODELS)
+    if on_error not in ("raise", "skip"):
+        raise ValueError("on_error deve ser 'raise' ou 'skip'")
 
-    # 1) validar disponibilidade
+    spec = resolve_spec(dataset_name, models, horizon=horizon)
+    freq_ade = normalize_freq_for_ade(spec)
+    print(f"[ADE] {describe(spec)} modelos={len(models)}")
+
     validate_models_have_dataset(models, dataset_name)
+    model_dfs = read_all_model_dfs(models, dataset_name)
+    check_windows_alignment(model_dfs)
 
-    # 2) carregar e checar alinhamento das janelas
-    model_dfs = {m: _read_model_df(m, dataset_name) for m in models}
-    _check_windows_alignment(model_dfs)
+    if spec.n_windows < 2:
+        raise ValueError(
+            f"'{dataset_name}' tem {spec.n_windows} janela por série; o ADE precisa "
+            f"de pelo menos 2 (uma de validação + uma de teste)."
+        )
 
-    # 3) construir DataFrames longos usando a freq real do dataset
     combined_df, df_predictions, test_per_series = _build_long_dataframes(
-        models, model_dfs, freq=freq_data
+        models, model_dfs, freq=spec.freq
     )
 
-    # 4) rodar ADE por série e salvar
-    unique_ids = sorted(df_predictions["unique_id"].unique(), key=lambda x: int(x))
-    print(f"[ADE] Dataset={dataset_name}  séries={len(unique_ids)}  modelos={len(models)}")
+    done = prepare_output(exp_name, dataset_name, resume)
+    unique_ids = sorted(df_predictions["unique_id"].unique(), key=int)
+    todo = [u for u in unique_ids if int(u) not in done]
+    print(f"[ADE] {len(todo)} série(s) a processar de {len(unique_ids)}")
 
-    for uid in unique_ids:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            preds = _ade_predict_one_series(
-                combined_df, df_predictions, uid,
-                horizon=horizon, freq=freq_ade, trim_ratio=trim_ratio,
-            )
+    ref_df = model_dfs[models[0]]
+    failures: list[tuple[str, str]] = []
+    t0 = time.time()
 
-        # localizar metadados da janela de teste (start/final) usando o primeiro modelo
-        first_model_df = model_dfs[models[0]]
-        latest_row = (
-            first_model_df[first_model_df["dataset_index"] == int(uid)]
-            .sort_values("start_test")
-            .iloc[-1]
-        )
-        start_test = latest_row["start_test"]
-        final_test = latest_row["final_test"]
-        test_values = test_per_series[int(uid)].values
+    for n, uid in enumerate(todo, start=1):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                preds = _ade_predict_one_series(
+                    combined_df, df_predictions, uid,
+                    horizon=spec.horizon, freq_ade=freq_ade, trim_ratio=trim_ratio,
+                )
+        except Exception as exc:
+            if on_error == "raise":
+                raise RuntimeError(
+                    f"ADE falhou na série dataset_index={uid} de '{dataset_name}'. "
+                    f"Use --on-error skip para pular séries com problema."
+                ) from exc
+            print(f"  [{uid}] FALHOU ({type(exc).__name__}: {exc}) — pulada")
+            failures.append((uid, f"{type(exc).__name__}: {exc}"))
+            continue
 
+        latest_row = ref_df[ref_df["dataset_index"] == int(uid)].sort_values("start_test").iloc[-1]
         aux.save_to_csv(
             exp_name=exp_name,
             predictions=preds,
-            test_values=test_values,
+            test_values=test_per_series[int(uid)].values,
             dataset_name=dataset_name,
             dataset_index=int(uid),
-            horizon=horizon,
-            start_test=start_test,
-            final_test=final_test,
+            horizon=spec.horizon,
+            start_test=latest_row["start_test"],
+            final_test=latest_row["final_test"],
         )
-        print(f"  [{uid}] salvo em resultados/{exp_name}/{dataset_name}.csv")
+
+        elapsed = time.time() - t0
+        eta = elapsed / n * (len(todo) - n)
+        print(f"  [{n}/{len(todo)}] série {uid} salva  ({elapsed:.0f}s decorridos, ETA {eta:.0f}s)")
+
+    print(f"\n[ADE] Concluído: {output_csv_path(exp_name, dataset_name)}")
+    if failures:
+        print(f"[ADE] {len(failures)} série(s) falharam e NÃO estão no CSV:")
+        for uid, msg in failures:
+            print(f"  - dataset_index={uid}: {msg}")
+        print("  Atenção: a saída está incompleta e não é comparável no MCM.")
 
 
 # ---------------------------------------------------------------------------
-# Execução padrão
+# CLI
 # ---------------------------------------------------------------------------
-"""
-conda activate ade-combinations
-cd Statistics_and_Seq2Seq
-python -m combinations.ade
-"""
-if __name__ == "__main__":
-    models = [
-        "ARIMA",
-        "ETS",
-        "THETA",
-        "rf",
-        "catboost",
-        "CWT_rf",
-        "DWT_rf",
-        "FT_rf",
-        "CWT_catboost",
-        "DWT_catboost",
-        "FT_catboost",
-        "ONLY_CWT_catboost",
-        "ONLY_CWT_rf",
-        "ONLY_DWT_catboost",
-        "ONLY_DWT_rf",
-        "ONLY_FT_catboost",
-        "ONLY_FT_rf",
-        "NaiveSeasonal",
-        "NaiveMovingAverage",
-    ]
 
-    dataset_name = "ANP_MONTHLY"  # 'ETTH1', 'ETTH2', 'ETTM1', 'ETTM2', 'ANP_MONTHLY', 'NN5_WEEKLY_DATASET'
-    map_dataset_name_to_freq = {
-        "ETTH1": {"horizon": 24, "freq": "H"},
-        "ETTH2": {"horizon": 24, "freq": "H"},
-        "ETTM1": {"horizon": 24, "freq": "30min"},
-        "ETTM2": {"horizon": 24, "freq": "30min"},
-        "ANP_MONTHLY": {"horizon": 12, "freq": "M"},
-        "NN5_WEEKLY_DATASET": {"horizon": 8, "freq": "W"},
-    }
-    # Use as chaves aceitas pelo ADE: H, D, W, M, ME, MS, Q, QS, Y
-    freq = map_dataset_name_to_freq[dataset_name]["freq"]
-    horizon = map_dataset_name_to_freq[dataset_name]["horizon"]
-    ade_combination(
-        models=models,
-        dataset_name=dataset_name,
-        freq=freq,       # ETT é horário
-        horizon=horizon,     # ETT usa horizonte 24
-        exp_name="ADE",
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        prog="python -m combinations.ade",
+        description="Combinação de previsões via ADE (metaforecast).",
     )
+    p.add_argument("--dataset", required=True, help="ex: ANP_MONTHLY, M4_WEEKLY_DATASET")
+    p.add_argument("--models", nargs="+", default=None, help="default: os 19 modelos base")
+    p.add_argument("--exp-name", default="ADE", help="subpasta de saída em resultados/")
+    p.add_argument("--trim-ratio", type=float, default=1.0)
+    p.add_argument("--horizon", type=int, default=None, help="default: lido do CSV")
+    p.add_argument("--resume", action="store_true", help="continua em vez de apagar a saída")
+    p.add_argument("--on-error", choices=["raise", "skip"], default="raise")
+    args = p.parse_args(argv)
+
+    ade_combination(
+        dataset_name=args.dataset,
+        models=args.models,
+        exp_name=args.exp_name,
+        trim_ratio=args.trim_ratio,
+        horizon=args.horizon,
+        resume=args.resume,
+        on_error=args.on_error,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

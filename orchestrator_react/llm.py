@@ -87,8 +87,10 @@ class OllamaClient:
             # them for every Ollama build.
             if getattr(self.role, "seed", None) is not None:
                 kwargs["seed"] = int(self.role.seed)
+            # bool OR an intensity string ("low"/"medium"/"high", gpt-oss only) —
+            # do not coerce, the two mean different things to Ollama.
             if getattr(self.role, "reasoning", None) is not None:
-                kwargs["reasoning"] = bool(self.role.reasoning)
+                kwargs["reasoning"] = self.role.reasoning
             self._chat = ChatOllama(**kwargs)
         return self._chat
 
