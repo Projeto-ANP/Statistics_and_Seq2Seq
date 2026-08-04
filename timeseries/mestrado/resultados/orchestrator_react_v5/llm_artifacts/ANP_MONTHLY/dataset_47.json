@@ -13,7 +13,7 @@
     "show_attempt_history": true,
     "show_attempt_rationales": true,
     "combinator": {
-      "model": "gpt-oss:20b",
+      "model": "qwen3:30b-a3b",
       "temperature": 0.2,
       "base_url": "http://127.0.0.1:11434",
       "seed": 7,
@@ -43,6 +43,7 @@
     "pooled_meta_model": true,
     "seed_pooled_meta_model": true,
     "dataset_card": true,
+    "drop_misaligned_models": true,
     "pooled_meta_model_objective": "fforma",
     "pooled_meta_model_min_series": 20,
     "score_preset": "balanced",
@@ -57,91 +58,70 @@
   },
   "decision": {
     "strategy": {
-      "combine": "weighted",
-      "pool": "pool1",
-      "weights": "w5"
+      "combine": "best_single",
+      "model": "ETS",
+      "pool": "pool_full"
     },
-    "attempt_id": "a14",
+    "attempt_id": "a13",
     "origin": "agent",
     "models": [
-      "ETS",
-      "THETA",
-      "CWT_rf",
-      "FT_rf",
-      "ONLY_DWT_rf"
+      "ETS"
     ],
     "effective_models": [
-      "CWT_rf",
-      "ETS",
-      "FT_rf",
-      "ONLY_DWT_rf",
-      "THETA"
+      "ETS"
     ],
     "reducibility": {
-      "equivalent_to_pool_mean": true,
-      "pool_mean_relative_diff": 0.002255,
-      "weights_concentration": 0.003
+      "equivalent_to_pool_mean": false,
+      "pool_mean_relative_diff": null,
+      "weights_concentration": null
     },
-    "weights": {
-      "handle": "w5",
-      "computed_by": "inverse_error",
-      "effective_mode": "inverse_error",
-      "fit_windows": [
-        0,
-        1,
-        2
-      ],
-      "params": {
-        "metric": "rmse",
-        "shrinkage": 0.0
-      }
-    },
+    "weights": null,
     "validation": {
-      "score": 0.563004,
+      "score": 0.455775,
       "aggregate": {
-        "MAPE": 0.138727,
-        "SMAPE": 0.144298,
-        "RMSE": 366.665356,
-        "POCID": 63.636364,
-        "MSMAPE": 0.144295,
-        "MAE": 290.533249
+        "MAPE": 0.120324,
+        "SMAPE": 0.124228,
+        "RMSE": 306.725797,
+        "POCID": 66.666667,
+        "MSMAPE": 0.124225,
+        "MAE": 248.727875
       },
       "per_window_rmse": [
-        527.948138,
-        279.699466,
-        215.335605
+        434.150023,
+        214.311224,
+        218.692938
       ],
       "backtest_mode": "expanding",
       "n_windows": 3
     },
     "loop": {
-      "final_attempt": "a14",
+      "final_attempt": "a13",
       "strategy": {
-        "combine": "weighted",
-        "pool": "pool1",
-        "weights": "w5"
+        "combine": "best_single",
+        "model": "ETS",
+        "pool": "pool_full"
       },
-      "iterations_used": 12,
+      "iterations_used": 9,
       "early_stopped": false,
       "stop_reason": "agent_accepted",
-      "agent_accepted_id": "a14",
-      "accept_confidence": 0.9,
+      "agent_accepted_id": "a13",
+      "accept_confidence": 0.95,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 12,
-      "empty_responses": 3,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 9,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 34.75
+      "elapsed_s": 162.21
     },
     "provenance": {
-      "n_tool_calls": 11,
-      "n_successful": 10,
-      "n_failed": 1,
-      "n_evaluate_calls": 4,
-      "n_agent_attempts": 4,
+      "n_tool_calls": 8,
+      "n_successful": 8,
+      "n_failed": 0,
+      "n_evaluate_calls": 5,
+      "n_agent_attempts": 5,
       "n_baseline_attempts": 10,
       "agent_called_tools": true,
       "evaluated_via_tool": true,
@@ -150,13 +130,13 @@
     },
     "selection_confidence": {
       "n_windows": 3,
-      "n_attempts": 14,
-      "winner": "a14",
-      "runner_up": "a11",
-      "margin": 0.00058,
-      "bootstrap_pvalue": 0.068,
-      "dm_pvalue": 0.0108,
-      "verdict": "separated",
+      "n_attempts": 15,
+      "winner": "a13",
+      "runner_up": "a15",
+      "margin": 0.0531,
+      "bootstrap_pvalue": 0.745,
+      "dm_pvalue": 0.3136,
+      "verdict": "indistinguishable",
       "twins_skipped": 0,
       "alpha": 0.1,
       "bootstrap_reliable": false
@@ -173,7 +153,7 @@
       "source": "deterministic"
     },
     "config": {
-      "ablation": "v5-05517e0e49",
+      "ablation": "v5-07bf5ddda0",
       "pool_mode": "full",
       "score_preset": "balanced"
     }
@@ -696,7 +676,18 @@
     "trajectory": [
       {
         "iteration": 1,
-        "thought": "Reduce model redundancy first, then weight the pruned pool by inverse error to see if a cleaner set improves over the best mean pool1.",
+        "thought": "The current best baseline (a4) uses mean on pool1, but median might be more robust given the series' trend dominance and moderate ranking stability. Testing median on the same stable pool1 could improve results without overcomplicating the combination.",
+        "action": "evaluate_strategy",
+        "action_args": {
+          "combine": "median",
+          "pool": "pool1",
+          "rationale": "Testing median on stable pool1 to leverage robustness against potential outliers in trend-dominated series, as mean (a4) is currently best but median may handle window-specific variations better."
+        },
+        "observation_summary": "rank 5/11 score=0.6203 rmse=383.6063, leader is a4 (mean pool=pool1)"
+      },
+      {
+        "iteration": 2,
+        "thought": "The series has moderate ranking stability and significant error correlation among models, indicating redundancy. Pruning redundant models from the full pool should yield a smaller, more independent set for combination.",
         "action": "prune_redundant",
         "action_args": {
           "pool": "pool_full",
@@ -705,172 +696,118 @@
         "observation_summary": "pool pool4 19->11 models, dropped ['CWT_rf', 'DWT_rf', 'FT_rf', 'CWT_catboost']"
       },
       {
-        "iteration": 2,
-        "thought": "Test a soft‑max weighting on the stable pool1 to see if a data‑driven weighting improves over the plain mean that currently gives the best score.",
-        "action": "weights_softmax_neg_error",
+        "iteration": 3,
+        "thought": "The pruned pool (pool4) removes redundant models, so testing mean on pool4 to see if it improves over the current best baseline (mean on stable pool1).",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool1",
-          "windows": null,
-          "metric": "rmse",
-          "eta": 1.0,
-          "per_horizon": false
+          "combine": "mean",
+          "pool": "pool4",
+          "rationale": "Testing mean on pruned pool4 (11 models) to remove redundant error correlation, as error correlation shows strong redundancy (mean_corr=0.823) and the stable pool1 (5 models) was best baseline."
         },
-        "observation_summary": "handle w2 mode=softmax_neg_error active=5/5 conc=0.003"
+        "observation_summary": "rank 9/12 score=0.6494 rmse=420.1862, leader is a4 (mean pool=pool1)"
       },
       {
-        "iteration": 3,
-        "thought": "Evaluate the softmax‑negative‑error weights (w2) on pool1 to see if a data‑driven weighting beats the plain mean of the stable subset.",
+        "iteration": 4,
+        "thought": "The stable pool1 (top 5 consistent models) has the best mean performance (a4), but error-based weighting might further improve it by emphasizing ETS (best model) and THETA (second-best) without overfitting due to the small pool size.",
+        "action": "weights_inverse_error",
+        "action_args": {
+          "pool": "pool1",
+          "metric": "rmse",
+          "windows": null
+        },
+        "observation_summary": "handle w2 mode=inverse_error active=5/5 conc=0.003"
+      },
+      {
+        "iteration": 5,
+        "thought": "The current best strategy (a4) uses a mean of the stable pool (pool1) with rmse=368.46, but ETS alone has the lowest error in the full error table (306.73). Since the series is strongly trend-dominated (trend_strength=0.94) and ETS is the trend champion (score=1.0), using ETS as a single model should outperform the combination. The attempt history lacks a single-model strategy, so this is a valid next step to test.",
+        "action": "evaluate_strategy",
+        "action_args": {
+          "combine": "best_single",
+          "model": "ETS",
+          "rationale": "ETS is the single best model (lowest error=306.73) and the series is trend-dominated (trend_strength=0.94), so it should outperform the current best combination (mean of stable pool)."
+        },
+        "observation_summary": "rank 1/13 score=0.4558 rmse=306.7258 (best so far)"
+      },
+      {
+        "iteration": 6,
+        "thought": "The stable pool (pool1) has consistent models and inverse_error weights (w2) are near uniform (concentration=0.003), so testing weighted mean on pool1 to see if it slightly improves on the plain mean baseline (a4) without overfitting.",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "weighted",
           "pool": "pool1",
           "weights": "w2",
-          "rationale": "Test whether softmax‑based weighting on the stable 5‑model pool improves over the mean baseline."
+          "rationale": "Testing weighted mean on stable pool1 using inverse_error weights (concentration=0.003, near uniform) to see if it improves on the plain mean (a4) which is the current best baseline."
         },
-        "observation_summary": "rank 1/11 score=0.5633 rmse=366.7992 (best so far)"
-      },
-      {
-        "iteration": 4,
-        "thought": "",
-        "action": "unparsed",
-        "action_args": {},
-        "observation_summary": "ERROR parse: empty response"
-      },
-      {
-        "iteration": 5,
-        "thought": "Pool4 contains 11 diverse, less redundant models; a softmax‑based weighting on this larger pool may capture complementary strengths better than the 5‑model pool.",
-        "action": "weights_softmax_neg_error",
-        "action_args": {
-          "pool": "pool4",
-          "windows": null,
-          "metric": "rmse",
-          "eta": 1.0,
-          "per_horizon": false
-        },
-        "observation_summary": "handle w3 mode=softmax_neg_error active=11/11 conc=0.003"
-      },
-      {
-        "iteration": 6,
-        "thought": "Evaluate a weighted combination on the pruned pool4 using the softmax‑based weights w3 to see if a broader but still selective set improves over the best pool1 result.",
-        "action": "evaluate_strategy",
-        "action_args": {
-          "combine": "weighted",
-          "pool": "pool4",
-          "weights": "w3",
-          "rationale": "Test whether a weighted mean over the pruned pool4 (ARIMA, ETS, THETA, rf, catboost, FT_catboost) outperforms the best pool1 weighted strategy."
-        },
-        "observation_summary": "rank 7/12 score=0.632 rmse=414.3843, leader is a11 (weighted pool=pool1 w=w2)"
+        "observation_summary": "rank 2/14 score=0.563 rmse=366.6654, leader is a13 (best_single ETS)"
       },
       {
         "iteration": 7,
-        "thought": "Pool2 contains 7 models with moderate stability; a softmax‑based weighting may give a better trade‑off than the current 5‑model pool.",
-        "action": "weights_softmax_neg_error",
+        "thought": "The series is trend-dominated with moderate ranking stability, and ETS is best on two windows while THETA is best on one. Creating a minimal pool of the top two stable models (ETS, THETA) could leverage complementary performance without redundancy.",
+        "action": "select_stable",
         "action_args": {
-          "pool": "pool2",
-          "windows": null,
-          "metric": "rmse",
-          "eta": 1.0,
-          "per_horizon": false
+          "k": 2
         },
-        "observation_summary": "handle w4 mode=softmax_neg_error active=7/7 conc=0.001"
+        "observation_summary": "pool pool5 k=2 ['THETA', 'ETS']"
       },
       {
         "iteration": 8,
-        "thought": "Test whether a weighted mean over the slightly larger stable pool (pool2) with softmax‑based weights (w4) can beat the current best weighted pool1 w2.",
+        "thought": "Pool5 has the top two stable models (ETS and THETA) with complementary window performance (THETA best in window 2, ETS in others), so testing their mean combination could improve robustness over single ETS.",
         "action": "evaluate_strategy",
         "action_args": {
-          "combine": "weighted",
-          "pool": "pool2",
-          "weights": "w4",
-          "rationale": "Compare weighted pool2 w4 against best weighted pool1 w2"
+          "combine": "mean",
+          "pool": "pool5",
+          "rationale": "pool5 has top two stable models (mean rank 1.7) with complementary window performance (THETA best in window 2, ETS in others), aiming to improve robustness over single ETS."
         },
-        "observation_summary": "rank 3/13 score=0.5916 rmse=378.2717, leader is a11 (weighted pool=pool1 w=w2)"
+        "observation_summary": "rank 2/15 score=0.48 rmse=321.2075, leader is a13 (best_single ETS)"
       },
       {
         "iteration": 9,
-        "thought": "Try a more concentrated weighting on the stable pool1 by using inverse-error weighting, and also test a higher eta softmax to see if more concentration helps.",
-        "action": "weights_inverse_error",
-        "action_args": {
-          "pool": "pool1",
-          "windows": null,
-          "metric": "rmse",
-          "shrinkage": 0.0,
-          "per_horizon": false
-        },
-        "observation_summary": "handle w5 mode=inverse_error active=5/5 conc=0.003"
-      },
-      {
-        "iteration": 10,
-        "thought": "Evaluate the inverse‑error weighted combination on the stable pool1 to see if it beats the current best weighted pool1 w2 (0.5633).",
-        "action": "evaluate_strategy",
-        "action_args": {
-          "combine": "weighted",
-          "pool": "pool1",
-          "weights": "w5",
-          "rationale": "Test inverse_error weighting on the stable 5‑model pool."
-        },
-        "observation_summary": "rank 1/14 score=0.563 rmse=366.6654 (best so far)"
-      },
-      {
-        "iteration": 11,
-        "thought": "Remove redundant high‑error models from the stable pool and re‑weight the remaining few; this may reduce noise and improve the weighted inverse‑error combination.",
-        "action": "prune_redundant",
-        "action_args": {
-          "pool": "pool1",
-          "corr_threshold": 0.95,
-          "metric": "rmse"
-        },
-        "observation_summary": "pool pool5 5->3 models, dropped ['CWT_rf', 'FT_rf']"
-      },
-      {
-        "iteration": 12,
-        "thought": "The best strategy so far is a14 – weighted mean over the stable 5‑model pool (pool1) using inverse‑error weights (w5). It achieves the lowest score (0.563) and exploits the trend‑dominated regime with moderate ranking stability, so a selective, error‑based weighting on the most consistent models is optimal.",
+        "thought": "The single model ETS has the lowest error (rmse=306.7258) and outperforms all combinations tested. The series is strongly trend-dominated (trend_strength=0.9427), and ETS is specifically designed for trend patterns. All combination attempts (mean, weighted, median) on pruned or stable pools resulted in higher errors (worse scores), confirming that no combination improves upon the single best model. The redundant error correlation (0.823) further suggests combining models would not add value.",
         "action": "accept",
         "action_args": {
-          "attempt_id": "a14",
-          "confidence": 0.9,
-          "justification": "The series is trend‑dominated with high predictability and moderate ranking stability. A selective combination of the most consistent models (pool1) weighted by inverse error (w5) yields the lowest validation score (0.563), outperforming all other tested strategies and aligning with the regime’s recommendation for selective weighting."
+          "attempt_id": "a13",
+          "confidence": 0.95,
+          "justification": "ETS is the single best model (rmse=306.73) for the trend-dominated series (trend_strength=0.9427), and all combination strategies tested (including pruned pools and weighted averages) yielded higher errors (worse scores). Redundant error correlation (0.823) confirms combining models would not improve performance."
         },
-        "observation_summary": "accepted a14 (confidence=0.9)"
+        "observation_summary": "accepted a13 (confidence=0.95)"
       }
     ],
     "summary": {
-      "final_attempt": "a14",
+      "final_attempt": "a13",
       "strategy": {
-        "combine": "weighted",
-        "pool": "pool1",
-        "weights": "w5"
+        "combine": "best_single",
+        "model": "ETS",
+        "pool": "pool_full"
       },
-      "iterations_used": 12,
+      "iterations_used": 9,
       "early_stopped": false,
       "stop_reason": "agent_accepted",
-      "agent_accepted_id": "a14",
-      "accept_confidence": 0.9,
+      "agent_accepted_id": "a13",
+      "accept_confidence": 0.95,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 12,
-      "empty_responses": 3,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 9,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 34.75
+      "elapsed_s": 162.21
     },
-    "errors": [
-      "iteration 4: empty response, retrying (1/2)",
-      "iteration 4: empty response, retrying (2/2)",
-      "iteration 4: empty response",
-      "iteration 10: empty response, retrying (1/2)"
-    ],
-    "parse_failures": [
-      {
-        "iteration": 4,
-        "reason": "empty response",
-        "raw": ""
-      }
-    ],
+    "errors": [],
+    "parse_failures": [],
     "tools": {
       "tools_called": [
+        {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "median",
+            "pool": "pool1",
+            "rationale": "Testing median on stable pool1 to leverage robustness against potential outliers in trend-dominated series, as mean (a4) is currently best but median may handle window-specific variations better.",
+            "iteration": 1
+          }
+        },
         {
           "tool": "prune_redundant",
           "ok": true,
@@ -880,14 +817,32 @@
           }
         },
         {
-          "tool": "weights_softmax_neg_error",
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "mean",
+            "pool": "pool4",
+            "rationale": "Testing mean on pruned pool4 (11 models) to remove redundant error correlation, as error correlation shows strong redundancy (mean_corr=0.823) and the stable pool1 (5 models) was best baseline.",
+            "iteration": 3
+          }
+        },
+        {
+          "tool": "weights_inverse_error",
           "ok": true,
           "args": {
             "pool": "pool1",
-            "windows": null,
             "metric": "rmse",
-            "eta": 1.0,
-            "per_horizon": false
+            "windows": null
+          }
+        },
+        {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "best_single",
+            "model": "ETS",
+            "rationale": "ETS is the single best model (lowest error=306.73) and the series is trend-dominated (trend_strength=0.94), so it should outperform the current best combination (mean of stable pool).",
+            "iteration": 5
           }
         },
         {
@@ -897,125 +852,48 @@
             "combine": "weighted",
             "pool": "pool1",
             "weights": "w2",
-            "rationale": "Test whether softmax‑based weighting on the stable 5‑model pool improves over the mean baseline.",
-            "iteration": 3
-          }
-        },
-        {
-          "tool": "unparsed",
-          "ok": false,
-          "args": {}
-        },
-        {
-          "tool": "weights_softmax_neg_error",
-          "ok": true,
-          "args": {
-            "pool": "pool4",
-            "windows": null,
-            "metric": "rmse",
-            "eta": 1.0,
-            "per_horizon": false
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "weighted",
-            "pool": "pool4",
-            "weights": "w3",
-            "rationale": "Test whether a weighted mean over the pruned pool4 (ARIMA, ETS, THETA, rf, catboost, FT_catboost) outperforms the best pool1 weighted strategy.",
+            "rationale": "Testing weighted mean on stable pool1 using inverse_error weights (concentration=0.003, near uniform) to see if it improves on the plain mean (a4) which is the current best baseline.",
             "iteration": 6
           }
         },
         {
-          "tool": "weights_softmax_neg_error",
+          "tool": "select_stable",
           "ok": true,
           "args": {
-            "pool": "pool2",
-            "windows": null,
-            "metric": "rmse",
-            "eta": 1.0,
-            "per_horizon": false
+            "k": 2
           }
         },
         {
           "tool": "evaluate_strategy",
           "ok": true,
           "args": {
-            "combine": "weighted",
-            "pool": "pool2",
-            "weights": "w4",
-            "rationale": "Compare weighted pool2 w4 against best weighted pool1 w2",
+            "combine": "mean",
+            "pool": "pool5",
+            "rationale": "pool5 has top two stable models (mean rank 1.7) with complementary window performance (THETA best in window 2, ETS in others), aiming to improve robustness over single ETS.",
             "iteration": 8
-          }
-        },
-        {
-          "tool": "weights_inverse_error",
-          "ok": true,
-          "args": {
-            "pool": "pool1",
-            "windows": null,
-            "metric": "rmse",
-            "shrinkage": 0.0,
-            "per_horizon": false
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "weighted",
-            "pool": "pool1",
-            "weights": "w5",
-            "rationale": "Test inverse_error weighting on the stable 5‑model pool.",
-            "iteration": 10
-          }
-        },
-        {
-          "tool": "prune_redundant",
-          "ok": true,
-          "args": {
-            "pool": "pool1",
-            "corr_threshold": 0.95,
-            "metric": "rmse"
           }
         }
       ],
-      "n_calls": 11,
-      "n_failures": 1,
-      "tool_missing": true,
-      "errors": [
-        {
-          "tool": "unparsed",
-          "args": {},
-          "error": "empty response",
-          "kind": "invalid_action_input"
-        }
-      ]
+      "n_calls": 8,
+      "n_failures": 0,
+      "tool_missing": false,
+      "errors": []
     }
   },
   "predict_debug": {
-    "method": "weighted",
+    "method": "best_single",
     "spec": {
-      "combine": "weighted",
-      "pool": "pool1",
-      "weights": "w5"
+      "combine": "best_single",
+      "model": "ETS",
+      "pool": "pool_full"
     },
-    "pool_models": [
-      "ETS",
-      "THETA",
-      "CWT_rf",
-      "FT_rf",
-      "ONLY_DWT_rf"
-    ],
-    "weights_handle": "w5"
+    "chosen_model": "ETS"
   },
   "sanity": {
     "n_points": 12,
     "forecast_range": [
-      2714.616,
-      2768.555
+      2640.621,
+      2841.128
     ],
     "historical_range": [
       41.877,

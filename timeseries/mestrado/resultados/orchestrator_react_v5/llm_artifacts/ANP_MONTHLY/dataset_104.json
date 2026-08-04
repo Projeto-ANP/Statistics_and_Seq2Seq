@@ -13,7 +13,7 @@
     "show_attempt_history": true,
     "show_attempt_rationales": true,
     "combinator": {
-      "model": "gpt-oss:20b",
+      "model": "qwen3:30b-a3b",
       "temperature": 0.2,
       "base_url": "http://127.0.0.1:11434",
       "seed": 7,
@@ -43,6 +43,7 @@
     "pooled_meta_model": true,
     "seed_pooled_meta_model": true,
     "dataset_card": true,
+    "drop_misaligned_models": true,
     "pooled_meta_model_objective": "fforma",
     "pooled_meta_model_min_series": 20,
     "score_preset": "balanced",
@@ -106,27 +107,27 @@
         "pool": "pool1",
         "trim_pct": 0.2
       },
-      "iterations_used": 8,
-      "early_stopped": true,
-      "stop_reason": "no improvement in 4 consecutive proposals",
-      "agent_accepted_id": null,
-      "accept_confidence": null,
+      "iterations_used": 6,
+      "early_stopped": false,
+      "stop_reason": "agent_accepted",
+      "agent_accepted_id": "a5",
+      "accept_confidence": 0.9,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 8,
-      "empty_responses": 2,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 6,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 30.84
+      "elapsed_s": 102.67
     },
     "provenance": {
-      "n_tool_calls": 8,
-      "n_successful": 8,
+      "n_tool_calls": 5,
+      "n_successful": 5,
       "n_failed": 0,
-      "n_evaluate_calls": 4,
-      "n_agent_attempts": 4,
+      "n_evaluate_calls": 3,
+      "n_agent_attempts": 3,
       "n_baseline_attempts": 10,
       "agent_called_tools": true,
       "evaluated_via_tool": true,
@@ -135,7 +136,7 @@
     },
     "selection_confidence": {
       "n_windows": 3,
-      "n_attempts": 14,
+      "n_attempts": 13,
       "winner": "a5",
       "runner_up": "a9",
       "margin": 0.00866,
@@ -159,7 +160,7 @@
       "source": "deterministic"
     },
     "config": {
-      "ablation": "v5-05517e0e49",
+      "ablation": "v5-07bf5ddda0",
       "pool_mode": "full",
       "score_preset": "balanced"
     }
@@ -657,88 +658,70 @@
     "trajectory": [
       {
         "iteration": 1,
-        "thought": "The series is noisy with unstable rankings and many redundant models; pruning redundancy then weighting by inverse error should reduce noise and improve performance.",
-        "action": "prune_redundant",
+        "thought": "The series is noisy with unstable rankings (Kendall tau 0.236) and medium predictability, so robust methods on stable subsets are preferred. Median on pool1 hasn't been tested despite being a core robust technique for noisy series.",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool_full",
-          "corr_threshold": 0.95,
-          "metric": "rmse"
+          "combine": "median",
+          "pool": "pool1",
+          "rationale": "Series is noisy with unstable rankings (tau=0.236); median on stable subset pool1 avoids window-specific overfitting while leveraging consistency in model rankings."
         },
-        "observation_summary": "pool pool4 19->17 models, dropped ['ARIMA', 'ETS']"
+        "observation_summary": "rank 3/11 score=0.5018 rmse=10.4509, leader is a5 (trimmed_mean pool=pool1 trim=0.2)"
       },
       {
         "iteration": 2,
-        "thought": "Try a robust trimmed‑mean on the pruned pool4 to see if removing the most extreme forecasts improves performance in this noisy, unstable‑ranking series.",
+        "thought": "The current top strategy (a5) uses trimmed_mean on pool1, but pool1 contains redundant models (THETA and NaiveMovingAverage are in a correlated group). Pruning redundancy should create a leaner pool with less error correlation.",
+        "action": "prune_redundant",
+        "action_args": {
+          "pool": "pool1",
+          "corr_threshold": 0.95,
+          "metric": "rmse"
+        },
+        "observation_summary": "pool pool4 5->4 models, dropped ['ETS']"
+      },
+      {
+        "iteration": 3,
+        "thought": "Pool4 is a pruned subset of pool1 with redundant models removed; testing trimmed_mean on this smaller, less redundant pool could improve robustness without overfitting.",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "trimmed_mean",
           "pool": "pool4",
-          "trim_pct": 0.2
+          "trim_pct": 0.2,
+          "rationale": "Pruned pool4 (4 models) removes redundant errors (ETS dropped from pool1); trimmed_mean avoids window-specific overfitting in unstable rankings (tau=0.236)"
         },
-        "observation_summary": "rank 8/11 score=0.5745 rmse=11.7427, leader is a5 (trimmed_mean pool=pool1 trim=0.2)"
+        "observation_summary": "rank 3/12 score=0.4951 rmse=10.3499, leader is a5 (trimmed_mean pool=pool1 trim=0.2)"
       },
       {
-        "iteration": 3,
-        "thought": "The best trimmed‑mean uses a very small, stable pool. Removing the redundant THETA model from pool1 should reduce noise and let an error‑based weighting (inverse‑error) give a sharper, still robust combination.",
+        "iteration": 4,
+        "thought": "The series has unstable rankings (tau=0.236) and no strong seasonality, so DBA may align forecasts better than trimmed mean on the same stable pool.",
+        "action": "evaluate_strategy",
+        "action_args": {
+          "combine": "dba",
+          "pool": "pool1",
+          "rationale": "DBA aligns forecasts in time, which may improve robustness for noisy series with unstable rankings and no seasonality (seasonal_strength=0.0)."
+        },
+        "observation_summary": "rank 7/13 score=0.5214 rmse=11.2968, leader is a5 (trimmed_mean pool=pool1 trim=0.2) [SAME forecasts as a4]"
+      },
+      {
+        "iteration": 5,
+        "thought": "The current top strategy uses trimmed_mean on pool1 (5 models), but pool1 contains redundant models (THETA and NaiveMovingAverage in the same error-correlated group). Pruning pool1 to remove redundant models could improve robustness without increasing error.",
         "action": "prune_redundant",
         "action_args": {
           "pool": "pool1",
           "corr_threshold": 0.95,
           "metric": "rmse"
         },
-        "observation_summary": "pool pool5 5->4 models, dropped ['ETS']"
-      },
-      {
-        "iteration": 4,
-        "thought": "Test a trimmed‑mean on the pruned pool5 (4 models) to see if removing ETS further improves the robust combination.",
-        "action": "evaluate_strategy",
-        "action_args": {
-          "combine": "trimmed_mean",
-          "pool": "pool5",
-          "trim_pct": 0.2
-        },
-        "observation_summary": "rank 3/12 score=0.4951 rmse=10.3499, leader is a5 (trimmed_mean pool=pool1 trim=0.2)"
-      },
-      {
-        "iteration": 5,
-        "thought": "Test a less aggressive trimmed mean on the same robust pool to see if trimming too much hurts performance.",
-        "action": "evaluate_strategy",
-        "action_args": {
-          "combine": "trimmed_mean",
-          "pool": "pool1",
-          "trim_pct": 0.1
-        },
-        "observation_summary": "rank 6/13 score=0.5214 rmse=11.2968, leader is a5 (trimmed_mean pool=pool1 trim=0.2) [SAME forecasts as a4]"
+        "observation_summary": "pool pool4 5->4 models, dropped ['ETS']"
       },
       {
         "iteration": 6,
-        "thought": "Try error‑based weighting on the robust pool1 to see if giving more weight to the best models improves over the trimmed‑mean baseline.",
-        "action": "weights_inverse_error",
+        "thought": "The best strategy in the attempt history is a5 (trimmed_mean on pool1 with trim_pct=0.2), which has the lowest score (0.4901) and outperforms all other tested combinations. The series has unstable rankings (mean Kendall tau=0.236), no seasonality, and medium predictability in a noisy regime—making trimmed_mean on a stable subset the optimal robust approach. Further variations (e.g., different trim_pct, weights, or pools) are unlikely to improve upon this without risking instability from the small window count (3 windows).",
+        "action": "accept",
         "action_args": {
-          "pool": "pool1"
+          "attempt_id": "a5",
+          "confidence": 0.9,
+          "justification": "Unstable rankings (tau=0.236) and noisy regime require robust combination; trimmed_mean on stable subset (pool1, 5 models) avoids window-specific overfitting by removing extremes, achieving lowest score (0.4901) in history."
         },
-        "observation_summary": "handle w2 mode=inverse_error active=5/5 conc=0.002"
-      },
-      {
-        "iteration": 7,
-        "thought": "Try error‑based weighting on the pruned pool5 to see if a data‑driven weighted mean can beat the trimmed‑mean baseline (0.4951).",
-        "action": "weights_inverse_error",
-        "action_args": {
-          "pool": "pool5"
-        },
-        "observation_summary": "handle w3 mode=inverse_error active=4/4 conc=0.002"
-      },
-      {
-        "iteration": 8,
-        "thought": "Test a weighted mean using the inverse‑error weights on the robust pool1 to see if a data‑driven weighting beats the trimmed‑mean baseline.",
-        "action": "evaluate_strategy",
-        "action_args": {
-          "combine": "weighted",
-          "pool": "pool1",
-          "weights": "w2",
-          "rationale": "inverse_error weighting on the stable pool1"
-        },
-        "observation_summary": "rank 7/14 score=0.526 rmse=11.354, leader is a5 (trimmed_mean pool=pool1 trim=0.2)"
+        "observation_summary": "accepted a5 (confidence=0.9)"
       }
     ],
     "summary": {
@@ -748,33 +731,40 @@
         "pool": "pool1",
         "trim_pct": 0.2
       },
-      "iterations_used": 8,
-      "early_stopped": true,
-      "stop_reason": "no improvement in 4 consecutive proposals",
-      "agent_accepted_id": null,
-      "accept_confidence": null,
+      "iterations_used": 6,
+      "early_stopped": false,
+      "stop_reason": "agent_accepted",
+      "agent_accepted_id": "a5",
+      "accept_confidence": 0.9,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 8,
-      "empty_responses": 2,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 6,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 30.84
+      "elapsed_s": 102.67
     },
-    "errors": [
-      "iteration 3: empty response, retrying (1/2)",
-      "iteration 4: empty response, retrying (1/2)"
-    ],
+    "errors": [],
     "parse_failures": [],
     "tools": {
       "tools_called": [
         {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "median",
+            "pool": "pool1",
+            "rationale": "Series is noisy with unstable rankings (tau=0.236); median on stable subset pool1 avoids window-specific overfitting while leveraging consistency in model rankings.",
+            "iteration": 1
+          }
+        },
+        {
           "tool": "prune_redundant",
           "ok": true,
           "args": {
-            "pool": "pool_full",
+            "pool": "pool1",
             "corr_threshold": 0.95,
             "metric": "rmse"
           }
@@ -786,8 +776,18 @@
             "combine": "trimmed_mean",
             "pool": "pool4",
             "trim_pct": 0.2,
-            "rationale": "Try a robust trimmed‑mean on the pruned pool4 to see if removing the most extreme forecasts improves performance in this noisy, unstable‑ranking series.",
-            "iteration": 2
+            "rationale": "Pruned pool4 (4 models) removes redundant errors (ETS dropped from pool1); trimmed_mean avoids window-specific overfitting in unstable rankings (tau=0.236)",
+            "iteration": 3
+          }
+        },
+        {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "dba",
+            "pool": "pool1",
+            "rationale": "DBA aligns forecasts in time, which may improve robustness for noisy series with unstable rankings and no seasonality (seasonal_strength=0.0).",
+            "iteration": 4
           }
         },
         {
@@ -798,56 +798,9 @@
             "corr_threshold": 0.95,
             "metric": "rmse"
           }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "trimmed_mean",
-            "pool": "pool5",
-            "trim_pct": 0.2,
-            "rationale": "Test a trimmed‑mean on the pruned pool5 (4 models) to see if removing ETS further improves the robust combination.",
-            "iteration": 4
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "trimmed_mean",
-            "pool": "pool1",
-            "trim_pct": 0.1,
-            "rationale": "Test a less aggressive trimmed mean on the same robust pool to see if trimming too much hurts performance.",
-            "iteration": 5
-          }
-        },
-        {
-          "tool": "weights_inverse_error",
-          "ok": true,
-          "args": {
-            "pool": "pool1"
-          }
-        },
-        {
-          "tool": "weights_inverse_error",
-          "ok": true,
-          "args": {
-            "pool": "pool5"
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "weighted",
-            "pool": "pool1",
-            "weights": "w2",
-            "rationale": "inverse_error weighting on the stable pool1",
-            "iteration": 8
-          }
         }
       ],
-      "n_calls": 8,
+      "n_calls": 5,
       "n_failures": 0,
       "tool_missing": false,
       "errors": []

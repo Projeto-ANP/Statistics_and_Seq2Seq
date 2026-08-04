@@ -13,7 +13,7 @@
     "show_attempt_history": true,
     "show_attempt_rationales": true,
     "combinator": {
-      "model": "gpt-oss:20b",
+      "model": "qwen3:30b-a3b",
       "temperature": 0.2,
       "base_url": "http://127.0.0.1:11434",
       "seed": 7,
@@ -43,6 +43,7 @@
     "pooled_meta_model": true,
     "seed_pooled_meta_model": true,
     "dataset_card": true,
+    "drop_misaligned_models": true,
     "pooled_meta_model_objective": "fforma",
     "pooled_meta_model_min_series": 20,
     "score_preset": "balanced",
@@ -57,11 +58,10 @@
   },
   "decision": {
     "strategy": {
-      "combine": "weighted",
-      "pool": "pool4",
-      "weights": "w5"
+      "combine": "mean",
+      "pool": "pool5"
     },
-    "attempt_id": "a14",
+    "attempt_id": "a12",
     "origin": "agent",
     "models": [
       "THETA",
@@ -81,47 +81,33 @@
     ],
     "reducibility": {
       "equivalent_to_pool_mean": true,
-      "pool_mean_relative_diff": 0.000248,
-      "weights_concentration": 0.001
+      "pool_mean_relative_diff": 0.0,
+      "weights_concentration": null
     },
-    "weights": {
-      "handle": "w5",
-      "computed_by": "softmax_neg_error",
-      "effective_mode": "softmax_neg_error",
-      "fit_windows": [
-        0,
-        1,
-        2
-      ],
-      "params": {
-        "metric": "rmse",
-        "eta": 1.0
-      }
-    },
+    "weights": null,
     "validation": {
-      "score": 0.575262,
+      "score": 0.573609,
       "aggregate": {
-        "MAPE": 0.074578,
-        "SMAPE": 0.07812,
-        "RMSE": 17982.658631,
+        "MAPE": 0.074436,
+        "SMAPE": 0.077958,
+        "RMSE": 17937.971704,
         "POCID": 90.909091,
-        "MSMAPE": 0.07812,
-        "MAE": 15747.708283
+        "MSMAPE": 0.077958,
+        "MAE": 15716.801786
       },
       "per_window_rmse": [
         17709.937991,
-        18044.962086,
-        18189.707915
+        17893.109659,
+        18207.339446
       ],
       "backtest_mode": "expanding",
       "n_windows": 3
     },
     "loop": {
-      "final_attempt": "a14",
+      "final_attempt": "a12",
       "strategy": {
-        "combine": "weighted",
-        "pool": "pool4",
-        "weights": "w5"
+        "combine": "mean",
+        "pool": "pool5"
       },
       "iterations_used": 11,
       "early_stopped": true,
@@ -129,21 +115,21 @@
       "agent_accepted_id": null,
       "accept_confidence": null,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
+      "llm_model": "qwen3:30b-a3b",
       "n_trajectory_steps": 11,
-      "empty_responses": 1,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 48.28
+      "elapsed_s": 148.11
     },
     "provenance": {
       "n_tool_calls": 11,
       "n_successful": 11,
       "n_failed": 0,
-      "n_evaluate_calls": 5,
-      "n_agent_attempts": 5,
+      "n_evaluate_calls": 6,
+      "n_agent_attempts": 6,
       "n_baseline_attempts": 10,
       "agent_called_tools": true,
       "evaluated_via_tool": true,
@@ -152,13 +138,13 @@
     },
     "selection_confidence": {
       "n_windows": 3,
-      "n_attempts": 15,
-      "winner": "a14",
-      "runner_up": "a11",
-      "margin": 1e-05,
-      "bootstrap_pvalue": 0.0,
-      "dm_pvalue": 0.6198,
-      "verdict": "indistinguishable",
+      "n_attempts": 16,
+      "winner": "a12",
+      "runner_up": "a16",
+      "margin": 0.00288,
+      "bootstrap_pvalue": 0.501,
+      "dm_pvalue": 0.0312,
+      "verdict": "separated",
       "twins_skipped": 0,
       "alpha": 0.1,
       "bootstrap_reliable": false
@@ -176,7 +162,7 @@
       "source": "deterministic"
     },
     "config": {
-      "ablation": "v5-05517e0e49",
+      "ablation": "v5-07bf5ddda0",
       "pool_mode": "full",
       "score_preset": "balanced"
     }
@@ -704,137 +690,132 @@
     "trajectory": [
       {
         "iteration": 1,
-        "thought": "The best baseline uses mean over pool3 (9 stable models). To improve, prune redundant models from pool3 and then apply error‑based weighting (inverse error) to reduce overfitting from only 3 windows.",
+        "thought": "The series has unstable rankings across windows and high error correlation (mean 0.773), indicating redundant models. Pruning redundant groups should create a more diverse pool, potentially improving robustness without relying on unstable rankings.",
         "action": "prune_redundant",
         "action_args": {
-          "pool": "pool3",
-          "corr_threshold": 0.95
+          "pool": "pool_full",
+          "corr_threshold": 0.95,
+          "metric": "rmse"
         },
-        "observation_summary": "pool pool4 9->6 models, dropped ['ETS', 'DWT_rf', 'ONLY_DWT_rf']"
+        "observation_summary": "pool pool4 19->14 models, dropped ['ETS', 'rf', 'DWT_rf', 'ONLY_DWT_rf']"
       },
       {
         "iteration": 2,
-        "thought": "Test a weighted combination on the pruned pool4 using inverse-error weights to see if concentrating on the best models improves over the mean pool3 baseline.",
+        "thought": "The top attempt uses mean on pool3 (9 models), but the series has unstable rankings and redundant models. To improve, I'll test a weighted combination on the stable pool3 using inverse error weights, which should leverage the error hierarchy without overfitting.",
         "action": "weights_inverse_error",
         "action_args": {
-          "pool": "pool4",
-          "windows": null,
-          "metric": "rmse",
-          "shrinkage": 0.0,
-          "per_horizon": false
+          "pool": "pool3",
+          "metric": "rmse"
         },
-        "observation_summary": "handle w2 mode=inverse_error active=6/6 conc=0.001"
+        "observation_summary": "handle w2 mode=inverse_error active=9/9 conc=0.0"
       },
       {
         "iteration": 3,
-        "thought": "Evaluate the inverse‑error weighted combination on the pruned pool4 to see if a more focused, low‑variance pool improves over the mean pool3 baseline.",
+        "thought": "The ranking instability (Kendall tau 0.111) and series' trend dominance suggest robust combination is key. Pool3 (9 stable models) already outperformed full pool strategies, so testing median on pool3—robust to potential error outliers—avoids repeating the mean/trimmed_mean strategies already in history.",
         "action": "evaluate_strategy",
         "action_args": {
-          "combine": "weighted",
-          "pool": "pool4",
-          "weights": "w2"
+          "combine": "median",
+          "pool": "pool3",
+          "rationale": "ranking instability (tau=0.111) and trend dominance require robust combination; pool3 is the stable subset (9 models) where mean/trimmed_mean showed promise but median may better handle error variability"
         },
-        "observation_summary": "rank 1/11 score=0.5753 rmse=17982.3525 (best so far)"
+        "observation_summary": "rank 8/11 score=0.6307 rmse=18675.6558, leader is a8 (mean pool=pool3)"
       },
       {
         "iteration": 4,
-        "thought": "The best result so far uses inverse‑error weighting on the pruned pool4.",
-        "action": "weights_pooled_meta_model",
+        "thought": "The series has unstable rankings and redundant models, so pruning pool3 (the stable subset) for redundancy could yield a more diverse pool. This addresses the \"several models carry correlated error\" risk mentioned in the diagnosis.",
+        "action": "prune_redundant",
         "action_args": {
-          "pool": "pool4"
+          "pool": "pool3",
+          "corr_threshold": 0.95,
+          "metric": "rmse"
         },
-        "observation_summary": "handle w3 mode=pooled_meta_model active=6/6 conc=0.697"
+        "observation_summary": "pool pool5 9->6 models, dropped ['ETS', 'DWT_rf', 'ONLY_DWT_rf']"
       },
       {
         "iteration": 5,
-        "thought": "The best result so far is weighted pool4 with inverse‑error weights (w2). To see if a slightly larger pool with the same weighting scheme can improve performance, compute inverse‑error weights on pool3 (9 models) and evaluate.",
-        "action": "weights_inverse_error",
+        "thought": "We pruned the stable subset (pool3) to remove redundant models, creating pool5 (6 models). Testing mean on this smaller, less redundant pool may improve over the current best (mean on pool3).",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool3",
-          "windows": null,
-          "metric": "rmse",
-          "shrinkage": 0.0,
-          "per_horizon": false
+          "combine": "mean",
+          "pool": "pool5",
+          "rationale": "pruned stable subset (pool5) has 6 models with reduced redundancy (removed ETS, DWT_rf, ONLY_DWT_rf); mean combination on this pool may outperform the 9-model pool3 baseline"
         },
-        "observation_summary": "handle w4 mode=inverse_error active=9/9 conc=0.0"
+        "observation_summary": "rank 1/12 score=0.5736 rmse=17937.9717 (best so far)"
       },
       {
         "iteration": 6,
-        "thought": "Test the pooled‑meta‑model weights on the pruned pool4; it may capture cross‑series patterns better than the inverse‑error weights that are almost uniform.",
+        "thought": "The current best strategy (a12) uses mean combination on the pruned stable subset pool5. To test if a more robust combination method (median) on the same stable pool improves performance, given the series' unstable rankings and trend dominance.",
         "action": "evaluate_strategy",
         "action_args": {
-          "combine": "weighted",
-          "pool": "pool4",
-          "weights": "w3"
+          "combine": "median",
+          "pool": "pool5",
+          "rationale": "pool5 is the stable subset (6 models) with reduced redundancy; median is robust to outliers and may improve on mean for this series with unstable rankings (tau=0.111)"
         },
-        "observation_summary": "rank 2/12 score=0.5888 rmse=18035.7909, leader is a11 (weighted pool=pool4 w=w2)"
+        "observation_summary": "rank 4/13 score=0.613 rmse=18525.3111, leader is a12 (mean pool=pool5)"
       },
       {
         "iteration": 7,
-        "thought": "Evaluate the inverse‑error weighted combination on the larger pool3 (w4) to see if adding the extra models improves performance over the pruned pool4.",
-        "action": "evaluate_strategy",
+        "thought": "The mean on the pruned stable subset (pool5) is the current best strategy. To improve, we'll test a weighted average using inverse error on the same pool, as the models have relatively close errors and the pool is stable.",
+        "action": "weights_inverse_error",
         "action_args": {
-          "combine": "weighted",
-          "pool": "pool3",
-          "weights": "w4"
+          "pool": "pool5",
+          "metric": "rmse"
         },
-        "observation_summary": "rank 4/13 score=0.61 rmse=18604.9452, leader is a11 (weighted pool=pool4 w=w2)"
+        "observation_summary": "handle w3 mode=inverse_error active=6/6 conc=0.001"
       },
       {
         "iteration": 8,
-        "thought": "Try a softmax‑negative‑error weighting on the already pruned pool4 to see if a more probabilistic weighting improves over the highly concentrated inverse‑error weights.",
+        "thought": "The inverse error weights on pool5 showed near-uniform distribution (concentration 0.001), indicating no meaningful differentiation. Next, test softmax weights which may better leverage error differences in the pruned, low-redundancy pool.",
         "action": "weights_softmax_neg_error",
         "action_args": {
-          "pool": "pool4",
-          "windows": null,
+          "pool": "pool5",
           "metric": "rmse",
-          "eta": 1.0,
-          "per_horizon": false
+          "eta": 1.0
         },
-        "observation_summary": "handle w5 mode=softmax_neg_error active=6/6 conc=0.001"
+        "observation_summary": "handle w4 mode=softmax_neg_error active=6/6 conc=0.001"
       },
       {
         "iteration": 9,
-        "thought": "Compute per‑horizon inverse‑error weights on the pruned pool4 to see if horizon‑specific weighting improves over the uniform w2.",
-        "action": "weights_inverse_error",
+        "thought": "Pool5 is the stable, pruned subset with 6 models; trimmed mean may improve on mean by reducing outlier impact in this small, consistent pool.",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool4",
-          "windows": null,
-          "metric": "rmse",
-          "shrinkage": 0.0,
-          "per_horizon": true
+          "combine": "trimmed_mean",
+          "pool": "pool5",
+          "trim_pct": 0.2,
+          "rationale": "pool5 is stable and pruned; trimmed mean may reduce outlier impact in the small subset"
         },
-        "observation_summary": "handle w6 mode=inverse_error active=6/6 conc=0.003"
+        "observation_summary": "rank 2/14 score=0.5872 rmse=18227.1255, leader is a12 (mean pool=pool5)"
       },
       {
         "iteration": 10,
-        "thought": "Evaluate the softmax‑negative‑error weights on pool4 to see if a slightly different weighting improves over the best inverse‑error result (a11).",
+        "thought": "The weights on pool5 have near-zero concentration (0.001), meaning they're effectively uniform. Testing a weighted strategy here would likely mirror the mean, but we must confirm before discarding this path.",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "weighted",
-          "pool": "pool4",
-          "weights": "w5"
+          "pool": "pool5",
+          "weights": "w3",
+          "rationale": "Testing inverse_error weights on pruned pool5 despite low concentration; confirms if weights add value over mean"
         },
-        "observation_summary": "rank 1/14 score=0.5753 rmse=17982.6586 (best so far)"
+        "observation_summary": "rank 2/15 score=0.5753 rmse=17982.3525, leader is a12 (mean pool=pool5)"
       },
       {
         "iteration": 11,
-        "thought": "Evaluate the inverse‑error weights computed per horizon (w6) on pool4; it may give a more nuanced weighting than the overall inverse‑error or softmax and could beat the current best 0.5753.",
+        "thought": "We tested inverse_error weights (w3) on pool5 and it was slightly worse than the mean (a15 vs a12). Now we test the alternative weight method softmax_neg_error (w4) on the same pool to see if it improves.",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "weighted",
-          "pool": "pool4",
-          "weights": "w6"
+          "pool": "pool5",
+          "weights": "w4",
+          "rationale": "Testing softmax_neg_error weights on pruned pool5, which has low concentration in inverse_error weights"
         },
-        "observation_summary": "rank 3/15 score=0.5849 rmse=17928.175, leader is a14 (weighted pool=pool4 w=w5)"
+        "observation_summary": "rank 2/16 score=0.5753 rmse=17982.6586, leader is a12 (mean pool=pool5)"
       }
     ],
     "summary": {
-      "final_attempt": "a14",
+      "final_attempt": "a12",
       "strategy": {
-        "combine": "weighted",
-        "pool": "pool4",
-        "weights": "w5"
+        "combine": "mean",
+        "pool": "pool5"
       },
       "iterations_used": 11,
       "early_stopped": true,
@@ -842,18 +823,16 @@
       "agent_accepted_id": null,
       "accept_confidence": null,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
+      "llm_model": "qwen3:30b-a3b",
       "n_trajectory_steps": 11,
-      "empty_responses": 1,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 48.28
+      "elapsed_s": 148.11
     },
-    "errors": [
-      "iteration 9: empty response, retrying (1/2)"
-    ],
+    "errors": [],
     "parse_failures": [],
     "tools": {
       "tools_called": [
@@ -861,92 +840,84 @@
           "tool": "prune_redundant",
           "ok": true,
           "args": {
-            "pool": "pool3",
-            "corr_threshold": 0.95
+            "pool": "pool_full",
+            "corr_threshold": 0.95,
+            "metric": "rmse"
           }
         },
         {
           "tool": "weights_inverse_error",
           "ok": true,
           "args": {
-            "pool": "pool4",
-            "windows": null,
-            "metric": "rmse",
-            "shrinkage": 0.0,
-            "per_horizon": false
+            "pool": "pool3",
+            "metric": "rmse"
           }
         },
         {
           "tool": "evaluate_strategy",
           "ok": true,
           "args": {
-            "combine": "weighted",
-            "pool": "pool4",
-            "weights": "w2",
-            "rationale": "Evaluate the inverse‑error weighted combination on the pruned pool4 to see if a more focused, low‑variance pool improves over the mean pool3 baseline.",
+            "combine": "median",
+            "pool": "pool3",
+            "rationale": "ranking instability (tau=0.111) and trend dominance require robust combination; pool3 is the stable subset (9 models) where mean/trimmed_mean showed promise but median may better handle error variability",
             "iteration": 3
           }
         },
         {
-          "tool": "weights_pooled_meta_model",
+          "tool": "prune_redundant",
           "ok": true,
           "args": {
-            "pool": "pool4"
+            "pool": "pool3",
+            "corr_threshold": 0.95,
+            "metric": "rmse"
+          }
+        },
+        {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "mean",
+            "pool": "pool5",
+            "rationale": "pruned stable subset (pool5) has 6 models with reduced redundancy (removed ETS, DWT_rf, ONLY_DWT_rf); mean combination on this pool may outperform the 9-model pool3 baseline",
+            "iteration": 5
+          }
+        },
+        {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "median",
+            "pool": "pool5",
+            "rationale": "pool5 is the stable subset (6 models) with reduced redundancy; median is robust to outliers and may improve on mean for this series with unstable rankings (tau=0.111)",
+            "iteration": 6
           }
         },
         {
           "tool": "weights_inverse_error",
           "ok": true,
           "args": {
-            "pool": "pool3",
-            "windows": null,
-            "metric": "rmse",
-            "shrinkage": 0.0,
-            "per_horizon": false
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "weighted",
-            "pool": "pool4",
-            "weights": "w3",
-            "rationale": "Test the pooled‑meta‑model weights on the pruned pool4; it may capture cross‑series patterns better than the inverse‑error weights that are almost uniform.",
-            "iteration": 6
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "weighted",
-            "pool": "pool3",
-            "weights": "w4",
-            "rationale": "Evaluate the inverse‑error weighted combination on the larger pool3 (w4) to see if adding the extra models improves performance over the pruned pool4.",
-            "iteration": 7
+            "pool": "pool5",
+            "metric": "rmse"
           }
         },
         {
           "tool": "weights_softmax_neg_error",
           "ok": true,
           "args": {
-            "pool": "pool4",
-            "windows": null,
+            "pool": "pool5",
             "metric": "rmse",
-            "eta": 1.0,
-            "per_horizon": false
+            "eta": 1.0
           }
         },
         {
-          "tool": "weights_inverse_error",
+          "tool": "evaluate_strategy",
           "ok": true,
           "args": {
-            "pool": "pool4",
-            "windows": null,
-            "metric": "rmse",
-            "shrinkage": 0.0,
-            "per_horizon": true
+            "combine": "trimmed_mean",
+            "pool": "pool5",
+            "trim_pct": 0.2,
+            "rationale": "pool5 is stable and pruned; trimmed mean may reduce outlier impact in the small subset",
+            "iteration": 9
           }
         },
         {
@@ -954,9 +925,9 @@
           "ok": true,
           "args": {
             "combine": "weighted",
-            "pool": "pool4",
-            "weights": "w5",
-            "rationale": "Evaluate the softmax‑negative‑error weights on pool4 to see if a slightly different weighting improves over the best inverse‑error result (a11).",
+            "pool": "pool5",
+            "weights": "w3",
+            "rationale": "Testing inverse_error weights on pruned pool5 despite low concentration; confirms if weights add value over mean",
             "iteration": 10
           }
         },
@@ -965,9 +936,9 @@
           "ok": true,
           "args": {
             "combine": "weighted",
-            "pool": "pool4",
-            "weights": "w6",
-            "rationale": "Evaluate the inverse‑error weights computed per horizon (w6) on pool4; it may give a more nuanced weighting than the overall inverse‑error or softmax and could beat the current best 0.5753.",
+            "pool": "pool5",
+            "weights": "w4",
+            "rationale": "Testing softmax_neg_error weights on pruned pool5, which has low concentration in inverse_error weights",
             "iteration": 11
           }
         }
@@ -979,11 +950,10 @@
     }
   },
   "predict_debug": {
-    "method": "weighted",
+    "method": "mean",
     "spec": {
-      "combine": "weighted",
-      "pool": "pool4",
-      "weights": "w5"
+      "combine": "mean",
+      "pool": "pool5"
     },
     "pool_models": [
       "THETA",
@@ -992,14 +962,13 @@
       "ONLY_CWT_rf",
       "ONLY_DWT_catboost",
       "ONLY_FT_catboost"
-    ],
-    "weights_handle": "w5"
+    ]
   },
   "sanity": {
     "n_points": 12,
     "forecast_range": [
-      222095.383,
-      239075.196
+      222154.633,
+      239061.427
     ],
     "historical_range": [
       96775.07,

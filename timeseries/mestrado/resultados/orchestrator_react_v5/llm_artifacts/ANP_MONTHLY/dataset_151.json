@@ -13,7 +13,7 @@
     "show_attempt_history": true,
     "show_attempt_rationales": true,
     "combinator": {
-      "model": "gpt-oss:20b",
+      "model": "qwen3:30b-a3b",
       "temperature": 0.2,
       "base_url": "http://127.0.0.1:11434",
       "seed": 7,
@@ -43,6 +43,7 @@
     "pooled_meta_model": true,
     "seed_pooled_meta_model": true,
     "dataset_card": true,
+    "drop_misaligned_models": true,
     "pooled_meta_model_objective": "fforma",
     "pooled_meta_model_min_series": 20,
     "score_preset": "balanced",
@@ -57,84 +58,94 @@
   },
   "decision": {
     "strategy": {
-      "combine": "trimmed_mean",
-      "pool": "pool3",
-      "trim_pct": 0.2
+      "combine": "weighted",
+      "pool": "pool5",
+      "weights": "w3"
     },
-    "attempt_id": "a9",
-    "origin": "baseline",
+    "attempt_id": "a13",
+    "origin": "agent",
     "models": [
       "ARIMA",
-      "ETS",
       "THETA",
       "CWT_rf",
       "DWT_rf",
       "DWT_catboost",
-      "ONLY_CWT_rf",
-      "ONLY_DWT_rf",
       "NaiveSeasonal"
     ],
     "effective_models": [
+      "ARIMA",
       "CWT_rf",
+      "DWT_catboost",
       "DWT_rf",
-      "ETS",
       "NaiveSeasonal",
-      "ONLY_CWT_rf",
-      "ONLY_DWT_rf",
       "THETA"
     ],
     "reducibility": {
       "equivalent_to_pool_mean": true,
-      "pool_mean_relative_diff": 0.002999,
-      "weights_concentration": null
+      "pool_mean_relative_diff": 0.001355,
+      "weights_concentration": 0.005
     },
-    "weights": null,
+    "weights": {
+      "handle": "w3",
+      "computed_by": "error_trend",
+      "effective_mode": "error_trend",
+      "fit_windows": [
+        0,
+        1,
+        2
+      ],
+      "params": {
+        "metric": "mae",
+        "eta": 1.0,
+        "damping": null
+      }
+    },
     "validation": {
-      "score": 0.63354,
+      "score": 0.59632,
       "aggregate": {
-        "MAPE": 0.028254,
-        "SMAPE": 0.027883,
-        "RMSE": 1712.861387,
-        "POCID": 78.787879,
-        "MSMAPE": 0.027883,
-        "MAE": 1332.073537
+        "MAPE": 0.026524,
+        "SMAPE": 0.026211,
+        "RMSE": 1600.531819,
+        "POCID": 72.727273,
+        "MSMAPE": 0.026211,
+        "MAE": 1250.146862
       },
       "per_window_rmse": [
-        2081.40697,
-        1535.600431,
-        1453.051525
+        1848.705247,
+        1554.626506,
+        1360.342474
       ],
       "backtest_mode": "expanding",
       "n_windows": 3
     },
     "loop": {
-      "final_attempt": "a9",
+      "final_attempt": "a13",
       "strategy": {
-        "combine": "trimmed_mean",
-        "pool": "pool3",
-        "trim_pct": 0.2
+        "combine": "weighted",
+        "pool": "pool5",
+        "weights": "w3"
       },
-      "iterations_used": 9,
-      "early_stopped": true,
-      "stop_reason": "no improvement in 4 consecutive proposals",
-      "agent_accepted_id": null,
-      "accept_confidence": null,
+      "iterations_used": 12,
+      "early_stopped": false,
+      "stop_reason": "agent_accepted",
+      "agent_accepted_id": "a13",
+      "accept_confidence": 0.95,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 9,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 12,
       "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 36.82
+      "elapsed_s": 194.28
     },
     "provenance": {
-      "n_tool_calls": 9,
-      "n_successful": 9,
+      "n_tool_calls": 11,
+      "n_successful": 11,
       "n_failed": 0,
-      "n_evaluate_calls": 4,
-      "n_agent_attempts": 4,
+      "n_evaluate_calls": 6,
+      "n_agent_attempts": 6,
       "n_baseline_attempts": 10,
       "agent_called_tools": true,
       "evaluated_via_tool": true,
@@ -143,12 +154,12 @@
     },
     "selection_confidence": {
       "n_windows": 3,
-      "n_attempts": 14,
-      "winner": "a9",
-      "runner_up": "a8",
-      "margin": 0.00468,
-      "bootstrap_pvalue": 0.725,
-      "dm_pvalue": 0.719,
+      "n_attempts": 16,
+      "winner": "a13",
+      "runner_up": "a16",
+      "margin": 0.0014,
+      "bootstrap_pvalue": 0.063,
+      "dm_pvalue": 0.6158,
       "verdict": "indistinguishable",
       "twins_skipped": 0,
       "alpha": 0.1,
@@ -167,7 +178,7 @@
       "source": "deterministic"
     },
     "config": {
-      "ablation": "v5-05517e0e49",
+      "ablation": "v5-07bf5ddda0",
       "pool_mode": "full",
       "score_preset": "balanced"
     }
@@ -703,132 +714,178 @@
     "trajectory": [
       {
         "iteration": 1,
-        "thought": "Try error‑based weighting on the stable pool3 to see if concentrating on the best models improves over the trimmed mean baseline.",
-        "action": "weights_inverse_error",
+        "thought": "The series has unstable rankings and high error correlation, indicating redundant models. Pruning redundant models should create a more diverse pool for better combination.",
+        "action": "prune_redundant",
         "action_args": {
-          "pool": "pool3",
-          "metric": "rmse"
+          "pool": "pool_full",
+          "corr_threshold": 0.95
         },
-        "observation_summary": "handle w2 mode=inverse_error active=9/9 conc=0.0"
+        "observation_summary": "pool pool4 19->15 models, dropped ['ETS', 'FT_rf', 'ONLY_CWT_rf', 'ONLY_DWT_rf']"
       },
       {
         "iteration": 2,
-        "thought": "Try a less aggressive trimmed mean on the stable pool3 to see if trimming only the extreme 10% improves over the 20% trimmed baseline.",
-        "action": "evaluate_strategy",
+        "thought": "The series has unstable rankings and high error correlation, so a robust combination on a pruned pool (pool4) might outperform the current top strategy (trimmed_mean on pool3). Let's test weighted combination on the pruned pool.",
+        "action": "weights_inverse_error",
         "action_args": {
-          "combine": "trimmed_mean",
-          "pool": "pool3",
-          "trim_pct": 0.1
+          "pool": "pool4",
+          "metric": "rmse"
         },
-        "observation_summary": "rank 3/11 score=0.6365 rmse=1708.6237, leader is a9 (trimmed_mean pool=pool3 trim=0.2) [SAME forecasts as a8]"
+        "observation_summary": "handle w2 mode=inverse_error active=15/15 conc=0.001"
       },
       {
         "iteration": 3,
-        "thought": "The best result so far is a trimmed‑mean over pool3. To explore a different signal, compute softmax‑based weights on the same pool and evaluate a weighted combination.",
-        "action": "weights_softmax_neg_error",
+        "thought": "The best strategy so far is trimmed_mean on pool3 (9 models) with score 0.6335 (a9). Pool4 (15 models) was created by pruning redundant models from the full pool, but the attempt history shows stable pools (pool1-3) outperformed pruned pools in previous tests. Since pool4 has more models (15 vs 9) and we've already tested trimmed_mean on the smaller stable pool (pool3), the next logical step is to test if a trimmed_mean on the larger pruned pool (pool4) can improve upon the current best. The low concentration (0.001) of w2 (inverse_error weights for pool4) confirms weights would be nearly u...",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool3",
-          "metric": "rmse",
-          "eta": 1.0
+          "combine": "trimmed_mean",
+          "pool": "pool4",
+          "trim_pct": 0.2,
+          "rationale": "Testing trimmed_mean on pruned pool (pool4, 15 models) to see if larger robust model set improves over best baseline (a9: trimmed_mean on pool3, 9 models)"
         },
-        "observation_summary": "handle w3 mode=softmax_neg_error active=9/9 conc=0.0"
+        "observation_summary": "rank 9/11 score=0.673 rmse=1759.5169, leader is a9 (trimmed_mean pool=pool3 trim=0.2)"
       },
       {
         "iteration": 4,
-        "thought": "Compute pooled‑meta‑model weights on the stable pool3 and evaluate a weighted combination; this may outperform the trimmed‑mean baseline.",
-        "action": "weights_pooled_meta_model",
+        "thought": "The current top strategy uses a trimmed mean on a stable pool (pool3) but the error correlation shows significant redundancy within pool3's models. Pruning redundancy from pool3 could yield a more diverse and effective subset.",
+        "action": "prune_redundant",
         "action_args": {
           "pool": "pool3",
-          "eta": 1.0
+          "corr_threshold": 0.95
         },
-        "observation_summary": "handle w4 mode=pooled_meta_model active=9/9 conc=0.152"
+        "observation_summary": "pool pool5 9->6 models, dropped ['ETS', 'ONLY_CWT_rf', 'ONLY_DWT_rf']"
       },
       {
         "iteration": 5,
-        "thought": "The trend‑dominated series with unstable rankings suggests a robust combination. A weighted scheme that captures error trends (improving vs degrading) may outperform the trimmed‑mean baseline.",
-        "action": "weights_error_trend",
+        "thought": "The best baseline (a9) uses trimmed_mean on pool3 (9 models). Pool5 (6 models) is a pruned subset of pool3 with redundant models removed. Testing trimmed_mean on pool5 could yield better results by reducing noise from correlated models.",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool3",
-          "metric": "mae",
-          "eta": 1.0
+          "combine": "trimmed_mean",
+          "pool": "pool5",
+          "trim_pct": 0.2,
+          "rationale": "Testing trimmed_mean on pruned pool5 (6 models) to improve on best baseline (a9: trimmed_mean pool3) by removing redundant models"
         },
-        "observation_summary": "handle w5 mode=error_trend active=9/9 conc=0.003"
+        "observation_summary": "rank 1/12 score=0.6256 rmse=1650.3854 (best so far)"
       },
       {
         "iteration": 6,
-        "thought": "Evaluate the error‑trend weighted combination on pool3 to see if it improves over the trimmed‑mean baseline.",
-        "action": "evaluate_strategy",
+        "thought": "The current best strategy (a12) uses trimmed_mean on pool5 (6 models), but the unstable ranking suggests error trend (heading) might better capture model performance than average error. We'll test weights_error_trend on pool5 to see if it improves over the trimmed mean.",
+        "action": "weights_error_trend",
         "action_args": {
-          "combine": "weighted",
-          "pool": "pool3",
-          "weights": "w5"
+          "pool": "pool5",
+          "metric": "mae",
+          "eta": 1.0
         },
-        "observation_summary": "rank 4/12 score=0.6367 rmse=1707.9871, leader is a9 (trimmed_mean pool=pool3 trim=0.2)"
+        "observation_summary": "handle w3 mode=error_trend active=6/6 conc=0.005"
       },
       {
         "iteration": 7,
-        "thought": "Evaluate a weighted combination using inverse-error weights on pool3 to see if it can beat the trimmed‑mean baseline.",
+        "thought": "We have a handle w3 (error_trend weights for pool5) with low concentration (0.005), meaning weights are nearly uniform but slightly favoring top models. Testing weighted mean on pool5 with w3 could reveal if the minor weight differences improve over the current best strategy (a12: trimmed_mean on pool5).",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "weighted",
-          "pool": "pool3",
-          "weights": "w2"
+          "pool": "pool5",
+          "weights": "w3",
+          "rationale": "Testing weighted mean on pool5 with error_trend weights (w3) to see if slight weight differences improve over trimmed_mean (a12) or plain mean."
         },
-        "observation_summary": "rank 5/13 score=0.6368 rmse=1708.5819, leader is a9 (trimmed_mean pool=pool3 trim=0.2)"
+        "observation_summary": "rank 1/13 score=0.5963 rmse=1600.5318 (best so far)"
       },
       {
         "iteration": 8,
-        "thought": "The best result so far is a trimmed‑mean on pool3. Since the ranking is unstable, a robust weighted combination on a slightly smaller pool (pool2) might reduce variance. I’ll first compute pooled‑meta‑model weights for pool2 and then evaluate that weighted combination.",
-        "action": "weights_pooled_meta_model",
+        "thought": "The current best strategy (a13) uses error_trend weights on pool5, but the weights had near-uniform concentration (0.005), suggesting overfitting due to only 3 validation windows. Testing a robust median combination on the same pruned pool (pool5) to evaluate stability without weights, as recommended by the diagnosis of unstable ranking and high trend strength.",
+        "action": "evaluate_strategy",
         "action_args": {
-          "pool": "pool2",
-          "eta": 1.0
+          "combine": "median",
+          "pool": "pool5",
+          "rationale": "Testing median on pruned pool5 to assess robustness against overfitting; current best (a13) showed near-uniform weights (concentration 0.005) indicating potential overfitting with few windows."
         },
-        "observation_summary": "handle w6 mode=pooled_meta_model active=7/7 conc=0.188"
+        "observation_summary": "rank 6/14 score=0.6454 rmse=1661.9953, leader is a13 (weighted pool=pool5 w=w3)"
       },
       {
         "iteration": 9,
-        "thought": "Test the pooled‑meta‑model weights on the stable pool3 to see if they beat the trimmed‑mean baseline.",
+        "thought": "The current best strategy (a13) uses error_trend weights on pool5, but the weights showed near-uniform concentration (0.005). Testing a different weighting method (softmax) on the same pool might yield better differentiation without overfitting.",
+        "action": "weights_softmax_neg_error",
+        "action_args": {
+          "pool": "pool5",
+          "metric": "rmse",
+          "eta": 1.0
+        },
+        "observation_summary": "handle w4 mode=softmax_neg_error active=6/6 conc=0.0"
+      },
+      {
+        "iteration": 10,
+        "thought": "We have not tested inverse_error weights on the larger pool4, so we evaluate that strategy to see if the larger pool with inverse_error weights improves over the current best (a13) which used error_trend on a smaller pool5.",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "weighted",
-          "pool": "pool3",
-          "weights": "w4"
+          "pool": "pool4",
+          "weights": "w2",
+          "rationale": "Testing inverse_error weights on the larger pool4 (15 models) to see if the larger pool with inverse_error weights improves over the current best (a13) which used error_trend on a smaller pool5."
         },
-        "observation_summary": "rank 9/14 score=0.6515 rmse=1749.1512, leader is a9 (trimmed_mean pool=pool3 trim=0.2)"
+        "observation_summary": "rank 12/15 score=0.6725 rmse=1753.2463, leader is a13 (weighted pool=pool5 w=w3)"
+      },
+      {
+        "iteration": 11,
+        "thought": "Testing softmax_neg_error weights on pool5 (which has concentration 0.0, so effectively uniform) to see if it matches the plain mean and improves over the current best weighted strategy (a13).",
+        "action": "evaluate_strategy",
+        "action_args": {
+          "combine": "weighted",
+          "pool": "pool5",
+          "weights": "w4",
+          "rationale": "Testing softmax_neg_error weights on pool5 (concentration 0.0) to see if it matches plain mean and beats current best (a13: weighted error_trend)"
+        },
+        "observation_summary": "rank 2/16 score=0.5972 rmse=1601.9906, leader is a13 (weighted pool=pool5 w=w3)"
+      },
+      {
+        "iteration": 12,
+        "thought": "The top attempt (a13) uses error_trend weights on a stable pool, which addresses the unstable ranking (tau=0.189) and leverages the trend-dominated series characteristics where error trends matter more than average error.",
+        "action": "accept",
+        "action_args": {
+          "attempt_id": "a13",
+          "confidence": 0.95,
+          "justification": "Stable pool5 (k=6) with error_trend weights (w3) outperforms all others by 0.0009, directly addressing the unstable ranking (tau=0.189) and trend-dominated regime. Error_trend weights capture performance shifts across windows, unlike average-error-based methods that failed due to high ranking instability."
+        },
+        "observation_summary": "accepted a13 (confidence=0.95)"
       }
     ],
     "summary": {
-      "final_attempt": "a9",
+      "final_attempt": "a13",
       "strategy": {
-        "combine": "trimmed_mean",
-        "pool": "pool3",
-        "trim_pct": 0.2
+        "combine": "weighted",
+        "pool": "pool5",
+        "weights": "w3"
       },
-      "iterations_used": 9,
-      "early_stopped": true,
-      "stop_reason": "no improvement in 4 consecutive proposals",
-      "agent_accepted_id": null,
-      "accept_confidence": null,
+      "iterations_used": 12,
+      "early_stopped": false,
+      "stop_reason": "agent_accepted",
+      "agent_accepted_id": "a13",
+      "accept_confidence": 0.95,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 9,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 12,
       "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 36.82
+      "elapsed_s": 194.28
     },
     "errors": [],
     "parse_failures": [],
     "tools": {
       "tools_called": [
         {
+          "tool": "prune_redundant",
+          "ok": true,
+          "args": {
+            "pool": "pool_full",
+            "corr_threshold": 0.95
+          }
+        },
+        {
           "tool": "weights_inverse_error",
           "ok": true,
           "args": {
-            "pool": "pool3",
+            "pool": "pool4",
             "metric": "rmse"
           }
         },
@@ -837,34 +894,36 @@
           "ok": true,
           "args": {
             "combine": "trimmed_mean",
-            "pool": "pool3",
-            "trim_pct": 0.1,
-            "rationale": "Try a less aggressive trimmed mean on the stable pool3 to see if trimming only the extreme 10% improves over the 20% trimmed baseline.",
-            "iteration": 2
+            "pool": "pool4",
+            "trim_pct": 0.2,
+            "rationale": "Testing trimmed_mean on pruned pool (pool4, 15 models) to see if larger robust model set improves over best baseline (a9: trimmed_mean on pool3, 9 models)",
+            "iteration": 3
           }
         },
         {
-          "tool": "weights_softmax_neg_error",
+          "tool": "prune_redundant",
           "ok": true,
           "args": {
             "pool": "pool3",
-            "metric": "rmse",
-            "eta": 1.0
+            "corr_threshold": 0.95
           }
         },
         {
-          "tool": "weights_pooled_meta_model",
+          "tool": "evaluate_strategy",
           "ok": true,
           "args": {
-            "pool": "pool3",
-            "eta": 1.0
+            "combine": "trimmed_mean",
+            "pool": "pool5",
+            "trim_pct": 0.2,
+            "rationale": "Testing trimmed_mean on pruned pool5 (6 models) to improve on best baseline (a9: trimmed_mean pool3) by removing redundant models",
+            "iteration": 5
           }
         },
         {
           "tool": "weights_error_trend",
           "ok": true,
           "args": {
-            "pool": "pool3",
+            "pool": "pool5",
             "metric": "mae",
             "eta": 1.0
           }
@@ -874,28 +933,28 @@
           "ok": true,
           "args": {
             "combine": "weighted",
-            "pool": "pool3",
-            "weights": "w5",
-            "rationale": "Evaluate the error‑trend weighted combination on pool3 to see if it improves over the trimmed‑mean baseline.",
-            "iteration": 6
+            "pool": "pool5",
+            "weights": "w3",
+            "rationale": "Testing weighted mean on pool5 with error_trend weights (w3) to see if slight weight differences improve over trimmed_mean (a12) or plain mean.",
+            "iteration": 7
           }
         },
         {
           "tool": "evaluate_strategy",
           "ok": true,
           "args": {
-            "combine": "weighted",
-            "pool": "pool3",
-            "weights": "w2",
-            "rationale": "Evaluate a weighted combination using inverse-error weights on pool3 to see if it can beat the trimmed‑mean baseline.",
-            "iteration": 7
+            "combine": "median",
+            "pool": "pool5",
+            "rationale": "Testing median on pruned pool5 to assess robustness against overfitting; current best (a13) showed near-uniform weights (concentration 0.005) indicating potential overfitting with few windows.",
+            "iteration": 8
           }
         },
         {
-          "tool": "weights_pooled_meta_model",
+          "tool": "weights_softmax_neg_error",
           "ok": true,
           "args": {
-            "pool": "pool2",
+            "pool": "pool5",
+            "metric": "rmse",
             "eta": 1.0
           }
         },
@@ -904,43 +963,52 @@
           "ok": true,
           "args": {
             "combine": "weighted",
-            "pool": "pool3",
+            "pool": "pool4",
+            "weights": "w2",
+            "rationale": "Testing inverse_error weights on the larger pool4 (15 models) to see if the larger pool with inverse_error weights improves over the current best (a13) which used error_trend on a smaller pool5.",
+            "iteration": 10
+          }
+        },
+        {
+          "tool": "evaluate_strategy",
+          "ok": true,
+          "args": {
+            "combine": "weighted",
+            "pool": "pool5",
             "weights": "w4",
-            "rationale": "Test the pooled‑meta‑model weights on the stable pool3 to see if they beat the trimmed‑mean baseline.",
-            "iteration": 9
+            "rationale": "Testing softmax_neg_error weights on pool5 (concentration 0.0) to see if it matches plain mean and beats current best (a13: weighted error_trend)",
+            "iteration": 11
           }
         }
       ],
-      "n_calls": 9,
+      "n_calls": 11,
       "n_failures": 0,
       "tool_missing": false,
       "errors": []
     }
   },
   "predict_debug": {
-    "method": "trimmed_mean",
+    "method": "weighted",
     "spec": {
-      "combine": "trimmed_mean",
-      "pool": "pool3",
-      "trim_pct": 0.2
+      "combine": "weighted",
+      "pool": "pool5",
+      "weights": "w3"
     },
     "pool_models": [
       "ARIMA",
-      "ETS",
       "THETA",
       "CWT_rf",
       "DWT_rf",
       "DWT_catboost",
-      "ONLY_CWT_rf",
-      "ONLY_DWT_rf",
       "NaiveSeasonal"
-    ]
+    ],
+    "weights_handle": "w3"
   },
   "sanity": {
     "n_points": 12,
     "forecast_range": [
-      46300.535,
-      50219.922
+      46337.741,
+      50427.082
     ],
     "historical_range": [
       17808.685,

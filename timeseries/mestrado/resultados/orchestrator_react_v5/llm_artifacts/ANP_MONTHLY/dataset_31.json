@@ -13,7 +13,7 @@
     "show_attempt_history": true,
     "show_attempt_rationales": true,
     "combinator": {
-      "model": "gpt-oss:20b",
+      "model": "qwen3:30b-a3b",
       "temperature": 0.2,
       "base_url": "http://127.0.0.1:11434",
       "seed": 7,
@@ -43,6 +43,7 @@
     "pooled_meta_model": true,
     "seed_pooled_meta_model": true,
     "dataset_card": true,
+    "drop_misaligned_models": true,
     "pooled_meta_model_objective": "fforma",
     "pooled_meta_model_min_series": 20,
     "score_preset": "balanced",
@@ -114,27 +115,27 @@
         "combine": "mean",
         "pool": "pool3"
       },
-      "iterations_used": 7,
-      "early_stopped": true,
-      "stop_reason": "no improvement in 4 consecutive proposals",
-      "agent_accepted_id": null,
-      "accept_confidence": null,
+      "iterations_used": 4,
+      "early_stopped": false,
+      "stop_reason": "agent_accepted",
+      "agent_accepted_id": "a8",
+      "accept_confidence": 0.95,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 7,
-      "empty_responses": 2,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 4,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 24.16
+      "elapsed_s": 45.25
     },
     "provenance": {
-      "n_tool_calls": 7,
-      "n_successful": 7,
+      "n_tool_calls": 3,
+      "n_successful": 3,
       "n_failed": 0,
-      "n_evaluate_calls": 4,
-      "n_agent_attempts": 3,
+      "n_evaluate_calls": 2,
+      "n_agent_attempts": 2,
       "n_baseline_attempts": 10,
       "agent_called_tools": true,
       "evaluated_via_tool": true,
@@ -143,7 +144,7 @@
     },
     "selection_confidence": {
       "n_windows": 3,
-      "n_attempts": 13,
+      "n_attempts": 12,
       "winner": "a8",
       "runner_up": "a6",
       "margin": 0.00406,
@@ -167,7 +168,7 @@
       "source": "deterministic"
     },
     "config": {
-      "ablation": "v5-05517e0e49",
+      "ablation": "v5-07bf5ddda0",
       "pool_mode": "full",
       "score_preset": "balanced"
     }
@@ -684,7 +685,7 @@
     "trajectory": [
       {
         "iteration": 1,
-        "thought": "The current best is a plain mean over a stable subset (pool3). Since many models are highly correlated, pruning redundant ones may reduce noise and improve the mean.",
+        "thought": "The series has unstable rankings and high error correlation, indicating redundant models. Pruning redundant models should create a more diverse pool for robust combination.",
         "action": "prune_redundant",
         "action_args": {
           "pool": "pool_full",
@@ -695,71 +696,36 @@
       },
       {
         "iteration": 2,
-        "thought": "Test a simple mean over the pruned pool4 to see if fewer models improve performance in this noisy regime.",
+        "thought": "The series has unstable rankings (tau=0.088) and high error correlation, so a robust combination on a pruned pool (pool4) should outperform weighted methods that overfit. Pool4 has 6 models after removing redundant groups.",
         "action": "evaluate_strategy",
         "action_args": {
-          "combine": "mean",
+          "combine": "median",
           "pool": "pool4",
-          "rationale": "mean over the 6 non‑redundant models"
+          "rationale": "Robust median on pruned pool4 (6 models) to handle unstable rankings and redundant errors; avoids overfitting weighted methods"
         },
-        "observation_summary": "rank 11/11 score=0.7741 rmse=41.0209, leader is a8 (mean pool=pool3)"
+        "observation_summary": "rank 11/11 score=0.7911 rmse=41.1303, leader is a8 (mean pool=pool3)"
       },
       {
         "iteration": 3,
-        "thought": "The best score so far is mean over pool3 (9 models). Since many models in pool3 are highly correlated, pruning redundant models may reduce noise and improve performance.",
-        "action": "prune_redundant",
-        "action_args": {
-          "pool": "pool3",
-          "corr_threshold": 0.95,
-          "metric": "rmse"
-        },
-        "observation_summary": "pool pool5 9->3 models, dropped ['ETS', 'NaiveMovingAverage', 'rf', 'DWT_rf']"
-      },
-      {
-        "iteration": 4,
-        "thought": "Try a robust median combination over the 9‑model pool3 to see if it beats the current best mean pool3 (score 0.666).",
+        "thought": "The series has unstable rankings (tau=0.088) and noisy characteristics, so a robust median combination on the stable pool3 (9 models) should outperform the mean, which is sensitive to outliers in the error distribution.",
         "action": "evaluate_strategy",
         "action_args": {
           "combine": "median",
           "pool": "pool3",
-          "rationale": "robust median over the 9 most consistent models"
+          "rationale": "Robust median on stable pool3 (9 models) to handle unstable rankings and noisy regime, avoiding sensitivity to outliers in error distribution"
         },
         "observation_summary": "rank 5/12 score=0.6907 rmse=37.2365, leader is a8 (mean pool=pool3)"
       },
       {
-        "iteration": 5,
-        "thought": "Try a robust trimmed‑mean on the 9‑model pool3 to reduce influence of any outlier forecasts while keeping most models.",
-        "action": "evaluate_strategy",
+        "iteration": 4,
+        "thought": "The current best strategy (a8) uses mean combination on pool3, which aligns with the diagnosis of needing a robust method for unstable rankings and high error correlation. No better strategy has emerged in the attempt history.",
+        "action": "accept",
         "action_args": {
-          "combine": "trimmed_mean",
-          "pool": "pool3",
-          "trim_pct": 0.2,
-          "rationale": "robust trimmed‑mean on the 9‑model pool3 to mitigate outliers in a noisy series"
+          "attempt_id": "a8",
+          "confidence": 0.95,
+          "justification": "Series has unstable rankings (tau=0.088) and high error correlation (mean_corr=0.939), favoring a robust mean combination. Pool3 (9 models) was selected for consistent ranking, and mean outperforms median/trimmed mean on this noisy series (low predictability, trend strength 0.39)."
         },
-        "observation_summary": "rank 4/12 score=0.6842 rmse=37.0003, leader is a8 (mean pool=pool3) [already tested]"
-      },
-      {
-        "iteration": 6,
-        "thought": "Compute inverse-error weights on the small, pruned pool5 (3 models) to see if a data‑driven weighting improves over the plain mean on pool3.",
-        "action": "weights_inverse_error",
-        "action_args": {
-          "pool": "pool5",
-          "metric": "rmse",
-          "windows": null
-        },
-        "observation_summary": "handle w2 mode=inverse_error active=3/3 conc=0.0"
-      },
-      {
-        "iteration": 7,
-        "thought": "Evaluate the weighted combination on the small, non‑redundant pool5 using the inverse‑error weights (w2) to see if a focused, error‑based weighting beats the current best mean‑pool3 strategy.",
-        "action": "evaluate_strategy",
-        "action_args": {
-          "combine": "weighted",
-          "pool": "pool5",
-          "weights": "w2",
-          "rationale": "inverse‑error weighted mean on the 3 most consistent, non‑redundant models"
-        },
-        "observation_summary": "rank 6/13 score=0.6963 rmse=37.5693, leader is a8 (mean pool=pool3)"
+        "observation_summary": "accepted a8 (confidence=0.95)"
       }
     ],
     "summary": {
@@ -768,25 +734,22 @@
         "combine": "mean",
         "pool": "pool3"
       },
-      "iterations_used": 7,
-      "early_stopped": true,
-      "stop_reason": "no improvement in 4 consecutive proposals",
-      "agent_accepted_id": null,
-      "accept_confidence": null,
+      "iterations_used": 4,
+      "early_stopped": false,
+      "stop_reason": "agent_accepted",
+      "agent_accepted_id": "a8",
+      "accept_confidence": 0.95,
       "overridden": false,
-      "llm_model": "gpt-oss:20b",
-      "n_trajectory_steps": 7,
-      "empty_responses": 2,
+      "llm_model": "qwen3:30b-a3b",
+      "n_trajectory_steps": 4,
+      "empty_responses": 0,
       "llm_error_retries": 0,
       "withheld_tools": {
         "weights_ols": "needs at least 5 validation windows, this run has 3"
       },
-      "elapsed_s": 24.16
+      "elapsed_s": 45.25
     },
-    "errors": [
-      "iteration 3: empty response, retrying (1/2)",
-      "iteration 7: empty response, retrying (1/2)"
-    ],
+    "errors": [],
     "parse_failures": [],
     "tools": {
       "tools_called": [
@@ -803,19 +766,10 @@
           "tool": "evaluate_strategy",
           "ok": true,
           "args": {
-            "combine": "mean",
+            "combine": "median",
             "pool": "pool4",
-            "rationale": "mean over the 6 non‑redundant models",
+            "rationale": "Robust median on pruned pool4 (6 models) to handle unstable rankings and redundant errors; avoids overfitting weighted methods",
             "iteration": 2
-          }
-        },
-        {
-          "tool": "prune_redundant",
-          "ok": true,
-          "args": {
-            "pool": "pool3",
-            "corr_threshold": 0.95,
-            "metric": "rmse"
           }
         },
         {
@@ -824,43 +778,12 @@
           "args": {
             "combine": "median",
             "pool": "pool3",
-            "rationale": "robust median over the 9 most consistent models",
-            "iteration": 4
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "trimmed_mean",
-            "pool": "pool3",
-            "trim_pct": 0.2,
-            "rationale": "robust trimmed‑mean on the 9‑model pool3 to mitigate outliers in a noisy series",
-            "iteration": 5
-          }
-        },
-        {
-          "tool": "weights_inverse_error",
-          "ok": true,
-          "args": {
-            "pool": "pool5",
-            "metric": "rmse",
-            "windows": null
-          }
-        },
-        {
-          "tool": "evaluate_strategy",
-          "ok": true,
-          "args": {
-            "combine": "weighted",
-            "pool": "pool5",
-            "weights": "w2",
-            "rationale": "inverse‑error weighted mean on the 3 most consistent, non‑redundant models",
-            "iteration": 7
+            "rationale": "Robust median on stable pool3 (9 models) to handle unstable rankings and noisy regime, avoiding sensitivity to outliers in error distribution",
+            "iteration": 3
           }
         }
       ],
-      "n_calls": 7,
+      "n_calls": 3,
       "n_failures": 0,
       "tool_missing": false,
       "errors": []
