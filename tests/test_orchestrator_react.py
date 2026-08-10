@@ -224,6 +224,21 @@ def test_dba_random_state_is_configurable_and_changes_the_result():
     assert np.all(np.isfinite(a)) and np.all(np.isfinite(b))
 
 
+def test_dba_does_not_silently_fall_back_to_plain_mean():
+    """Regression test for a real bug: `dtw_barycenter_averaging` in the
+    installed tslearn (0.6.3) doesn't accept a `random_state` kwarg. The
+    previous implementation passed it directly and caught the resulting
+    TypeError with a bare `except Exception`, so every call silently computed
+    `np.nanmean` instead of DBA — `test_dba_random_state_is_configurable...`
+    above can't catch this because it only checks finiteness, which the mean
+    fallback also satisfies. The fix seeds the numpy global RNG before the
+    call instead of passing the keyword."""
+    rng = np.random.default_rng(3)
+    preds = rng.normal(100.0, 10.0, size=(6, 8))
+    out = combine_dba(preds.copy())
+    assert not np.allclose(out, preds.mean(axis=0))
+
+
 def test_apply_combination_threads_the_dba_seed():
     from orchestrator_react.combiners import apply_combination
 

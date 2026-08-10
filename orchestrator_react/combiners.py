@@ -97,6 +97,18 @@ def combine_dba(preds: np.ndarray, max_iter: int = 30, random_state: int = 7) ->
     had happened elsewhere in the process by the time each series reached this
     line. A fixed seed here closes that gap; it does not, by itself, make the rest
     of the pipeline deterministic (the LLM sampling seed is a separate control).
+
+    IMPORTANT: `dtw_barycenter_averaging` in tslearn 0.6.3 (pinned in `agno`)
+    does NOT accept a `random_state` keyword — passing one raises TypeError.
+    The previous version of this function passed `random_state=` directly to
+    the call, wrapped in a bare `except Exception`, so every call silently hit
+    that TypeError and fell back to `np.nanmean` — meaning `combine_dba` has
+    been computing the **plain mean**, not DBA, on this tslearn version. The
+    fix is to seed the numpy GLOBAL RNG right before the call instead of
+    passing the keyword (verified: `np.random.seed(s)` immediately before
+    `dtw_barycenter_averaging(...)`, with no other kwarg, reproduces the same
+    centroid across calls regardless of intervening `np.random` activity, and
+    differs from the plain mean).
     """
     p = _check(preds)
     col_means = np.nanmean(p, axis=0)
@@ -110,10 +122,10 @@ def combine_dba(preds: np.ndarray, max_iter: int = 30, random_state: int = 7) ->
         return np.nanmean(p, axis=0)
 
     try:
+        np.random.seed(int(random_state))
         centroid = dtw_barycenter_averaging(
             clean.reshape(clean.shape[0], clean.shape[1], 1),
             max_iter=int(max_iter),
-            random_state=int(random_state),
         )
         out = np.asarray(centroid, dtype=float).ravel()[: p.shape[1]]
         if out.size != p.shape[1] or not np.all(np.isfinite(out)):
