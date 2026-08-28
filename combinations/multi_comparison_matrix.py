@@ -45,7 +45,8 @@ METHODS = {
     # "orchestrator_react_v4": f"{BASE}/orchestrator_react_v4_baseline",
     # "orchestrator_react_v5": f"{BASE}/orchestrator_react_v5",
     # "orchestrator_react_v4_baseline": f"{BASE}/orchestrator_react_v4_baseline",
-    "orchestrator_react_v5": f"{BASE}/orchestrator_react_v5",
+    "orchestrator_react_gpt-oss": f"{BASE}/orchestrator_react_v5",
+    "orchestrator_react_qwen": f"{BASE}/orchestrator_react_v5_qwen",
     "FFORMA":       f"{BASE}/FFORMA",
     "ADE":          f"{BASE}/ADE",
 }
@@ -53,11 +54,12 @@ METHODS = {
 DATASETS = [
     "NN5_WEEKLY_DATASET", 
             "ETTH1", "ETTH2", 
-            # "ETTM1", "ETTM2",
-            "ANP_MONTHLY"
+            "ETTM1", "ETTM2",
+            "ANP_MONTHLY",
+            "M4_WEEKLY_DATASET"
             ]
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output_v5")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcm_output_resultados")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
