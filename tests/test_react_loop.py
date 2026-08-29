@@ -1321,6 +1321,45 @@ def test_reasoning_is_omitted_unless_configured():
         sys.modules.pop("langchain_ollama", None)
 
 
+def test_http_payload_maps_reasoning_to_think():
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    client = OllamaClient(role=LLMRole(model="gemma4:26b"))
+    assert "think" not in client._build_chat_payload("sys", "user")
+
+    client = OllamaClient(role=LLMRole(model="gemma4:26b", reasoning=False))
+    assert client._build_chat_payload("sys", "user")["think"] is False
+
+    client = OllamaClient(role=LLMRole(model="gemma4:26b", reasoning="low"))
+    assert client._build_chat_payload("sys", "user")["think"] == "low"
+
+
+def test_combine_ollama_message_uses_thinking_when_content_is_empty():
+    from orchestrator_react.llm import combine_ollama_message, parse_agent_step
+
+    text = combine_ollama_message({
+        "content": "",
+        "thinking": "Thought: inspect\nAction: list_attempts\nAction Input: {}",
+    })
+    step = parse_agent_step(text)
+    assert step.ok
+    assert step.action == "list_attempts"
+
+
+def test_combine_ollama_message_wraps_both_channels():
+    from orchestrator_react.llm import combine_ollama_message, parse_agent_step
+
+    text = combine_ollama_message({
+        "content": "Action: accept\nAction Input: {\"attempt_id\": \"a1\"}",
+        "thinking": "internal reasoning",
+    })
+    step = parse_agent_step(text)
+    assert step.ok
+    assert step.action == "accept"
+    assert "internal reasoning" in step.thought
+
+
 def test_reasoning_is_part_of_the_run_fingerprint():
     """An A/B on reasoning must not look like the same ablation."""
     from orchestrator_react.config import ReactConfig
@@ -1332,34 +1371,38 @@ def test_reasoning_is_part_of_the_run_fingerprint():
 
 def test_ollama_content_blocks_accept_non_text_keys():
     """Some providers send blocks as {'content': ...} instead of {'text': ...}."""
-    from orchestrator_react.config import LLMRole
-    from orchestrator_react.llm import OllamaClient
+    from orchestrator_react.llm import extract_response_text
 
     class FakeResp:
         content = [{"type": "text", "content": "Action: list_attempts\nAction Input: {}"}]
         additional_kwargs = {}
 
-    class FakeChat:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
+    out = extract_response_text(FakeResp())
+    assert "Action: list_attempts" in out
 
-        def invoke(self, messages):
-            return FakeResp()
 
-    class FakeMsg:
-        def __init__(self, content):
-            self.content = content
+def test_ollama_client_uses_native_http_chat():
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react import llm as L
+    from orchestrator_react.llm import OllamaClient
 
-    mod_ollama = types.ModuleType("langchain_ollama")
-    mod_ollama.ChatOllama = FakeChat
-    mod_msgs = types.ModuleType("langchain_core.messages")
-    mod_msgs.HumanMessage = FakeMsg
-    mod_msgs.SystemMessage = FakeMsg
-    sys.modules["langchain_ollama"] = mod_ollama
-    sys.modules["langchain_core.messages"] = mod_msgs
+    captured = {}
+
+    def fake_request(base_url, payload, timeout):
+        captured["payload"] = payload
+        return {
+            "message": {
+                "content": "Action: list_attempts\nAction Input: {}",
+                "thinking": "planning",
+            }
+        }
+
+    original = L._ollama_chat_request
+    L._ollama_chat_request = fake_request
     try:
         out = OllamaClient(role=LLMRole(model="m")).complete("sys", "user")
+        assert captured["payload"]["model"] == "m"
         assert "Action: list_attempts" in out
+        assert "planning" in out
     finally:
-        sys.modules.pop("langchain_ollama", None)
-        sys.modules.pop("langchain_core.messages", None)
+        L._ollama_chat_request = original
