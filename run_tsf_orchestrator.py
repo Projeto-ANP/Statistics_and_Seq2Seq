@@ -155,6 +155,28 @@ def _as_role(value: Any, default_temperature: float = 0.2) -> LLMRole:
     )
 
 
+def _normalize_reasoning(value: Any) -> Any:
+    """Normalizes CLI/API reasoning values to Ollama's expected shape."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        clean = value.strip().lower()
+        if clean in {"off", "false", "no", "0"}:
+            return False
+        if clean in {"on", "true", "yes", "1"}:
+            return True
+        if clean in {"low", "medium", "high"}:
+            return clean
+        raise ValueError(
+            f"invalid reasoning value {value!r}; use low|medium|high|off"
+        )
+    raise TypeError(
+        f"invalid reasoning type {type(value).__name__}; use bool, string or None"
+    )
+
+
 def exec_dataset_orchestrator(
     models: Optional[Sequence[str]] = None,
     dataset: str = "ANP_MONTHLY",
@@ -358,8 +380,7 @@ def exec_dataset_orchestrator(
     cfg.calibration_gate = bool(calibration_gate)
 
     cfg.combinator = _as_role(combinator_model)
-    if combinator_reasoning is not None:
-        cfg.combinator.reasoning = bool(combinator_reasoning)
+    cfg.combinator.reasoning = _normalize_reasoning(combinator_reasoning)
     cfg.diagnostician = _as_role(diagnostician_model)
     cfg.reporter = _as_role(reporter_model)
 

@@ -105,10 +105,30 @@ class OllamaClient:
             raise LLMError(f"Ollama call failed ({self.role.label()}): {exc}") from exc
         content = getattr(response, "content", response)
         if isinstance(content, list):  # some models return content blocks
-            content = "".join(
-                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
-            )
-        return str(content)
+            parts: List[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    text = block.get("text")
+                    if text is None:
+                        text = block.get("content")
+                    if text is None:
+                        text = block.get("reasoning")
+                    if text is None:
+                        text = block.get("thinking")
+                    if text is not None:
+                        parts.append(str(text))
+                else:
+                    parts.append(str(block))
+            content = "".join(parts)
+        text = str(content or "")
+        if not text.strip() and hasattr(response, "additional_kwargs"):
+            extra = getattr(response, "additional_kwargs") or {}
+            for key in ("text", "content", "response", "reasoning", "reasoning_content"):
+                value = extra.get(key)
+                if isinstance(value, str) and value.strip():
+                    text = value
+                    break
+        return text
 
 
 def build_client(role: LLMRole) -> Optional[LLMClient]:

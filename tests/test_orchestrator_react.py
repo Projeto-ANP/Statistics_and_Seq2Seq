@@ -917,6 +917,16 @@ def test_diagnostician_env_var_actually_enables_the_role():
             os.environ["REACT_MODEL_DIAGNOSTICIAN"] = monkeypatch_env
 
 
+def test_reasoning_levels_are_not_coerced_to_bool():
+    import run_tsf_orchestrator as R
+
+    assert R._normalize_reasoning("low") == "low"
+    assert R._normalize_reasoning("medium") == "medium"
+    assert R._normalize_reasoning("high") == "high"
+    assert R._normalize_reasoning("off") is False
+    assert R._normalize_reasoning(True) is True
+
+
 def test_scale_free_preset_survives_nan_mape():
     """Series crossing zero produce useless MAPE; the safe preset must survive it."""
     cfg = ReactConfig(score_preset="scale_free_safe")

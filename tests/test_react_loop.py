@@ -1307,3 +1307,38 @@ def test_reasoning_is_part_of_the_run_fingerprint():
     a, b = ReactConfig(), ReactConfig()
     b.combinator.reasoning = False
     assert a.fingerprint() != b.fingerprint()
+
+
+def test_ollama_content_blocks_accept_non_text_keys():
+    """Some providers send blocks as {'content': ...} instead of {'text': ...}."""
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    class FakeResp:
+        content = [{"type": "text", "content": "Action: list_attempts\nAction Input: {}"}]
+        additional_kwargs = {}
+
+    class FakeChat:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            return FakeResp()
+
+    class FakeMsg:
+        def __init__(self, content):
+            self.content = content
+
+    mod_ollama = types.ModuleType("langchain_ollama")
+    mod_ollama.ChatOllama = FakeChat
+    mod_msgs = types.ModuleType("langchain_core.messages")
+    mod_msgs.HumanMessage = FakeMsg
+    mod_msgs.SystemMessage = FakeMsg
+    sys.modules["langchain_ollama"] = mod_ollama
+    sys.modules["langchain_core.messages"] = mod_msgs
+    try:
+        out = OllamaClient(role=LLMRole(model="m")).complete("sys", "user")
+        assert "Action: list_attempts" in out
+    finally:
+        sys.modules.pop("langchain_ollama", None)
+        sys.modules.pop("langchain_core.messages", None)
