@@ -274,6 +274,13 @@ def parse_agent_step(text: str) -> AgentStep:
     thinking, body = split_think(text or "")
     step.thought = thinking
 
+    # Some thinking-capable models place the full structured answer in the
+    # reasoning channel and leave the final channel blank. If that reasoning
+    # block carries a parseable action, recover it instead of treating it as
+    # an empty response.
+    if not body.strip() and thinking.strip():
+        if _ACTION.search(thinking) or extract_json(thinking) is not None:
+            body = thinking.strip()
     if not body.strip():
         step.parse_error = "empty response"
         return step

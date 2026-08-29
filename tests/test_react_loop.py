@@ -110,6 +110,14 @@ def test_parse_rejects_empty():
     assert not parse_agent_step("<think>only thinking</think>").ok
 
 
+def test_parse_recovers_action_when_it_is_only_in_thinking_block():
+    s = parse_agent_step(
+        "<think>Thought: test\nAction: list_attempts\nAction Input: {}</think>"
+    )
+    assert s.ok
+    assert s.action == "list_attempts"
+
+
 def test_extract_json_variants():
     assert extract_json('{"a": 1}') == {"a": 1}
     assert extract_json('noise ```json\n{"a": 2}\n``` more') == {"a": 2}
