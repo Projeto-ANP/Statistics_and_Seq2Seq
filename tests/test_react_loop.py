@@ -118,6 +118,20 @@ def test_parse_recovers_action_when_it_is_only_in_thinking_block():
     assert s.action == "list_attempts"
 
 
+def test_parse_recovers_action_from_thinking_when_content_is_prose():
+    """Gemma 4 often answers in `content` with prose while the ReAct step lives in `thinking`."""
+    text = (
+        "<think>Thought: inspect pool2\n"
+        "Action: weights_error_trend\n"
+        "Action Input: {\"pool\": \"pool2\", \"metric\": \"mae\"}</think>\n"
+        "The best attempt so far is a7. I should try weighting by error trend next."
+    )
+    s = parse_agent_step(text)
+    assert s.ok
+    assert s.action == "weights_error_trend"
+    assert s.action_input == {"pool": "pool2", "metric": "mae"}
+
+
 def test_extract_json_variants():
     assert extract_json('{"a": 1}') == {"a": 1}
     assert extract_json('noise ```json\n{"a": 2}\n``` more') == {"a": 2}

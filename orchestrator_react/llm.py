@@ -433,6 +433,20 @@ _ACTION_INPUT = re.compile(r"action\s*_?\s*input\s*:", re.IGNORECASE)
 _THOUGHT = re.compile(r"^\s*thought\s*:\s*(.*?)$", re.IGNORECASE | re.MULTILINE)
 
 
+def _pick_parse_body(thinking: str, body: str) -> str:
+    """Prefer the channel that actually carries a ReAct step."""
+    candidates = [c for c in (body.strip(), thinking.strip()) if c]
+    if not candidates:
+        return ""
+    for candidate in candidates:
+        if _ACTION.search(candidate):
+            return candidate
+        obj = extract_json(candidate)
+        if isinstance(obj, dict) and ("action" in obj or "tool" in obj):
+            return candidate
+    return candidates[0]
+
+
 def parse_agent_step(text: str) -> AgentStep:
     """Parses `Thought: / Action: / Action Input:` leniently.
 
@@ -444,14 +458,7 @@ def parse_agent_step(text: str) -> AgentStep:
     step = AgentStep(raw=text or "")
     thinking, body = split_think(text or "")
     step.thought = thinking
-
-    # Some thinking-capable models place the full structured answer in the
-    # reasoning channel and leave the final channel blank. If that reasoning
-    # block carries a parseable action, recover it instead of treating it as
-    # an empty response.
-    if not body.strip() and thinking.strip():
-        if _ACTION.search(thinking) or extract_json(thinking) is not None:
-            body = thinking.strip()
+    body = _pick_parse_body(thinking, body)
     if not body.strip():
         step.parse_error = "empty response"
         return step
