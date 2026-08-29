@@ -103,32 +103,80 @@ class OllamaClient:
             )
         except Exception as exc:  # pragma: no cover - environment dependent
             raise LLMError(f"Ollama call failed ({self.role.label()}): {exc}") from exc
-        content = getattr(response, "content", response)
-        if isinstance(content, list):  # some models return content blocks
-            parts: List[str] = []
-            for block in content:
-                if isinstance(block, dict):
-                    text = block.get("text")
-                    if text is None:
-                        text = block.get("content")
-                    if text is None:
-                        text = block.get("reasoning")
-                    if text is None:
-                        text = block.get("thinking")
-                    if text is not None:
-                        parts.append(str(text))
-                else:
-                    parts.append(str(block))
-            content = "".join(parts)
-        text = str(content or "")
-        if not text.strip() and hasattr(response, "additional_kwargs"):
-            extra = getattr(response, "additional_kwargs") or {}
-            for key in ("text", "content", "response", "reasoning", "reasoning_content"):
-                value = extra.get(key)
-                if isinstance(value, str) and value.strip():
-                    text = value
-                    break
+        text = extract_response_text(response)
+        if not text.strip():
+            _log_empty_ollama_response(self.role.label(), response, text)
         return text
+
+
+def _preview(value: Any, limit: int = 600) -> str:
+    escaped = repr(value).encode("unicode_escape", "backslashreplace").decode("ascii", "replace")
+    return escaped if len(escaped) <= limit else escaped[: limit - 3] + "..."
+
+
+def extract_response_text(response: Any) -> str:
+    """Pull the answer text out of a LangChain/Ollama AIMessage."""
+    content = getattr(response, "content", response)
+    if isinstance(content, list):  # some models return content blocks
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if text is None:
+                    text = block.get("content")
+                if text is None:
+                    text = block.get("reasoning")
+                if text is None:
+                    text = block.get("thinking")
+                if text is not None:
+                    parts.append(str(text))
+            else:
+                parts.append(str(block))
+        content = "".join(parts)
+    text = str(content or "")
+    if not text.strip() and hasattr(response, "additional_kwargs"):
+        extra = getattr(response, "additional_kwargs") or {}
+        for key in ("text", "content", "response", "reasoning", "reasoning_content", "thinking"):
+            value = extra.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value
+                break
+    return text
+
+
+def describe_llm_response(response: Any) -> Dict[str, Any]:
+    """Every field that might carry model text — for debugging empty answers."""
+    info: Dict[str, Any] = {"type": type(response).__name__}
+    content = getattr(response, "content", None)
+    info["content_type"] = type(content).__name__
+    info["content_len"] = len(str(content or ""))
+    info["content_preview"] = _preview(content, 400)
+    info["extracted_len"] = len(extract_response_text(response).strip())
+
+    extra = getattr(response, "additional_kwargs", None) or {}
+    if extra:
+        info["additional_kwargs"] = {k: _preview(v, 300) for k, v in extra.items()}
+
+    meta = getattr(response, "response_metadata", None) or {}
+    if meta:
+        info["response_metadata"] = {k: _preview(v, 300) for k, v in meta.items()}
+
+    for attr in ("text", "reasoning", "thinking"):
+        value = getattr(response, attr, None)
+        if value is not None:
+            info[attr] = _preview(value, 300)
+
+    tool_calls = getattr(response, "tool_calls", None)
+    if tool_calls:
+        info["tool_calls"] = _preview(tool_calls, 400)
+
+    return info
+
+
+def _log_empty_ollama_response(label: str, response: Any, extracted: str) -> None:
+    print(f"[ollama] {label}: resposta vazia apos extracao (len={len(extracted.strip())})", flush=True)
+    for key, value in describe_llm_response(response).items():
+        print(f"  {key}: {value}", flush=True)
 
 
 def build_client(role: LLMRole) -> Optional[LLMClient]:

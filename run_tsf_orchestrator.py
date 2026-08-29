@@ -514,6 +514,19 @@ def exec_dataset_orchestrator(
         if thought:
             print(f"{tag}     think: {thought}", flush=True)
         print(f"{tag}     obs  : {entry.get('observation_summary', '')}", flush=True)
+        debug = entry.get("parse_debug")
+        if isinstance(debug, dict):
+            print(
+                f"{tag}     parse: raw_len={debug.get('raw_len')} "
+                f"stripped={debug.get('raw_stripped_len')} "
+                f"thought_len={debug.get('thought_len')}",
+                flush=True,
+            )
+            raw_preview = debug.get("raw_preview") or "(vazio)"
+            print(f"{tag}     raw  : {raw_preview}", flush=True)
+            thought_preview = debug.get("thought_preview")
+            if thought_preview:
+                print(f"{tag}     think(raw): {thought_preview}", flush=True)
 
     started = time.perf_counter()
     outcomes: List[Any] = []

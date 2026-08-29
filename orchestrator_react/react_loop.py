@@ -234,6 +234,7 @@ def run_react_loop(
             step = parse_agent_step(raw)
             if step.ok or step.parse_error != "empty response":
                 break
+            _log_parse_failure(iteration, step, raw=raw, retrying=True)
             if empty_left <= 0:
                 break
             empty_left -= 1
@@ -257,6 +258,21 @@ def run_react_loop(
         if not step.ok:
             entry["action"] = step.action or "unparsed"
             entry["observation_summary"] = f"ERROR parse: {step.parse_error}"
+            raw_text = str(step.raw or "")
+            if step.parse_error == "empty response":
+                debug = {
+                    "raw_len": len(raw_text),
+                    "raw_stripped_len": len(raw_text.strip()),
+                    "raw_preview": _debug_preview(raw_text, 600),
+                    "thought_len": len(str(step.thought or "")),
+                    "thought_preview": _debug_preview(str(step.thought or ""), 400),
+                }
+                entry["parse_debug"] = debug
+                entry["observation_summary"] += (
+                    f" [raw_len={debug['raw_len']} stripped={debug['raw_stripped_len']}"
+                    f" thought_len={debug['thought_len']}]"
+                )
+            _log_parse_failure(iteration, step, raw=raw)
             observation = {
                 "error": "unparsed_response",
                 "detail": step.parse_error,
@@ -267,9 +283,15 @@ def run_react_loop(
                 error=step.parse_error, kind="invalid_action_input",
             )
             result.errors.append(f"iteration {iteration}: {step.parse_error}")
-            result.parse_failures.append(
-                {"iteration": iteration, "reason": step.parse_error, "raw": str(step.raw)[:4000]}
-            )
+            failure = {
+                "iteration": iteration,
+                "reason": step.parse_error,
+                "raw": str(step.raw)[:4000],
+                "thought": str(step.thought)[:2000],
+                "raw_preview": _debug_preview(str(step.raw), 600),
+                "thought_preview": _debug_preview(str(step.thought), 400),
+            }
+            result.parse_failures.append(failure)
             result.trajectory.append(entry)
             scratchpad.append(entry)
             last_observation = observation
@@ -389,6 +411,39 @@ def _improved(current: float, previous: float, min_gain: float) -> bool:
 def _clip(text: str, limit: int) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _debug_preview(text: str, limit: int) -> str:
+    """Printable snippet that keeps control characters visible for debugging."""
+    escaped = str(text or "").encode("unicode_escape", "backslashreplace").decode("ascii", "replace")
+    return escaped if len(escaped) <= limit else escaped[: limit - 3] + "..."
+
+
+def _log_parse_failure(
+    iteration: int,
+    step: AgentStep,
+    *,
+    raw: str = "",
+    retrying: bool = False,
+) -> None:
+    """Print what the parser received — useful when local models return odd formats."""
+    tag = "retry-empty" if retrying else "parse-fail"
+    raw_text = str(step.raw or raw or "")
+    thought = str(step.thought or "")
+    print(
+        f"[{tag}] iter={iteration} error={step.parse_error!r} "
+        f"raw_len={len(raw_text)} stripped={len(raw_text.strip())} "
+        f"thought_len={len(thought)}",
+        flush=True,
+    )
+    if raw_text.strip():
+        print(f"  raw: {_debug_preview(raw_text, 800)}", flush=True)
+    else:
+        print("  raw: (vazio)", flush=True)
+    if thought.strip():
+        print(f"  thought: {_debug_preview(thought, 400)}", flush=True)
+    elif step.parse_error == "empty response":
+        print("  thought: (vazio)", flush=True)
 
 
 def _read_accept(state: ReactState, step: AgentStep):

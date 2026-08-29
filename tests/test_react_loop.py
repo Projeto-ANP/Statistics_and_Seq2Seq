@@ -692,6 +692,19 @@ def test_a_persistently_empty_model_still_terminates():
     assert r.final_attempt is not None
 
 
+def test_empty_response_records_debug_payload_for_logs():
+    s, series, pool = prepared(ReactConfig(max_iterations=1))
+    r = run_react_loop(s, ScriptedLLM([""] * 10), series, pool, s.config)
+    assert r.trajectory, "a parse-failure turn should still be recorded"
+    entry = r.trajectory[0]
+    assert entry["action"] == "unparsed"
+    assert "parse_debug" in entry
+    debug = entry["parse_debug"]
+    assert debug["raw_len"] == 0
+    assert "raw_len=0" in entry["observation_summary"]
+    assert r.parse_failures and "raw_preview" in r.parse_failures[0]
+
+
 class FlakyLLM:
     """Raises `LLMError` on the first `n_failures` calls, then answers normally.
 
