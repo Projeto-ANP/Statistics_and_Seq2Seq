@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 
@@ -95,6 +97,53 @@ class OllamaClient:
         return self._chat
 
     def complete(self, system: str, user: str) -> str:
+        try:
+            data = _ollama_chat_request(
+                self.role.base_url,
+                self._build_chat_payload(system, user),
+                self.timeout,
+            )
+        except LLMError:
+            raise
+        except Exception as exc:  # pragma: no cover - environment dependent
+            return self._complete_via_langchain(system, user, exc)
+
+        message = data.get("message") or {}
+        text = combine_ollama_message(message)
+        if not text.strip():
+            _log_empty_ollama_response(self.role.label(), message, text, metadata=data)
+        return text
+
+    def _build_chat_payload(self, system: str, user: str) -> Dict[str, Any]:
+        options: Dict[str, Any] = {
+            "num_ctx": int(self.num_ctx),
+            "temperature": float(self.role.temperature),
+        }
+        if getattr(self.role, "seed", None) is not None:
+            options["seed"] = int(self.role.seed)
+        payload: Dict[str, Any] = {
+            "model": self.role.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "options": options,
+        }
+        # Gemma 4 and other thinking models expose `message.thinking` separately from
+        # `message.content` in the native Ollama API. LangChain drops that field, so
+        # we call `/api/chat` directly. `think` maps from our `reasoning` knob.
+        if getattr(self.role, "reasoning", None) is not None:
+            if self.role.reasoning is False:
+                payload["think"] = False
+            elif self.role.reasoning is True:
+                payload["think"] = True
+            else:
+                payload["think"] = self.role.reasoning
+        return payload
+
+    def _complete_via_langchain(self, system: str, user: str, cause: Exception) -> str:
+        """Fallback when the native HTTP client cannot be used."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
         try:
@@ -102,13 +151,171 @@ class OllamaClient:
                 [SystemMessage(content=system), HumanMessage(content=user)]
             )
         except Exception as exc:  # pragma: no cover - environment dependent
-            raise LLMError(f"Ollama call failed ({self.role.label()}): {exc}") from exc
-        content = getattr(response, "content", response)
-        if isinstance(content, list):  # some models return content blocks
-            content = "".join(
-                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
-            )
-        return str(content)
+            raise LLMError(
+                f"Ollama call failed ({self.role.label()}): HTTP ({cause}); "
+                f"langchain ({exc})"
+            ) from exc
+        text = extract_response_text(response)
+        if not text.strip():
+            _log_empty_ollama_response(self.role.label(), response, text)
+        return text
+
+
+def _preview(value: Any, limit: int = 600) -> str:
+    escaped = (
+        repr(value)
+        .encode("unicode_escape", "backslashreplace")
+        .decode("ascii", "replace")
+    )
+    return escaped if len(escaped) <= limit else escaped[: limit - 3] + "..."
+
+
+def combine_ollama_message(message: Dict[str, Any]) -> str:
+    """Merge Ollama's separate `content` and `thinking` fields into one ReAct string."""
+    content = str(message.get("content") or "")
+    thinking = str(message.get("thinking") or "")
+    if content.strip() and thinking.strip():
+        return f"<think>{thinking}</think>\n{content}"
+    if content.strip():
+        return content
+    if thinking.strip():
+        return thinking
+    return ""
+
+
+def _ollama_chat_request(
+    base_url: str,
+    payload: Dict[str, Any],
+    timeout: float,
+) -> Dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise LLMError(f"Ollama HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise LLMError(f"Ollama unreachable at {base_url}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise LLMError(
+            f"Ollama returned unexpected payload type: {type(data).__name__}"
+        )
+    return data
+
+
+def extract_response_text(response: Any) -> str:
+    """Pull the answer text out of a LangChain/Ollama AIMessage."""
+    if isinstance(response, dict) and ("content" in response or "thinking" in response):
+        return combine_ollama_message(response)
+
+    content = getattr(response, "content", response)
+    if isinstance(content, list):  # some models return content blocks
+        parts: List[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if text is None:
+                    text = block.get("content")
+                if text is None:
+                    text = block.get("reasoning")
+                if text is None:
+                    text = block.get("thinking")
+                if text is not None:
+                    parts.append(str(text))
+            else:
+                parts.append(str(block))
+        content = "".join(parts)
+    text = str(content or "")
+    if not text.strip() and hasattr(response, "additional_kwargs"):
+        extra = getattr(response, "additional_kwargs") or {}
+        for key in (
+            "text",
+            "content",
+            "response",
+            "reasoning",
+            "reasoning_content",
+            "thinking",
+        ):
+            value = extra.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value
+                break
+    return text
+
+
+def describe_llm_response(
+    response: Any,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Every field that might carry model text — for debugging empty answers."""
+    if isinstance(response, dict) and ("content" in response or "thinking" in response):
+        content = str(response.get("content") or "")
+        thinking = str(response.get("thinking") or "")
+        info: Dict[str, Any] = {
+            "type": "ollama_message",
+            "content_len": len(content),
+            "thinking_len": len(thinking),
+            "content_preview": _preview(content, 400),
+            "thinking_preview": _preview(thinking, 400),
+            "extracted_len": len(combine_ollama_message(response).strip()),
+        }
+        if metadata:
+            done_reason = metadata.get("done_reason")
+            if done_reason is not None:
+                info["done_reason"] = done_reason
+            eval_count = metadata.get("eval_count")
+            if eval_count is not None:
+                info["eval_count"] = eval_count
+        return info
+
+    info = {"type": type(response).__name__}
+    content = getattr(response, "content", None)
+    info["content_type"] = type(content).__name__
+    info["content_len"] = len(str(content or ""))
+    info["content_preview"] = _preview(content, 400)
+    info["extracted_len"] = len(extract_response_text(response).strip())
+
+    extra = getattr(response, "additional_kwargs", None) or {}
+    if extra:
+        info["additional_kwargs"] = {k: _preview(v, 300) for k, v in extra.items()}
+
+    meta = getattr(response, "response_metadata", None) or {}
+    if meta:
+        info["response_metadata"] = {k: _preview(v, 300) for k, v in meta.items()}
+
+    for attr in ("text", "reasoning", "thinking"):
+        value = getattr(response, attr, None)
+        if value is not None:
+            info[attr] = _preview(value, 300)
+
+    tool_calls = getattr(response, "tool_calls", None)
+    if tool_calls:
+        info["tool_calls"] = _preview(tool_calls, 400)
+
+    return info
+
+
+def _log_empty_ollama_response(
+    label: str,
+    response: Any,
+    extracted: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    print(
+        f"[ollama] {label}: resposta vazia apos extracao (len={len(extracted.strip())})",
+        flush=True,
+    )
+    for key, value in describe_llm_response(response, metadata=metadata).items():
+        print(f"  {key}: {value}", flush=True)
 
 
 def build_client(role: LLMRole) -> Optional[LLMClient]:
@@ -127,9 +334,7 @@ def check_client(client: Optional[LLMClient]) -> tuple[bool, str]:
     if client is None:
         return True, "no client configured"
     try:
-        reply = client.complete(
-            "Reply with the single word OK.", "Say OK."
-        )
+        reply = client.complete("Reply with the single word OK.", "Say OK.")
     except LLMError as exc:
         return False, str(exc)
     except Exception as exc:  # pragma: no cover - environment dependent
@@ -242,6 +447,20 @@ _ACTION_INPUT = re.compile(r"action\s*_?\s*input\s*:", re.IGNORECASE)
 _THOUGHT = re.compile(r"^\s*thought\s*:\s*(.*?)$", re.IGNORECASE | re.MULTILINE)
 
 
+def _pick_parse_body(thinking: str, body: str) -> str:
+    """Prefer the channel that actually carries a ReAct step."""
+    candidates = [c for c in (body.strip(), thinking.strip()) if c]
+    if not candidates:
+        return ""
+    for candidate in candidates:
+        if _ACTION.search(candidate):
+            return candidate
+        obj = extract_json(candidate)
+        if isinstance(obj, dict) and ("action" in obj or "tool" in obj):
+            return candidate
+    return candidates[0]
+
+
 def parse_agent_step(text: str) -> AgentStep:
     """Parses `Thought: / Action: / Action Input:` leniently.
 
@@ -253,7 +472,7 @@ def parse_agent_step(text: str) -> AgentStep:
     step = AgentStep(raw=text or "")
     thinking, body = split_think(text or "")
     step.thought = thinking
-
+    body = _pick_parse_body(thinking, body)
     if not body.strip():
         step.parse_error = "empty response"
         return step
@@ -276,7 +495,9 @@ def parse_agent_step(text: str) -> AgentStep:
     matches = _ACTION.findall(body)
     action = ""
     for candidate in matches:
-        cleaned = candidate.strip().strip("`\"'").split()[0] if candidate.strip() else ""
+        cleaned = (
+            candidate.strip().strip("`\"'").split()[0] if candidate.strip() else ""
+        )
         if cleaned and not _ACTION_INPUT.match(candidate.strip()):
             action = cleaned
             break
@@ -289,7 +510,11 @@ def parse_agent_step(text: str) -> AgentStep:
         thoughts = _THOUGHT.findall(body)
         step.thought = thoughts[0].strip() if thoughts else ""
 
-    tail = body[body.lower().find("action input") :] if _ACTION_INPUT.search(body) else body
+    tail = (
+        body[body.lower().find("action input") :]
+        if _ACTION_INPUT.search(body)
+        else body
+    )
     args = extract_json(tail)
     step.action_input = args if isinstance(args, dict) else {}
     return step
