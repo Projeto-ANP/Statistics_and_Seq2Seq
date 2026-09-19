@@ -39,9 +39,10 @@ STATIC_COMBINATIONS = ["mean", "median", "dba"]
 FFORMA_ADE = ["FFORMA", "ADE"]
 ORCHESTRATOR_GPTOSS = "orchestrator_react_v5"
 ORCHESTRATOR_QWEN = "orchestrator_react_v5_qwen"
+ORCHESTRATOR_GEMMA = "orchestrator_react_v5_gemma26"
 
 INCLUDED_FOLDERS = set(INDIVIDUAL_MODELS) | set(STATIC_COMBINATIONS) | set(FFORMA_ADE) | {
-    ORCHESTRATOR_GPTOSS, ORCHESTRATOR_QWEN,
+    ORCHESTRATOR_GPTOSS, ORCHESTRATOR_QWEN, ORCHESTRATOR_GEMMA,
 }
 
 EXCLUDED_FOLDERS = {
@@ -235,7 +236,7 @@ def canonical_regressor_name(folder: str) -> str:
     e o nome canonico), mas usa "CREST" para as pastas orchestrator_react_v5*,
     igual ao rotulo usado nos itens 04/18.
     """
-    if folder in (ORCHESTRATOR_GPTOSS, ORCHESTRATOR_QWEN):
+    if folder in (ORCHESTRATOR_GPTOSS, ORCHESTRATOR_QWEN, ORCHESTRATOR_GEMMA):
         return "CREST"
     return folder
 
