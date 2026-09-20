@@ -21,7 +21,33 @@ from orchestrator_react.state import ReactState
 
 def _compact(payload: Any, limit: int = 1800) -> str:
     text = json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":"))
-    return text if len(text) <= limit else text[:limit] + " ...[truncated]"
+    if len(text) <= limit:
+        return text
+    obj = payload
+
+    def _shrink(o: Any) -> Any:
+        if isinstance(o, dict):
+            keys = list(o.keys())
+            if len(keys) > 1:
+                return {k: o[k] for k in keys[: max(1, len(keys) - 1)]}
+            k = keys[0]
+            return {k: _shrink(o[k])}
+        if isinstance(o, list) and len(o) > 1:
+            return o[: max(1, len(o) - 1)]
+        if isinstance(o, str) and len(o) > 40:
+            return o[:40] + "..."
+        return o
+
+    shrunk = obj
+    for _ in range(200):
+        text = json.dumps(shrunk, ensure_ascii=False, default=str, separators=(",", ":"))
+        if len(text) <= limit:
+            return text + " [truncated: some fields omitted]"
+        new_shrunk = _shrink(shrunk)
+        if new_shrunk == shrunk:
+            break
+        shrunk = new_shrunk
+    return json.dumps({"note": "payload too large to include"}, separators=(",", ":"))
 
 
 def build_system_prompt(
@@ -101,10 +127,13 @@ def build_system_prompt(
         "  handles you will not evaluate.",
         "- Handles start empty for every series. Never assume w1 or pool1 exists:",
         "  create it in this run before you refer to it.",
-        "- If a SEEDED BASELINE is leading, the most direct improvement is usually the",
+         "- If a SEEDED BASELINE is leading and nothing in the diagnosis (unstable",
+        "  ranking, correlated errors, a pool it has not covered) suggests a concrete",
+        "  reason to deviate, accepting it directly is often the right move - you do",
+        "  not need to test a variation just to use the iterations available. If you",
+        "  do have a concrete hypothesis, the most direct next step is usually the",
         "  SAME method on a better pool - dba on a pruned pool, median on a stable",
-        "  subset - not a different method entirely. The baselines run on all models,",
-        "  so a smaller pool is the variable you have not tried yet.",
+        "  subset - not a different method entirely.",
         "- If a weights_* handle comes back with concentration near 0, the weights",
         "  are effectively UNIFORM, and that strategy gives the same forecasts as the",
         "  plain mean of the same pool. Another error-based weights_* method on the",
@@ -254,13 +283,16 @@ def build_turn_prompt(
             "until evaluate_strategy runs on them, so that work is lost unless you "
             "evaluate now."
         )
+    # Correção 2 — substituir o bloco final de build_turn_prompt (linhas 257-264)
     if remaining <= 1:
         parts.append(
             f"This is your LAST iteration. Use {TERMINAL_ACTION} to take the best attempt."
         )
     else:
         parts.append(
-            f"{remaining} iterations left. Respond with Thought / Action / Action Input."
+            f"{remaining} iterations left. You may {TERMINAL_ACTION} now if the current "
+            "best attempt already looks solid for this series, or respond with "
+            "Thought / Action / Action Input to test another hypothesis."
         )
     return "\n".join(parts)
 
