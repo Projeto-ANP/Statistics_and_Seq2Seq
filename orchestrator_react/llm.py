@@ -2,7 +2,7 @@
 
 The loop in `react_loop.py` talks to an LLM only through the tiny `LLMClient`
 protocol below, so the whole Phase 3 can be exercised with a scripted client and no
-server running. `OllamaClient` is the real one; it imports langchain lazily so this
+server running. `OllamaClient` is the real one; it imports the `ollama` package lazily so this
 module stays importable in a plain numpy environment.
 
 Section 3.2, principle 9: no fine-tuning anywhere. These are prompting-only clients
@@ -12,6 +12,7 @@ over off-the-shelf models.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence
@@ -64,6 +65,8 @@ class OllamaClient:
     num_ctx: int = 8192
     timeout: float = 600.0
     _chat: Any = field(default=None, repr=False)
+    #: Ollama accounting of the last `complete()` call (only keys the server sent).
+    last_meta: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def name(self) -> str:
@@ -72,43 +75,56 @@ class OllamaClient:
     def _client(self) -> Any:
         if self._chat is None:
             try:
-                from langchain_ollama import ChatOllama
+                from ollama import Client
             except Exception as exc:  # pragma: no cover - environment dependent
-                raise LLMError(
-                    "langchain-ollama is not installed; see EXTRA_DEPENDENCIES.txt"
-                ) from exc
-            kwargs: Dict[str, Any] = {
-                "model": self.role.model,
-                "temperature": float(self.role.temperature),
-                "base_url": self.role.base_url,
-                "num_ctx": int(self.num_ctx),
-            }
-            # Only pass these when configured: `None` is not the same as omitting
-            # them for every Ollama build.
-            if getattr(self.role, "seed", None) is not None:
-                kwargs["seed"] = int(self.role.seed)
-            # bool OR an intensity string ("low"/"medium"/"high", gpt-oss only) —
-            # do not coerce, the two mean different things to Ollama.
-            if getattr(self.role, "reasoning", None) is not None:
-                kwargs["reasoning"] = self.role.reasoning
-            self._chat = ChatOllama(**kwargs)
+                raise LLMError("the `ollama` package is not installed") from exc
+            self._chat = Client(host=self.role.base_url, timeout=self.timeout)
         return self._chat
 
     def complete(self, system: str, user: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
+        # Talks to Ollama directly (not through langchain-ollama): with
+        # `reasoning=None` langchain drops `message.thinking` and `done_reason`
+        # on the floor, which is exactly what is needed to tell WHY a reply came
+        # back empty (all budget spent in the reasoning channel vs. context
+        # overflow vs. the model stopping on its own). The request is otherwise
+        # the same one langchain built: same options, `think` only when set.
+        num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", self.num_ctx))
+        options: Dict[str, Any] = {"temperature": float(self.role.temperature), "num_ctx": num_ctx}
+        if getattr(self.role, "seed", None) is not None:
+            options["seed"] = int(self.role.seed)
+        kwargs: Dict[str, Any] = {}
+        # bool OR an intensity string ("low"/"medium"/"high", gpt-oss only) —
+        # do not coerce, the two mean different things to Ollama.
+        if getattr(self.role, "reasoning", None) is not None:
+            kwargs["think"] = self.role.reasoning
 
+        self.last_meta = {}
         try:
-            response = self._client().invoke(
-                [SystemMessage(content=system), HumanMessage(content=user)]
+            response = self._client().chat(
+                model=self.role.model,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                options=options,
+                stream=False,
+                **kwargs,
             )
         except Exception as exc:  # pragma: no cover - environment dependent
             raise LLMError(f"Ollama call failed ({self.role.label()}): {exc}") from exc
-        content = getattr(response, "content", response)
-        if isinstance(content, list):  # some models return content blocks
-            content = "".join(
-                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
-            )
+        message = response.get("message") if hasattr(response, "get") else getattr(response, "message", None)
+        content = (message.get("content") if hasattr(message, "get") else getattr(message, "content", "")) or ""
+        thinking = (message.get("thinking") if hasattr(message, "get") else getattr(message, "thinking", "")) or ""
+        meta: Dict[str, Any] = {"num_ctx": num_ctx, "thinking_chars": len(thinking), "content_chars": len(content)}
+        for k in _META_KEYS:
+            v = response.get(k) if hasattr(response, "get") else getattr(response, k, None)
+            if v is not None:
+                meta[k] = v
+        self.last_meta = meta
         return str(content)
+
+
+_META_KEYS = (
+    "prompt_eval_count", "eval_count", "eval_duration", "prompt_eval_duration",
+    "total_duration", "load_duration", "done_reason",
+)
 
 
 def build_client(role: LLMRole) -> Optional[LLMClient]:

@@ -89,6 +89,10 @@ class ReactConfig:
 
     # -- ablation 4: prompt format ----------------------------------------------
     show_attempt_history: bool = True
+    #: How the agent's prompts are delimited: "xml" (default; each section wrapped in
+    #: a tag) or "text" (headers such as `SERIES PROFILE:`, the format of every result
+    #: before v1_gpt). Same wording either way: an A/B on structure only.
+    prompt_format: str = "xml"
     show_attempt_rationales: bool = True
 
     # -- ablation 2 (Phase 1 with/without an LLM) and ablations 5-6 (model per role)

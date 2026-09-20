@@ -27,7 +27,7 @@ import numpy as np
 
 from orchestrator_react import prompts as P
 from orchestrator_react.config import ReactConfig
-from orchestrator_react.llm import AgentStep, LLMClient, LLMError, parse_agent_step
+from orchestrator_react.llm import AgentStep, LLMClient, LLMError, parse_agent_step, split_think
 from orchestrator_react.registry import (
     TERMINAL_ACTION,
     call_tool,
@@ -99,6 +99,11 @@ class ReactResult:
     #: Catalog entries this run could not support, mapped to the reason. Recorded
     #: so a row states which action space produced it.
     withheld_tools: Dict[str, str] = field(default_factory=dict)
+    #: Per-turn record that would bloat the CSV (full raw response, full thought,
+    #: Ollama token counters, think-block size); written to the artifacts only.
+    step_details: List[Dict[str, Any]] = field(default_factory=list)
+    #: LLM time of a turn that produced no trajectory entry (API failure that ended the loop).
+    llm_failed_turn_s: float = 0.0
     #: Raw model output for every turn the parser could not read. Kept out of the
     #: CSV, which it would bloat, and written to the per-series artifacts instead —
     #: that is where to look when a model keeps missing the output format.
@@ -125,6 +130,9 @@ class ReactResult:
             "llm_error_retries": self.llm_error_retries,
             "withheld_tools": dict(self.withheld_tools),
             "elapsed_s": round(self.elapsed_s, 2),
+            "llm_call_s_total": round(
+                sum(e.get("llm_call_s", 0.0) for e in self.trajectory) + self.llm_failed_turn_s, 4),
+            "tool_exec_s_total": round(sum(e.get("tool_exec_s", 0.0) for e in self.trajectory), 4),
         }
 
 
@@ -173,7 +181,8 @@ def run_react_loop(
     withheld = withheld_tools(config, state.n_windows, state=state)
     result.withheld_tools = dict(withheld)
     system = P.build_system_prompt(
-        include_history_rules=config.show_attempt_history, withheld_tools=withheld
+        include_history_rules=config.show_attempt_history, withheld_tools=withheld,
+        prompt_format=config.prompt_format,
     )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
@@ -194,6 +203,7 @@ def run_react_loop(
             show_history=config.show_attempt_history,
             show_rationales=config.show_attempt_rationales,
             diagnosis=diagnosis,
+            prompt_format=config.prompt_format,
         )
 
         # Two different things can go wrong asking for one turn, and both are
@@ -212,11 +222,20 @@ def run_react_loop(
         llm_error: Optional[LLMError] = None
         empty_left = EMPTY_RESPONSE_RETRIES
         error_left = LLM_ERROR_RETRIES
+        llm_call_s = 0.0
+        llm_calls = 0
+        llm_meta: Dict[str, Any] = {}
+        empty_metas: List[Dict[str, Any]] = []
         while True:
+            t_call = time.perf_counter()
+            llm_calls += 1
             try:
                 raw = client.complete(system, user)
+                llm_call_s += time.perf_counter() - t_call
+                llm_meta = dict(getattr(client, "last_meta", None) or {})
                 llm_error = None
             except LLMError as exc:
+                llm_call_s += time.perf_counter() - t_call
                 llm_error = exc
                 if error_left <= 0:
                     result.errors.append(str(exc))
@@ -238,11 +257,18 @@ def run_react_loop(
                 break
             empty_left -= 1
             result.empty_responses += 1
+            empty_metas.append(dict(llm_meta))
+            why = ", ".join(
+                f"{k}={llm_meta[k]}" for k in ("done_reason", "eval_count", "thinking_chars", "num_ctx")
+                if k in llm_meta
+            )
             result.errors.append(
                 f"iteration {iteration}: empty response, retrying "
                 f"({EMPTY_RESPONSE_RETRIES - empty_left}/{EMPTY_RESPONSE_RETRIES})"
+                + (f" [{why}]" if why else "")
             )
         if llm_error is not None:
+            result.llm_failed_turn_s += llm_call_s
             break
         if step is None:
             break
@@ -252,7 +278,24 @@ def run_react_loop(
             "action": step.action or "",
             "action_args": step.action_input,
             "observation_summary": "",
+            "llm_call_s": round(llm_call_s, 4),
+            "tool_exec_s": 0.0,
         }
+        think_text = split_think(raw)[0]
+        detail: Dict[str, Any] = {
+            "iteration": iteration,
+            "action": step.action or "",
+            "llm_call_s": round(llm_call_s, 4),
+            "llm_calls_in_turn": llm_calls,
+            "thought_full": step.thought,
+            "raw_response": raw,
+            "has_think_block": bool(think_text),
+            "think_chars": len(think_text),
+        }
+        detail.update({f"ollama_{k}": v for k, v in llm_meta.items()})
+        if empty_metas:
+            detail["empty_retries_meta"] = empty_metas
+        result.step_details.append(detail)
 
         if not step.ok:
             entry["action"] = step.action or "unparsed"
@@ -306,7 +349,9 @@ def run_react_loop(
             args.setdefault("rationale", step.thought or "")
             args["iteration"] = iteration
 
+        t_tool = time.perf_counter()
         ok, observation = call_tool(state, step.action, args, withheld=withheld)
+        entry["tool_exec_s"] = round(time.perf_counter() - t_tool, 4)
         entry["observation_summary"] = P.summarize_observation(step.action, ok, observation)
         result.trajectory.append(entry)
         scratchpad.append(entry)

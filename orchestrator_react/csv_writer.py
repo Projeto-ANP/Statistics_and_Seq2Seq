@@ -314,6 +314,7 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
             "summary": outcome.react.summary() if outcome.react else {},
             "errors": outcome.react.errors if outcome.react else [],
             "parse_failures": outcome.react.parse_failures if outcome.react else [],
+            "step_details": outcome.react.step_details if outcome.react else [],
             # `tools` is `registry.tools_called_summary(state)`: the same
             # `tool_missing`/`tools_called` the CSV row reports, but with the
             # `kind`/`detail` of each failed call attached. Before this, finding

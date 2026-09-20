@@ -50,9 +50,53 @@ def _compact(payload: Any, limit: int = 1800) -> str:
     return json.dumps({"note": "payload too large to include"}, separators=(",", ":"))
 
 
+PROMPT_FORMATS = ("text", "xml")
+
+_SYSTEM_TAGS = (
+    ("AVAILABLE TOOLS", "tools"),
+    ("OUTPUT FORMAT", "output_format"),
+    ("HOW TO WORK", "workflow"),
+    ("EVALUATING A STRATEGY", "evaluate_strategy"),
+    ("A TYPICAL SEQUENCE", "typical_sequence"),
+    ("THE WEIGHT METHODS", "weight_methods"),
+    ("RULES", "rules"),
+)
+
+
+def _check_format(prompt_format: str) -> None:
+    if prompt_format not in PROMPT_FORMATS:
+        raise ValueError(f"prompt_format must be one of {PROMPT_FORMATS}, got {prompt_format!r}")
+
+
+def _system_as_xml(lines: List[str]) -> str:
+    """Wraps each blank-line-separated block of the system prompt in a tag.
+
+    Wording is untouched: only the delimiters change, so the `text` and `xml`
+    variants are an A/B on structure alone.
+    """
+    blocks: List[List[str]] = [[]]
+    for line in lines:
+        if line == "":
+            blocks.append([])
+        else:
+            blocks[-1].append(line)
+    blocks = [b for b in blocks if b]
+    blocks[:2] = [blocks[0] + [""] + blocks[1]]  # the role statement spans two paragraphs
+    out: List[str] = []
+    for i, block in enumerate(blocks):
+        tag = "role" if i == 0 else "section"
+        for prefix, name in _SYSTEM_TAGS:
+            if block[0].startswith(prefix):
+                tag = name
+                break
+        out += [f"<{tag}>", *block, f"</{tag}>"]
+    return "\n".join(out)
+
+
 def build_system_prompt(
     include_history_rules: bool = True,
     withheld_tools: Optional[Dict[str, str]] = None,
+    prompt_format: str = "text",
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -155,6 +199,9 @@ def build_system_prompt(
             "  Use it: if two attempts differ only slightly, look for a different KIND of",
             "  strategy rather than tuning the winner.",
         ]
+    _check_format(prompt_format)
+    if prompt_format == "xml":
+        return _system_as_xml(rules)
     return "\n".join(rules)
 
 
@@ -207,41 +254,66 @@ def build_turn_prompt(
     show_history: bool = True,
     show_rationales: bool = True,
     diagnosis: Optional[Dict[str, Any]] = None,
+    prompt_format: str = "text",
 ) -> str:
-    """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget."""
+    """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget.
+
+    `prompt_format="xml"` wraps each section in a tag and changes nothing else.
+    """
+    _check_format(prompt_format)
+    xml = prompt_format == "xml"
     parts: List[str] = []
+
+    def open_(tag: str) -> None:
+        if xml:
+            parts.append(f"<{tag}>")
+
+    def close_(tag: str) -> None:
+        if xml:
+            parts.append(f"</{tag}>")
 
     parts.append(f"ITERATION {iteration} of {max_iterations}.")
     parts.append("")
+    open_("series_profile")
     parts.append("SERIES PROFILE:")
     parts.append(_compact(_slim_series_card(series_card)))
+    close_("series_profile")
     parts.append("")
+    open_("model_pool")
     parts.append("MODEL POOL:")
     parts.append(_compact(_slim_pool_card(pool_card)))
+    close_("model_pool")
 
     card = build_dataset_card(state)
     if card:
         parts.append("")
+        open_("dataset_card")
         parts.append("DATASET CARD - what worked on the OTHER series (validation only):")
         parts.append(_compact(card, limit=900))
+        close_("dataset_card")
 
     if diagnosis:
         parts.append("")
+        open_("diagnosis")
         parts.append(f"DIAGNOSIS ({diagnosis.get('source', 'unknown')}) - a reading, not a rule:")
         parts.append(_compact(_slim_diagnosis(diagnosis), limit=700))
+        close_("diagnosis")
 
     if show_history:
         ranked = state.ranked_attempts()
         parts.append("")
+        open_("attempt_history")
         parts.append(f"ATTEMPT HISTORY ({len(ranked)}), best first - lower score is better:")
         if ranked:
             for a in ranked[:10]:
                 parts.append("  " + _compact(a.brief(include_rationale=show_rationales), limit=320))
         else:
             parts.append("  (empty)")
+        close_("attempt_history")
 
     handles = _handles_summary(state)
     parts.append("")
+    open_("handles")
     if handles:
         # Not all of these are the agent's doing: Phase 2 seeds stability pools
         # before the loop opens, so they are already registered on iteration 1.
@@ -259,24 +331,30 @@ def build_turn_prompt(
         # Saying "none" matters: handles reset per series, and a model that just
         # finished another one will otherwise reach for a `w1` that does not exist.
         parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
+    close_("handles")
 
     if scratchpad:
         parts.append("")
+        open_("scratchpad")
         parts.append("WHAT YOU DID SO FAR:")
         for entry in scratchpad[-6:]:
             parts.append(
                 f"  [{entry['iteration']}] {entry['action']}({_compact(entry['action_args'], 120)})"
                 f" -> {entry['observation_summary']}"
             )
+        close_("scratchpad")
 
     if last_observation is not None:
         parts.append("")
+        open_("last_observation")
         parts.append("LAST OBSERVATION (full):")
         parts.append(_compact(last_observation, limit=1400))
+        close_("last_observation")
 
     remaining = max_iterations - iteration + 1
     pending = _unscored_weights(state)
     parts.append("")
+    open_("budget")
     if pending and remaining <= 3:
         parts.append(
             f"NOTE: {pending} were computed but never scored. Weights score nothing "
@@ -294,6 +372,7 @@ def build_turn_prompt(
             "best attempt already looks solid for this series, or respond with "
             "Thought / Action / Action Input to test another hypothesis."
         )
+    close_("budget")
     return "\n".join(parts)
 
 

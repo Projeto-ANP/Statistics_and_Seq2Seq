@@ -246,7 +246,8 @@ def test_trajectory_is_json_serialisable_and_compact():
     assert len(blob) < 4000
     for entry in r.trajectory:
         assert set(entry) == {
-            "iteration", "thought", "action", "action_args", "observation_summary"
+            "iteration", "thought", "action", "action_args", "observation_summary",
+            "llm_call_s", "tool_exec_s"
         }
         assert isinstance(entry["iteration"], int)
 
@@ -1140,48 +1141,47 @@ def test_a_seed_is_configured_by_default():
     assert LLMRole().seed is not None
 
 
-def test_the_seed_reaches_the_ollama_client():
-    from orchestrator_react.config import LLMRole
+def _ollama_request(role):
+    """Runs `OllamaClient.complete` against a fake `ollama.Client`; returns the chat() kwargs."""
     from orchestrator_react.llm import OllamaClient
 
     captured = {}
 
-    class FakeChat:
+    class FakeClient:
         def __init__(self, **kwargs):
+            captured["client"] = kwargs
+
+        def chat(self, **kwargs):
             captured.update(kwargs)
+            return {"message": {"content": "ok", "thinking": "t"}, "done_reason": "stop", "eval_count": 3}
 
-    import orchestrator_react.llm as L
-
-    client = OllamaClient(role=LLMRole(model="m", seed=123))
-    mod = types.ModuleType("langchain_ollama")
-    mod.ChatOllama = FakeChat
-    sys.modules["langchain_ollama"] = mod
+    mod = types.ModuleType("ollama")
+    mod.Client = FakeClient
+    sys.modules["ollama"] = mod
     try:
-        client._client()
+        client = OllamaClient(role=role)
+        out = client.complete("s", "u")
     finally:
-        sys.modules.pop("langchain_ollama", None)
-    assert captured["seed"] == 123
-    assert captured["model"] == "m"
+        sys.modules.pop("ollama", None)
+    assert out == "ok"
+    captured["meta"] = client.last_meta
+    return captured
+
+
+def test_the_seed_reaches_the_ollama_client():
+    from orchestrator_react.config import LLMRole
+
+    got = _ollama_request(LLMRole(model="m", seed=123))
+    assert got["options"]["seed"] == 123
+    assert got["model"] == "m"
+    assert got["meta"]["thinking_chars"] == 1 and got["meta"]["done_reason"] == "stop"
 
 
 def test_seed_none_is_omitted_rather_than_passed_as_none():
     from orchestrator_react.config import LLMRole
-    from orchestrator_react.llm import OllamaClient
 
-    captured = {}
-
-    class FakeChat:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    mod = types.ModuleType("langchain_ollama")
-    mod.ChatOllama = FakeChat
-    sys.modules["langchain_ollama"] = mod
-    try:
-        OllamaClient(role=LLMRole(model="m", seed=None))._client()
-    finally:
-        sys.modules.pop("langchain_ollama", None)
-    assert "seed" not in captured
+    got = _ollama_request(LLMRole(model="m", seed=None))
+    assert "seed" not in got["options"]
 
 
 def test_the_seed_is_part_of_the_run_fingerprint():
@@ -1274,30 +1274,12 @@ def test_reasoning_is_omitted_unless_configured():
     """Every result so far was produced with the server default, so passing nothing
     has to stay the default behaviour."""
     from orchestrator_react.config import LLMRole
-    from orchestrator_react.llm import OllamaClient
 
-    captured = {}
-
-    class FakeChat:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    mod = types.ModuleType("langchain_ollama")
-    mod.ChatOllama = FakeChat
-    sys.modules["langchain_ollama"] = mod
-    try:
-        OllamaClient(role=LLMRole(model="m"))._client()
-        assert "reasoning" not in captured, "unset must mean the model's own default"
-        captured.clear()
-        OllamaClient(role=LLMRole(model="m", reasoning=False))._client()
-        assert captured["reasoning"] is False
-        # an intensity level must reach Ollama as the STRING, not coerced to a bool:
-        # bool("low") is True, which would silently mean something else
-        captured.clear()
-        OllamaClient(role=LLMRole(model="m", reasoning="low"))._client()
-        assert captured["reasoning"] == "low"
-    finally:
-        sys.modules.pop("langchain_ollama", None)
+    assert "think" not in _ollama_request(LLMRole(model="m"))
+    assert _ollama_request(LLMRole(model="m", reasoning=False))["think"] is False
+    # an intensity level must reach Ollama as the STRING, not coerced to a bool:
+    # bool("low") is True, which would silently mean something else
+    assert _ollama_request(LLMRole(model="m", reasoning="low"))["think"] == "low"
 
 
 def test_reasoning_is_part_of_the_run_fingerprint():
@@ -1306,4 +1288,38 @@ def test_reasoning_is_part_of_the_run_fingerprint():
 
     a, b = ReactConfig(), ReactConfig()
     b.combinator.reasoning = False
+    assert a.fingerprint() != b.fingerprint()
+
+
+def test_xml_prompt_format_only_changes_delimiters():
+    """`xml` is an A/B on structure: same wording, every section wrapped in a tag."""
+    import re
+
+    s, series, pool = prepared()
+    T.select_top_k(s, k=3)
+    T.weights_inverse_error(s, pool="pool1")
+    plain = P.build_turn_prompt(s, series, pool, [], 2, 6)
+    xml = P.build_turn_prompt(s, series, pool, [], 2, 6, prompt_format="xml")
+    assert xml != plain
+    stripped = "\n".join(l for l in xml.splitlines() if not re.fullmatch(r"</?[a-z_]+>", l))
+    assert stripped == "\n".join(plain.splitlines())
+    for tag in ("series_profile", "model_pool", "attempt_history", "handles", "budget"):
+        assert f"<{tag}>" in xml and f"</{tag}>" in xml
+
+    sp_plain, sp_xml = P.build_system_prompt(), P.build_system_prompt(prompt_format="xml")
+    for tag in ("role", "tools", "output_format", "workflow", "rules"):
+        assert f"<{tag}>" in sp_xml and f"</{tag}>" in sp_xml
+    assert "Thought:" in sp_xml and "Action Input" in sp_xml
+    for line in ("You are a forecast COMBINATION AGENT.", "OUTPUT FORMAT - exactly three lines, nothing else:"):
+        assert line in sp_plain and line in sp_xml
+
+
+def test_unknown_prompt_format_is_rejected():
+    with pytest.raises(ValueError):
+        P.build_system_prompt(prompt_format="markdown")
+
+
+def test_prompt_format_is_part_of_the_run_fingerprint():
+    a, b = ReactConfig(), ReactConfig()
+    b.prompt_format = "text"
     assert a.fingerprint() != b.fingerprint()

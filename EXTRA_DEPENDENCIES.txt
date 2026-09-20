@@ -1,0 +1,240 @@
+EXTRA DEPENDENCIES — ReAct combiner agent architecture
+======================================================
+
+Target environment: conda env `agno`  ->  conda activate agno
+`agno.yml` at the repo root is an OUTDATED export. Trust this file.
+
+Verified on 2026-07-28 by importing every module of `orchestrator_react/` plus
+`run_tsf_orchestrator.py` inside the `agno` env. Result: all imports succeed.
+
+
+-----------------------------------------------------------
+1. NOTHING IS MISSING
+-----------------------------------------------------------
+Every package the code needs is already installed in `agno`. There is nothing you
+have to add before running.
+
+package            version   status      why the code needs it
+------------------ --------- ----------- --------------------------------------
+numpy              1.26.4    INSTALLED   module level, every module
+pandas             2.3.3     INSTALLED   module level, ingest.py + csv_writer.py
+scipy              1.12.0    INSTALLED   lazy, kendalltau in ranking_stability
+scikit-learn       1.4.2     INSTALLED   lazy, MAPE in csv_writer
+statsmodels        0.14.5    INSTALLED   lazy, STL + ADF/KPSS in features.py
+tslearn            0.6.3     INSTALLED   lazy, combine_dba
+pycatch22          0.4.5     INSTALLED   lazy, catch22 in series_profile
+xgboost            3.1.1     INSTALLED   lazy, weights_feature_based + meta_model.py (pooled meta-model)
+langchain-core     1.5.1     INSTALLED   lazy, message objects for OllamaClient
+langchain-ollama   1.1.0     INSTALLED   lazy, OllamaClient
+pytest             9.1.1     INSTALLED   test suite
+aeon               0.9.0     INSTALLED   pulled in by all_functions (the metrics)
+pywt               1.5.0     INSTALLED   pulled in by all_functions
+pyts               0.13.0    INSTALLED   pulled in by all_functions
+lightgbm           4.5.0     INSTALLED   only to RECOMPUTE FFORMA/ADE
+metaforecast       0.2.2     INSTALLED   only to RECOMPUTE ADE
+
+Only `numpy` and `pandas` are imported at module level. Everything else is imported
+inside the function that needs it, so a missing optional package degrades that one
+feature instead of breaking the import:
+
+    statsmodels absent  -> STL falls back to a linear detrend, and the CSV records
+                           `decomposition = "linear_fallback:statsmodels_unavailable"`
+    tslearn absent      -> combine_dba falls back to the plain mean
+    pycatch22 absent    -> `catch22 = "pycatch22 unavailable"`, fast subset is used
+    xgboost absent      -> weights_feature_based falls back to softmax(-error)
+                           weights_pooled_meta_model withheld from the catalog
+    langchain-* absent  -> only the deterministic arm (--no-llm) can run
+
+`orchestrator.diagnostics` is imported lazily by `dm_test`; it is pure numpy and
+lives in this repo, so it needs nothing extra.
+
+
+-----------------------------------------------------------
+2. DELIBERATELY NOT INSTALLED
+-----------------------------------------------------------
+langgraph   NOT USED and NOT NEEDED. The Phase 3 loop is a plain Python while loop
+            in orchestrator_react/react_loop.py, which is easier to audit and emits
+            react_trajectory_json directly. Do not install it.
+
+h5py        Missing. It only silences this warning from tslearn:
+              "h5py not installed, hdf5 features will not be supported"
+            DBA works without it. Install only if the warning bothers you:
+              pip install h5py
+
+
+-----------------------------------------------------------
+3. IF YOU REBUILD THE ENV FROM SCRATCH
+-----------------------------------------------------------
+conda activate agno
+pip install numpy pandas scipy scikit-learn statsmodels tslearn pycatch22 \
+            xgboost langchain-core langchain-ollama pytest
+
+# only if you also want to recompute the ADE / FFORMA baselines:
+pip install lightgbm metaforecast==0.2.2
+
+# aeon, pywt and pyts come with all_functions.py, which the metrics import:
+pip install aeon pywt pyts
+
+
+-----------------------------------------------------------
+4. GPU
+-----------------------------------------------------------
+Nothing in orchestrator_react/ touches a GPU. The tool catalog, the backtest and
+the final application are numpy/scipy only, and the whole test suite runs on CPU.
+The GPU is needed only by the Ollama server hosting the LLMs.
+
+
+-----------------------------------------------------------
+5. LLM SERVER
+-----------------------------------------------------------
+Ollama, local. Default URL http://127.0.0.1:11434 (Ollama's own default).
+Earlier runs of this project used port 11501; if your server still listens
+there, set REACT_OLLAMA_URL=http://127.0.0.1:11501 instead of editing code.
+ollama pull gpt-oss:20b
+ollama pull qwen3:14b
+ollama pull qwen3:8b
+ollama pull gemma4:26b
+
+Model per role, overridable without touching code (Section 3.5):
+  REACT_MODEL_COMBINATOR      Phase 3   (default gpt-oss:20b)
+  REACT_MODEL_DIAGNOSTICIAN   Phase 1   (default none)
+  REACT_MODEL_REPORTER        Phase 5   (default none)
+  REACT_OLLAMA_URL            server URL
+  REACT_CONFIG                path to a JSON config applied before the env vars
+
+
+-----------------------------------------------------------
+6. DATA
+-----------------------------------------------------------
+Source .tsf files live OUTSIDE the repo, one directory up:
+    ../forecasting_datasets/
+
+Verified mapping (every series, every window, against the forecast CSVs):
+    ANP_MONTHLY          mes_11_venda_mensal.tsf    216 -> 182 after the zero filter
+    NN5_WEEKLY_DATASET   nn5_weekly_dataset.tsf     direct positional mapping
+    M4_WEEKLY_DATASET    m4_weekly_dataset.tsf      direct positional mapping
+
+WARNING - ETT on this laptop: ETTh1/ETTh2/ETTm1/ETTm2.tsf hold ONE series each
+(rewritten 2025-12-28 with only the OT variable), while the result CSVs hold SEVEN
+per dataset. The loader refuses them with a clear message instead of pairing the
+wrong series. The GPU server is expected to have the original 7-series files. If it
+does not, ETT cannot be run until they are restored.
+
+
+-----------------------------------------------------------
+7. FIRST RUN ON THE SERVER
+-----------------------------------------------------------
+conda activate agno
+
+# 1. the whole suite must be green (CPU only, no server, ~25s)
+python -m pytest tests/ -q
+
+# 2. is Ollama reachable on the port the config points at?
+curl http://127.0.0.1:11434/api/tags | head -c 200
+ollama list | grep gpt-oss
+
+# 3. deterministic arm on a few series, writing outside the results tree
+python run_tsf_orchestrator.py --dataset ANP_MONTHLY --source mes_11_venda_mensal.tsf \
+    --no-llm --limit 5 --version smoke --output-dir /tmp/react_smoke
+
+# 4. with the agent. It runs a one-call preflight first, so a dead server or a
+#    model that was never pulled fails in seconds with the reason, instead of
+#    quietly running the whole dataset on the deterministic baseline.
+python run_tsf_orchestrator.py --dataset ANP_MONTHLY --source mes_11_venda_mensal.tsf \
+    --combinator gpt-oss:20b --limit 5 --version smoke_llm \
+    --output-dir /tmp/react_smoke
+
+# 5. confirm the ETT .tsf on that machine really has 7 series
+python -c "from orchestrator_react.data_source import parse_tsf; \
+           print(len(parse_tsf('../forecasting_datasets/ETTh1.tsf')))"
+
+# 6. before a long run, check the pool is consistent for that dataset
+python check_pool_alignment.py --dataset ETTH1 --windows 3
+
+
+-----------------------------------------------------------
+7a. YOU SHOULD NOT NEED TO RESUME ANY MORE
+-----------------------------------------------------------
+A run used to abort on the FIRST series where the LLM failed. That is what forced
+the ANP resume, and the resume is what silently disabled the pooled meta-model for
+the last 17 rows (7b below). Fixed at the source:
+
+  * transport errors are retried 4x and empty replies 2x, without spending an
+    iteration - most gpt-oss glitches never surface at all;
+  * `max_llm_failures` (default 5) is a BUDGET, not a hair trigger. One flaky
+    series costs one row, marked in the log and in the CSV. A genuinely broken
+    server still stops the run within a few series, with the reason.
+
+So: run the whole dataset in one call and let the budget absorb the glitches.
+  --max-llm-failures 5     default; raise it if a dataset is unusually flaky
+  --allow-baseline-fallback  never abort (every failed row becomes a baseline)
+
+
+-----------------------------------------------------------
+7b. RESUMING A RUN - READ THIS BEFORE USING --indices
+-----------------------------------------------------------
+The pooled meta-model trains on the series of THE CALL, not of the dataset. A
+resume chunk smaller than `pooled_meta_model_min_series` (default 20) therefore
+trains nothing, and `weights_pooled_meta_model` is withheld for every series in
+that chunk - a different architecture for part of the CSV.
+
+This already happened: the ANP v4 run was finished with indices 165-181 (17
+series), and those 17 rows silently had the tool withheld. The run now prints
+
+  WARNING      : this call covers 17 series but pooled_meta_model_min_series=20 ...
+
+at startup and records it in every affected row's warnings. Prefer running a whole
+dataset in one call; if you must resume in a small chunk, lower the minimum so the
+architecture stays identical across series.
+
+
+-----------------------------------------------------------
+7c. gpt-oss ON OLLAMA - KNOWN ISSUES
+-----------------------------------------------------------
+Two failure modes on real runs, both from gpt-oss's harmony format:
+
+  90 EMPTY replies (ANP v4, 182 series) - the model spends its budget in the
+     reasoning channel and emits nothing in the final one.
+  "error parsing tool call: raw='We will call ...'" - Ollama's own template tries
+     to JSON-parse prose written into gpt-oss's tool-call channel, and returns an
+     error instead of the text. ollama/ollama#11781, #11800.
+
+IMPORTANT: reasoning is ALREADY ON in every run so far. gpt-oss's own default is
+to reason, and we pass nothing, so "turning reasoning on" is not an available
+improvement - it is the status quo. The knob moves in these directions instead:
+
+  --reasoning low     keep reasoning, cap its budget. The empty replies are the
+                      model reasoning and then having nothing left for the answer,
+                      so this is the targeted fix for them.
+  --reasoning high    more deliberation per turn. Untested here; plausible for a
+                      task that is mostly judgement, but it makes the empty-reply
+                      failure MORE likely, not less.
+  --reasoning off     no reasoning at all. Also removes the harmony tool-call
+                      channel behind the "error parsing tool call" errors.
+  (unset)             the model default = what v1-v4 used. Keep it for comparability.
+
+Mitigations, in order:
+  1. Upgrade Ollama on the server - both issues have had fixes land upstream.
+  2. A/B `--reasoning low`. Treat it as a deliberate arm; it enters fingerprint().
+  3. If it persists, A/B the combinator model (`--combinator qwen3:14b`). The
+     three-line text contract is model-agnostic on purpose.
+
+Do NOT use format="json" as a workaround: on gpt-oss the response comes back empty
+every time (ollama/ollama#11867). The loop already retries empty replies (2x) and
+transient transport errors (4x) without charging the iteration budget.
+
+
+-----------------------------------------------------------
+8. WHEN THE AGENT FAILS
+-----------------------------------------------------------
+By default a run ABORTS when the configured agent does not answer, because a run
+that silently degrades to the deterministic baseline still logs `ok` and answers a
+different question. The message names the model, the URL and what to check.
+
+  use_llm=False                   deliberately run the deterministic arm
+  allow_baseline_fallback=True    keep going and fall back per series
+  --quiet-agent                   stop printing Thought/Action/Observation per turn
+
+Redirect stderr as well, or the traceback is lost:
+
+  nohup python3 run_tsf_orchestrator.py > logs/v1_proposta.log 2>&1 &
