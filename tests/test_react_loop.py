@@ -1323,3 +1323,30 @@ def test_prompt_format_is_part_of_the_run_fingerprint():
     a, b = ReactConfig(), ReactConfig()
     b.prompt_format = "text"
     assert a.fingerprint() != b.fingerprint()
+
+
+def test_empty_retry_changes_the_seed():
+    """Same seed + same prompt reproduces an empty reply exactly, so a retry must vary it."""
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    seeds = []
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        def chat(self, **kw):
+            seeds.append(kw["options"]["seed"])
+            return {"message": {"content": "" if len(seeds) == 1 else "Action: list_attempts", "thinking": ""}}
+
+    mod = types.ModuleType("ollama")
+    mod.Client = FakeClient
+    sys.modules["ollama"] = mod
+    try:
+        client = OllamaClient(role=LLMRole(model="m", seed=7))
+        s, series, pool = prepared()
+        r = run_react_loop(s, client, series, pool)
+    finally:
+        sys.modules.pop("ollama", None)
+    assert seeds[:2] == [7, 8] and r.empty_responses == 1

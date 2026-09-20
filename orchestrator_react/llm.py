@@ -67,6 +67,10 @@ class OllamaClient:
     _chat: Any = field(default=None, repr=False)
     #: Ollama accounting of the last `complete()` call (only keys the server sent).
     last_meta: Dict[str, Any] = field(default_factory=dict, repr=False)
+    #: Added to the role's seed. The loop bumps it when it re-asks the same prompt
+    #: after an empty reply: with a fixed seed the retry reproduces the same empty
+    #: reply token for token (measured: 5 identical calls, same eval_count).
+    seed_offset: int = 0
 
     @property
     def name(self) -> str:
@@ -91,7 +95,7 @@ class OllamaClient:
         num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", self.num_ctx))
         options: Dict[str, Any] = {"temperature": float(self.role.temperature), "num_ctx": num_ctx}
         if getattr(self.role, "seed", None) is not None:
-            options["seed"] = int(self.role.seed)
+            options["seed"] = int(self.role.seed) + int(self.seed_offset)
         kwargs: Dict[str, Any] = {}
         # bool OR an intensity string ("low"/"medium"/"high", gpt-oss only) —
         # do not coerce, the two mean different things to Ollama.
