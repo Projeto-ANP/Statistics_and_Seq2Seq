@@ -53,6 +53,7 @@ def exec_dataset_baselines(
     pooled_meta_model_objective: str = "fforma",
     seed_pooled_meta_model: bool = True,
     dataset_card: bool = False,
+    reduced_seeding: bool = False,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -83,6 +84,7 @@ def exec_dataset_baselines(
     cfg.pooled_meta_model_objective = pooled_meta_model_objective
     cfg.seed_pooled_meta_model = bool(seed_pooled_meta_model)
     cfg.dataset_card = bool(dataset_card)
+    cfg.reduced_seeding = bool(reduced_seeding)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -259,6 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="do not seed weighted(pooled_meta_model)")
     p.add_argument("--with-dataset-card", action="store_true",
                    help="also run the cross-series strategy-prior pre-pass (only useful for the agent prompt)")
+    p.add_argument("--reduced-seeding", action="store_true",
+                   help="experiment: no plain mean/median over the full pool (10 -> 8 seeds)")
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
     p.add_argument("--score-preset", default="balanced")
@@ -293,6 +297,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             pooled_meta_model_objective=args.pooled_objective,
             seed_pooled_meta_model=not args.no_seed_pooled,
             dataset_card=args.with_dataset_card,
+            reduced_seeding=args.reduced_seeding,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,

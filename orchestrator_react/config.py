@@ -93,6 +93,19 @@ class ReactConfig:
     #: a tag) or "text" (headers such as `SERIES PROFILE:`, the format of every result
     #: before v1_gpt). Same wording either way: an A/B on structure only.
     prompt_format: str = "xml"
+    #: Catalog experiments. Each is independent and OFF by default, so a default
+    #: config reproduces the published behaviour; they exist to be turned on one at
+    #: a time. See `RESUMO_*.md` under outputs/resultados/ablacao.
+    #:
+    #: List `weights_softmax_neg_error` before `weights_inverse_error` (catalog and
+    #: the prompt paragraph that describes them as similar to each other).
+    reorder_weight_tools: bool = False
+    #: Withhold `combine_mean/median/weighted/best_single` (24 -> 20 actions): each
+    #: only builds the spec that `evaluate_strategy(combine=...)` builds and scores.
+    drop_redundant_combine_actions: bool = False
+    #: Seed only dba + the six stability pools + the pooled meta-model (8 seeds
+    #: instead of 10): no plain mean/median over the full pool.
+    reduced_seeding: bool = False
     show_attempt_rationales: bool = True
 
     # -- ablation 2 (Phase 1 with/without an LLM) and ablations 5-6 (model per role)
@@ -234,7 +247,13 @@ class ReactConfig:
 
     def fingerprint(self) -> str:
         """Short, stable hash of the configuration — goes into `ablation_config`."""
-        blob = json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False)
+        d = self.to_dict()
+        # An experiment flag left at False must not change the id of a run that
+        # never heard of it.
+        for flag in ("reorder_weight_tools", "drop_redundant_combine_actions", "reduced_seeding"):
+            if not d.get(flag):
+                d.pop(flag, None)
+        blob = json.dumps(d, sort_keys=True, ensure_ascii=False)
         return f"{self.name}-{hashlib.sha1(blob.encode('utf-8')).hexdigest()[:10]}"
 
     # -- external loading (Section 3.5: swap models without touching code) -------

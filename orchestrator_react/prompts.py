@@ -97,6 +97,7 @@ def build_system_prompt(
     include_history_rules: bool = True,
     withheld_tools: Optional[Dict[str, str]] = None,
     prompt_format: str = "text",
+    reorder_weight_tools: bool = False,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -105,7 +106,12 @@ def build_system_prompt(
     """
     catalog = "\n".join(
         f"  {t['name']}({', '.join(t['args'])}) - {t['description']}"
-        for t in describe_tools(withheld_tools)
+        for t in describe_tools(withheld_tools, reorder_weight_tools)
+    )
+    no_combine_mean = bool(withheld_tools) and "combine_mean" in withheld_tools
+    weight_pair = (
+        "weights_softmax_neg_error / weights_inverse_error"
+        if reorder_weight_tools else "weights_inverse_error / weights_softmax_neg_error"
     )
     rules = [
         "You are a forecast COMBINATION AGENT.",
@@ -139,8 +145,17 @@ def build_system_prompt(
         '  Action Input: {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
         '  Action Input: {"combine": "best_single", "model": "<a model name>"}',
         '  Action Input: {"combine": "dba", "pool": "pool1"}',
-        "  You do NOT need combine_* first. It only builds the same object, so going",
-        "  through it costs you an iteration for nothing.",
+        *(
+            [
+                "  You do NOT need combine_trimmed_mean / combine_dba first. They only",
+                "  build the same object, so going through them costs you an iteration",
+                "  for nothing.",
+            ]
+            if no_combine_mean else [
+                "  You do NOT need combine_* first. It only builds the same object, so going",
+                "  through it costs you an iteration for nothing.",
+            ]
+        ),
         "",
         "A TYPICAL SEQUENCE (the weights_* step is a CHOICE, not a fixed step):",
         '  select_stable      {"k": 5}                  -> pool1',
@@ -149,7 +164,7 @@ def build_system_prompt(
         f'  {TERMINAL_ACTION}  {{"attempt_id": "aN", "confidence": 0.7, "justification": "..."}}',
         "",
         "THE WEIGHT METHODS READ DIFFERENT SIGNALS - they are not interchangeable:",
-        "  weights_inverse_error / weights_softmax_neg_error - each model's AVERAGE",
+        f"  {weight_pair} - each model's AVERAGE",
         "     error over the windows. Similar to each other; if one gives you",
         "     concentration near 0, so will the other.",
         "  weights_error_trend      - where each model's error is HEADING, read from",
@@ -163,7 +178,11 @@ def build_system_prompt(
         "- Prefer small structured comparisons over one sweeping decision. Pick a",
         "  subset, weight it, test it. Do not try to reason about every model at once.",
         "- Weight tools return a HANDLE (w1, w2, ...). Pass the handle to",
-        "  combine_weighted; you will never see the numbers, and you do not need to.",
+        (
+            '  evaluate_strategy as "weights"; you will never see the numbers, and you do not need to.'
+            if no_combine_mean else
+            "  combine_weighted; you will never see the numbers, and you do not need to."
+        ),
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
         "- Computing weights scores NOTHING on its own: every weights_* call must be",

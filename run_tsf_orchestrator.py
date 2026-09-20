@@ -188,6 +188,9 @@ def exec_dataset_orchestrator(
     score_preset: str = "balanced",
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
+    reorder_weight_tools: bool = False,
+    drop_redundant_combine_actions: bool = False,
+    reduced_seeding: bool = False,
     calibration_gate: bool = False,
     indices: Optional[Sequence[int]] = None,
     limit: Optional[int] = None,
@@ -357,6 +360,9 @@ def exec_dataset_orchestrator(
     cfg.score_preset = score_preset
     cfg.show_attempt_history = bool(show_attempt_history)
     cfg.prompt_format = prompt_format
+    cfg.reorder_weight_tools = bool(reorder_weight_tools)
+    cfg.drop_redundant_combine_actions = bool(drop_redundant_combine_actions)
+    cfg.reduced_seeding = bool(reduced_seeding)
     cfg.calibration_gate = bool(calibration_gate)
 
     cfg.combinator = _as_role(combinator_model)
@@ -745,6 +751,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-format", choices=["text", "xml"], default="xml",
                    help="delimiters of the agent prompt: xml (default) or text (format of all results so "
                         "far); same wording, xml wraps sections in tags")
+    p.add_argument("--reorder-weight-tools", action="store_true",
+                   help="experiment: list weights_softmax_neg_error before weights_inverse_error")
+    p.add_argument("--drop-redundant-combine", action="store_true",
+                   help="experiment: withhold combine_mean/median/weighted/best_single (24 -> 20 actions)")
+    p.add_argument("--reduced-seeding", action="store_true",
+                   help="experiment: do not seed plain mean/median over the full pool (10 -> 8 seeds)")
     p.add_argument("--reasoning", default=None,
                    metavar="LEVEL",
                    help="gpt-oss reasoning: low|medium|high, or off. Unset = the "
@@ -824,6 +836,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             score_preset=args.score_preset,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,
+            reorder_weight_tools=args.reorder_weight_tools,
+            drop_redundant_combine_actions=args.drop_redundant_combine,
+            reduced_seeding=args.reduced_seeding,
             calibration_gate=args.calibration_gate,
             indices=args.indices,
             limit=args.limit,

@@ -50,6 +50,14 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "list_attempts": T.list_attempts,
 }
 
+#: Catalog entries that only assemble a spec `evaluate_strategy` also assembles
+#: (from its flat `combine`/`pool`/`weights`/`model` arguments) and then scores.
+#: Withheld when `config.drop_redundant_combine_actions` is on.
+REDUNDANT_COMBINE_TOOLS = ("combine_mean", "combine_median", "combine_weighted", "combine_best_single")
+
+#: `weights_softmax_neg_error` listed first when `config.reorder_weight_tools` is on.
+_SOFTMAX, _INVERSE = "weights_softmax_neg_error", "weights_inverse_error"
+
 #: There is no terminal tool — accepting is the agent's decision, emitted as
 #: `Action: accept` and handled by the Phase 3 loop, not here.
 TERMINAL_ACTION = "accept"
@@ -93,6 +101,9 @@ def withheld_tools(config: Any, n_windows: int, state: Optional[Any] = None) -> 
     just cannot withhold this one entry.
     """
     out: Dict[str, str] = {}
+    if getattr(config, "drop_redundant_combine_actions", False):
+        for name in REDUNDANT_COMBINE_TOOLS:
+            out[name] = "redundant: evaluate_strategy builds and scores the same strategy"
     for name, field_name in WINDOW_GATED_TOOLS.items():
         minimum = int(getattr(config, field_name, 0) or 0)
         if int(n_windows) < minimum:
@@ -111,10 +122,21 @@ def tool_names(withheld: Optional[Dict[str, str]] = None) -> List[str]:
     return [n for n in TOOLS if not withheld or n not in withheld]
 
 
-def describe_tools(withheld: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+def _catalog_order(reorder_weight_tools: bool = False) -> List[str]:
+    names = list(TOOLS)
+    if reorder_weight_tools:
+        i, j = names.index(_INVERSE), names.index(_SOFTMAX)
+        names[i], names[j] = names[j], names[i]
+    return names
+
+
+def describe_tools(
+    withheld: Optional[Dict[str, str]] = None, reorder_weight_tools: bool = False
+) -> List[Dict[str, Any]]:
     """Compact signatures to inject into the system prompt."""
     out: List[Dict[str, Any]] = []
-    for name, fn in TOOLS.items():
+    for name in _catalog_order(reorder_weight_tools):
+        fn = TOOLS[name]
         if withheld and name in withheld:
             continue
         sig = inspect.signature(fn)

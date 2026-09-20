@@ -1350,3 +1350,82 @@ def test_empty_retry_changes_the_seed():
     finally:
         sys.modules.pop("ollama", None)
     assert seeds[:2] == [(7, 0.2), (8, 0.35)] and r.empty_responses == 1
+
+
+# ── catalog experiments: independent flags, all OFF by default ───────────────────
+
+
+def test_catalog_flags_default_off_and_do_not_move_the_fingerprint():
+    a = ReactConfig()
+    assert not (a.reorder_weight_tools or a.drop_redundant_combine_actions or a.reduced_seeding)
+    for flag in ("reorder_weight_tools", "drop_redundant_combine_actions", "reduced_seeding"):
+        b = ReactConfig()
+        setattr(b, flag, True)
+        assert a.fingerprint() != b.fingerprint()
+    assert len(R.describe_tools()) == 24
+
+
+def test_reorder_weight_tools_swaps_only_the_two_entries_and_the_paragraph():
+    base = [t["name"] for t in R.describe_tools()]
+    swapped = [t["name"] for t in R.describe_tools(reorder_weight_tools=True)]
+    i, j = base.index("weights_inverse_error"), base.index("weights_softmax_neg_error")
+    expected = list(base)
+    expected[i], expected[j] = expected[j], expected[i]
+    assert swapped == expected and sorted(swapped) == sorted(base)
+    off, on = P.build_system_prompt(), P.build_system_prompt(reorder_weight_tools=True)
+    assert "weights_inverse_error / weights_softmax_neg_error - each model's AVERAGE" in off
+    assert "weights_softmax_neg_error / weights_inverse_error - each model's AVERAGE" in on
+    assert off.index("weights_inverse_error(") < off.index("weights_softmax_neg_error(")
+    assert on.index("weights_softmax_neg_error(") < on.index("weights_inverse_error(")
+
+
+def test_drop_redundant_combine_actions_leaves_twenty_and_blocks_the_calls():
+    s, series, pool = prepared()
+    cfg = ReactConfig()
+    cfg.drop_redundant_combine_actions = True
+    withheld = R.withheld_tools(cfg, n_windows=10)  # enough windows: weights_ols stays
+    assert set(R.REDUNDANT_COMBINE_TOOLS) <= set(withheld)
+    names = [t["name"] for t in R.describe_tools(withheld)]
+    assert len(names) == 20 and not set(R.REDUNDANT_COMBINE_TOOLS) & set(names)
+    assert "combine_trimmed_mean" in names and "combine_dba" in names
+    ok, obs = R.call_tool(s, "combine_mean", {}, withheld=withheld)
+    assert not ok and obs["error"] == "unknown_tool"
+    sp = P.build_system_prompt(withheld_tools=withheld)
+    assert "combine_weighted" not in sp and "combine_best_single" not in sp
+    assert 'evaluate_strategy as "weights"' in sp
+    assert "combine_weighted" in P.build_system_prompt()  # flag off: text untouched
+
+
+def test_dropped_actions_are_reproducible_through_evaluate_strategy():
+    """The claim behind the flag: evaluate_strategy builds the same spec combine_* builds."""
+    s, _, _ = prepared()
+    T.select_stable(s, k=3)
+    T.weights_inverse_error(s, pool="pool1")
+    model = s.model_names[0]
+    cases = [
+        (T.combine_mean(s), {"combine": "mean", "pool": "pool_full"}),
+        (T.combine_median(s, pool="pool1"), {"combine": "median", "pool": "pool1"}),
+        (T.combine_weighted(s, pool="pool1", weights="w1"),
+         {"combine": "weighted", "pool": "pool1", "weights": "w1"}),
+        (T.combine_best_single(s, model_id=model), {"combine": "best_single", "model": model}),
+    ]
+    for built, flat in cases:
+        assert T.evaluate_strategy(s, **flat)["strategy"] == built["strategy"]
+
+
+def test_reduced_seeding_drops_full_pool_mean_and_median_only():
+    from orchestrator_react.pool import SEED_STABLE_POOLS
+
+    def seeds(reduced: bool):
+        cfg = ReactConfig(max_iterations=2)
+        cfg.reduced_seeding = reduced
+        s = make_state(config=cfg)
+        POOL.run_phase2(s, cfg)
+        return [(a.spec["combine"], a.spec["pool"]) for a in s.attempts if a.origin == "baseline"]
+
+    full, reduced = seeds(False), seeds(True)
+    assert ("mean", "pool_full") in full and ("median", "pool_full") in full
+    assert ("mean", "pool_full") not in reduced and ("median", "pool_full") not in reduced
+    assert ("dba", "pool_full") in reduced
+    assert len(full) - len(reduced) == 2
+    assert [x for x in full if x not in (("mean", "pool_full"), ("median", "pool_full"))] == reduced

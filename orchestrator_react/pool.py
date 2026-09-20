@@ -30,6 +30,10 @@ from orchestrator_react.state import FULL_POOL, Attempt, ReactState
 #: against.
 SEED_BASELINES = ("mean", "median", "dba")
 
+#: `config.reduced_seeding`: no plain mean/median over the full pool. The agent has to
+#: reach them itself (or the stable-pool seeds stand in for them).
+REDUCED_SEED_BASELINES = ("dba",)
+
 #: Stability-selected pools seeded alongside them, as `(k, combine)` pairs.
 #:
 #: Why these exist. The floor of the whole architecture is the best seeded
@@ -219,6 +223,7 @@ def run_phase2(
     seeded = seed_baselines(
         state,
         pool=pool["pool"],
+        methods=REDUCED_SEED_BASELINES if config.reduced_seeding else SEED_BASELINES,
         stable_pools=SEED_STABLE_POOLS if config.seed_stable_pools else (),
         seed_pooled_meta_model=config.seed_pooled_meta_model,
     )

@@ -187,6 +187,7 @@ def run_react_loop(
     system = P.build_system_prompt(
         include_history_rules=config.show_attempt_history, withheld_tools=withheld,
         prompt_format=config.prompt_format,
+        reorder_weight_tools=config.reorder_weight_tools,
     )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
