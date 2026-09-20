@@ -67,9 +67,11 @@ class OllamaClient:
     _chat: Any = field(default=None, repr=False)
     #: Ollama accounting of the last `complete()` call (only keys the server sent).
     last_meta: Dict[str, Any] = field(default_factory=dict, repr=False)
-    #: Added to the role's seed. The loop bumps it when it re-asks the same prompt
-    #: after an empty reply: with a fixed seed the retry reproduces the same empty
-    #: reply token for token (measured: 5 identical calls, same eval_count).
+    #: Retry index of the current turn (0 = first ask). The loop raises it when it
+    #: re-asks the same prompt after an empty reply. A fixed seed reproduces the
+    #: same empty reply token for token (measured: 5 identical calls, same
+    #: eval_count) and, at low temperature, even different seeds sometimes do, so
+    #: each retry moves BOTH the seed (+1) and the temperature (+0.15, capped).
     seed_offset: int = 0
 
     @property
@@ -93,7 +95,8 @@ class OllamaClient:
         # overflow vs. the model stopping on its own). The request is otherwise
         # the same one langchain built: same options, `think` only when set.
         num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", self.num_ctx))
-        options: Dict[str, Any] = {"temperature": float(self.role.temperature), "num_ctx": num_ctx}
+        temperature = min(0.9, float(self.role.temperature) + 0.15 * int(self.seed_offset))
+        options: Dict[str, Any] = {"temperature": temperature, "num_ctx": num_ctx}
         if getattr(self.role, "seed", None) is not None:
             options["seed"] = int(self.role.seed) + int(self.seed_offset)
         kwargs: Dict[str, Any] = {}

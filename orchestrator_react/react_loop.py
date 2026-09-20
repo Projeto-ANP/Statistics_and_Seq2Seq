@@ -37,8 +37,12 @@ from orchestrator_react.registry import (
 from orchestrator_react.state import Attempt, ReactState
 
 
-#: How many times to re-ask when the model returns nothing at all.
-EMPTY_RESPONSE_RETRIES = 2
+#: How many times to re-ask when the model returns nothing at all. gpt-oss stops
+#: after its reasoning with no final message in roughly 1 call in 5 (measured, all
+#: `done_reason=stop`, prompts far below the context window), independently across
+#: seeds. An empty call costs ~100-350 tokens and no iteration, so the ladder is
+#: long: with p~0.2 and a fresh seed/temperature each time, 9 asks leave ~5e-7.
+EMPTY_RESPONSE_RETRIES = 8
 
 #: How many times to re-ask when the API call itself fails transiently.
 #:

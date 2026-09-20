@@ -1337,7 +1337,7 @@ def test_empty_retry_changes_the_seed():
             pass
 
         def chat(self, **kw):
-            seeds.append(kw["options"]["seed"])
+            seeds.append((kw["options"]["seed"], round(kw["options"]["temperature"], 2)))
             return {"message": {"content": "" if len(seeds) == 1 else "Action: list_attempts", "thinking": ""}}
 
     mod = types.ModuleType("ollama")
@@ -1349,4 +1349,4 @@ def test_empty_retry_changes_the_seed():
         r = run_react_loop(s, client, series, pool)
     finally:
         sys.modules.pop("ollama", None)
-    assert seeds[:2] == [7, 8] and r.empty_responses == 1
+    assert seeds[:2] == [(7, 0.2), (8, 0.35)] and r.empty_responses == 1
