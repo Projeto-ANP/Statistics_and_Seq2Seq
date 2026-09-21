@@ -1,0 +1,68 @@
+dataset      : ETTM2
+reading from : ./timeseries/mestrado/resultados
+writing to   : ./timeseries/mestrado/resultados/orchestrator_react_iso_s5_low_01
+source       : ETTM2.tsf
+models       : 19
+ablation     : iso_s5_low_01-0d68f26143
+pool mode    : full | windows: 3 | backtest: expanding
+final        : argmin | stable seeds: True | pooled: True/fforma seeded | card: True (min 20 series) | budget: 12 iters, patience 4
+protocol     : nested_selection=True | min_windows_for_ols=5 (weights_ols WITHHELD this run)
+llm          : combinator=gpt-oss:20b reasoning=low diagnostician=none reporter=none
+series       : [5]
+WARNING      : this call covers 1 series but pooled_meta_model_min_series=20, so the pooled meta-model will NOT be trained and weights_pooled_meta_model will be withheld for every series in this run. Run the whole dataset in one call, or lower the minimum, to keep the architecture identical across series.
+--------------------------------------------------------------------------
+llm preflight: OK ('OK')
+--------------------------------------------------------------------------
+WARNING: 5 model(s) do not share the pool's windows on ETTM2 and are being DROPPED for every series: ['ONLY_CWT_catboost', 'ONLY_DWT_catboost', 'ONLY_DWT_rf', 'ONLY_FT_catboost', 'ONLY_FT_rf']
+         reason (first): different actuals from 'ARIMA' (starts 2018-06-25 20:00:00 vs 2018-06-24 20:00:00)
+         the remaining 14 models are combined; set drop_misaligned_models=False to fail instead.
+/home/lucas.castro/Statistics_and_Seq2Seq/orchestrator_react/features.py:220: FutureWarning: adfuller currently returns a plain tuple whose length depends on the store and autolag arguments. In release 0.16 or after July 2027, whichever is later, the default behavior will switch to always returning an ADFullerResult. Set result_object=True to switch now, or result_object=False to keep the current behavior and silence this warning.
+  out["adf_pvalue"] = round(float(adfuller(x, autolag="AIC")[1]), 4)
+/home/lucas.castro/.conda/envs/agno/lib/python3.11/site-packages/tslearn/bases/bases.py:15: UserWarning: h5py not installed, hdf5 features will not be supported.
+Install h5py to use hdf5 features: http://docs.h5py.org/
+  warn(h5py_msg)
+/home/lucas.castro/Statistics_and_Seq2Seq/orchestrator_react/features.py:220: FutureWarning: adfuller currently returns a plain tuple whose length depends on the store and autolag arguments. In release 0.16 or after July 2027, whichever is later, the default behavior will switch to always returning an ADFullerResult. Set result_object=True to switch now, or result_object=False to keep the current behavior and silence this warning.
+  out["adf_pvalue"] = round(float(adfuller(x, autolag="AIC")[1]), 4)
+[   5]   iter 1 | weights_inverse_error {"pool": "pool3", "metric": "rmse"}
+[   5]     think: Try inverse-error weighting on the most stable pool (pool3) to see if it beats the plain mean.
+[   5]     obs  : handle w1 mode=inverse_error active=9/9 conc=0.002
+[   5]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w1", "rationale": "weighted by inverse error on the mo...
+[   5]     think: Test a weighted combination using the inverse-error weights on pool3 to see if it beats the plain mean baseline a8.
+[   5]     obs  : rank 3/10 score=0.0581 rmse=0.9111, leader is a8 (mean pool=pool3)
+[   5]   iter 3 | prune_redundant {"pool": "pool3", "corr_threshold": 0.95, "metric": "rmse"}
+[   5]     think: Test a weighted combination on a pruned pool to reduce redundancy and see if it beats the plain mean of pool3.
+[   5]     obs  : pool pool4 9->4 models, dropped ['rf', 'CWT_rf', 'CWT_catboost', 'DWT_catboost']
+[   5]   iter 4 | weights_inverse_error {"pool": "pool4"}
+[   5]     think: Test a weighted combination on the pruned, low‑correlation pool to see if removing redundant models improves performance over the plain mean baseline.
+[   5]     obs  : handle w2 mode=inverse_error active=4/4 conc=0.013
+[   5]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w2", "rationale": "weighted on low‑correlation pool"}
+[   5]     think: Test a weighted combination on the pruned, low‑correlation pool4 to see if the small concentration improves over the plain mean of pool3.
+[   5]     obs  : rank 2/11 score=0.0524 rmse=0.9815, leader is a8 (mean pool=pool3)
+[   5]   iter 6 | evaluate_strategy {"combine": "dba", "pool": "pool3", "rationale": "DTW barycenter on stable pool"}
+[   5]     think: Test a DTW Barycenter Averaging on the most stable 9‑model pool to see if alignment improves over the plain mean.
+[   5]     obs  : rank 4/12 score=0.0575 rmse=0.918, leader is a8 (mean pool=pool3)
+[   5]   iter 7 | weights_softmax_neg_error {"pool": "pool3", "metric": "rmse", "eta": 1.0}
+[   5]     think: Try a softmax‑based weighting on the stable pool3 to see if a different error‑based weighting improves over the plain mean.
+[   5]     obs  : handle w3 mode=softmax_neg_error active=9/9 conc=0.003
+[   5]   iter 8 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w3", "rationale": "softmax weights on pool3"}
+[   5]     think: Evaluate the softmax‑negative‑error weighted combination on pool3 to see if it beats the plain mean baseline a8.
+[   5]     obs  : rank 6/13 score=0.0596 rmse=0.9246, leader is a8 (mean pool=pool3)
+[   5] mean           score= 0.0447 origin=baseline iters=8 stop=no improvement in 4 consecutive proposals
+         TEST  smape=0.4531  rmse=0.7836  pocid=30.43  mape=0.3633
+         FORECAST [-1.514, -1.465, -1.484, -1.352, -1.243, -1.223, -1.214, -1.124, -1.145, -1.068, -1.134, -1.088, -1.06, -1.124, -1.03, -0.967, -0.929, -0.956, -0.883, -0.951, -0.908, -0.943, -0.866, -0.866]
+         PROVENANCE tools=8 evaluate_calls=4 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+--------------------------------------------------------------------------
+done in 31.0s | ok: 1 | failed: 0
+
+DATASET SUMMARY over 1 series (mean across series):
+  this run   smape=0.4531  rmse=0.7836  pocid=30.43  mape=0.3633  mae=0.6896
+  mean       smape=2.0000  rmse=72353941487.8916  pocid=34.78  mape=16755685747.4240  <- this run is better
+  median     smape=0.4279  rmse=0.7746  pocid=21.74  mape=0.3458
+  dba        smape=2.0000  rmse=87931263812.9902  pocid=17.39  mape=11341860968.7948  <- this run is better
+  ADE        smape=0.2667  rmse=0.5545  pocid=8.70  mape=0.2835
+  FFORMA     smape=0.1872  rmse=0.4379  pocid=21.74  mape=0.1834
+  strategy chosen by the agent in 0/1 series
+  selection verdict: {'separated': 1}
+csv: ./timeseries/mestrado/resultados/orchestrator_react_iso_s5_low_01/ETTM2.csv
+artifacts: ./timeseries/mestrado/resultados/orchestrator_react_iso_s5_low_01/llm_artifacts/ETTM2
