@@ -1282,6 +1282,85 @@ def test_reasoning_is_omitted_unless_configured():
     assert _ollama_request(LLMRole(model="m", reasoning="low"))["think"] == "low"
 
 
+def test_tool_call_parse_error_falls_back_to_think_false():
+    """gpt-oss's harmony tool-call 500 retries once with `think=False` instead of failing.
+
+    The server-side "error parsing tool call" is not a broken model: it is Ollama's
+    template JSON-parsing prose the model wrote into its tool-call channel. The fix
+    is to drop the channel for that turn, which is exactly `think=False`.
+    """
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import OllamaClient
+
+    class ToolCallParseError(Exception):
+        def __init__(self):
+            msg = "error parsing tool call: raw='We will call x(pool=1).', err=invalid character 'W'"
+            super().__init__(msg)
+            self.error = msg
+            self.status_code = 500
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise ToolCallParseError()
+            return {"message": {"content": "ok", "thinking": ""}, "done_reason": "stop", "eval_count": 3}
+
+    mod = types.ModuleType("ollama")
+    mod.Client = FakeClient
+    sys.modules["ollama"] = mod
+    try:
+        client = OllamaClient(role=LLMRole(model="m"))
+        out = client.complete("s", "u")
+    finally:
+        sys.modules.pop("ollama", None)
+
+    assert out == "ok"
+    assert client.last_meta["think_fallback_off"] is True
+    assert "think" not in calls[0]
+    assert calls[1]["think"] is False
+
+
+def test_tool_call_parse_error_no_fallback_when_reasoning_already_off():
+    """With reasoning already off there is no harmony channel to drop, so no retry."""
+    from orchestrator_react.config import LLMRole
+    from orchestrator_react.llm import LLMError, OllamaClient
+
+    class ToolCallParseError(Exception):
+        def __init__(self):
+            msg = "error parsing tool call: raw='x', err=invalid character"
+            super().__init__(msg)
+            self.error = msg
+            self.status_code = 500
+
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, **kwargs):
+            calls.append(kwargs)
+            raise ToolCallParseError()
+
+    mod = types.ModuleType("ollama")
+    mod.Client = FakeClient
+    sys.modules["ollama"] = mod
+    try:
+        client = OllamaClient(role=LLMRole(model="m", reasoning=False))
+        with pytest.raises(LLMError):
+            client.complete("s", "u")
+    finally:
+        sys.modules.pop("ollama", None)
+
+    assert len(calls) == 1
+
+
 def test_reasoning_is_part_of_the_run_fingerprint():
     """An A/B on reasoning must not look like the same ablation."""
     from orchestrator_react.config import ReactConfig

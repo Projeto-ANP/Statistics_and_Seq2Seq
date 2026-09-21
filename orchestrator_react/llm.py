@@ -87,6 +87,21 @@ class OllamaClient:
             self._chat = Client(host=self.role.base_url, timeout=self.timeout)
         return self._chat
 
+    def _request_chat(self, system: str, user: str, options: Dict[str, Any], think: Any) -> Any:
+        """One `/api/chat` request. `think` is only sent when not None."""
+        kwargs: Dict[str, Any] = {}
+        if think is not None:
+            # bool OR an intensity string ("low"/"medium"/"high", gpt-oss only) —
+            # do not coerce, the two mean different things to Ollama.
+            kwargs["think"] = think
+        return self._client().chat(
+            model=self.role.model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            options=options,
+            stream=False,
+            **kwargs,
+        )
+
     def complete(self, system: str, user: str) -> str:
         # Talks to Ollama directly (not through langchain-ollama): with
         # `reasoning=None` langchain drops `message.thinking` and `done_reason`
@@ -99,33 +114,54 @@ class OllamaClient:
         options: Dict[str, Any] = {"temperature": temperature, "num_ctx": num_ctx}
         if getattr(self.role, "seed", None) is not None:
             options["seed"] = int(self.role.seed) + int(self.seed_offset)
-        kwargs: Dict[str, Any] = {}
-        # bool OR an intensity string ("low"/"medium"/"high", gpt-oss only) —
-        # do not coerce, the two mean different things to Ollama.
-        if getattr(self.role, "reasoning", None) is not None:
-            kwargs["think"] = self.role.reasoning
+
+        think = getattr(self.role, "reasoning", None)
 
         self.last_meta = {}
+        fell_back = False
         try:
-            response = self._client().chat(
-                model=self.role.model,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                options=options,
-                stream=False,
-                **kwargs,
-            )
+            response = self._request_chat(system, user, options, think)
         except Exception as exc:  # pragma: no cover - environment dependent
-            raise LLMError(f"Ollama call failed ({self.role.label()}): {exc}") from exc
+            # gpt-oss's harmony format writes plain prose into a "tool call"
+            # channel that Ollama's own template tries to JSON-parse server-side.
+            # When the prose is not JSON the server returns a 500 and the reply
+            # never reaches this client. `think=False` removes that channel (see
+            # `LLMRole.reasoning`), so on exactly that error retry the same prompt
+            # once with reasoning off instead of failing the turn — the model still
+            # answers, just without the separate reasoning channel.
+            if think is not False and _is_tool_call_parse_error(exc):
+                try:
+                    response = self._request_chat(system, user, options, False)
+                    fell_back = True
+                except Exception as exc2:  # pragma: no cover - environment dependent
+                    raise LLMError(f"Ollama call failed ({self.role.label()}): {exc2}") from exc2
+            else:
+                raise LLMError(f"Ollama call failed ({self.role.label()}): {exc}") from exc
         message = response.get("message") if hasattr(response, "get") else getattr(response, "message", None)
         content = (message.get("content") if hasattr(message, "get") else getattr(message, "content", "")) or ""
         thinking = (message.get("thinking") if hasattr(message, "get") else getattr(message, "thinking", "")) or ""
         meta: Dict[str, Any] = {"num_ctx": num_ctx, "thinking_chars": len(thinking), "content_chars": len(content)}
+        if fell_back:
+            meta["think_fallback_off"] = True
         for k in _META_KEYS:
             v = response.get(k) if hasattr(response, "get") else getattr(response, k, None)
             if v is not None:
                 meta[k] = v
         self.last_meta = meta
         return str(content)
+
+
+def _is_tool_call_parse_error(exc: BaseException) -> bool:
+    """True when Ollama failed to parse the model's tool-call channel server-side.
+
+    gpt-oss's harmony format writes plain prose into a "tool call" channel; Ollama's
+    template JSON-parses that channel and returns a 500 ("error parsing tool call:
+    raw='...', err=invalid character ..."). The `raw='...'` prose is NOT reliably
+    extractable (it can contain nested quotes), so the client does not try to reuse
+    it — it recognises the error to know when to fall back to `think=False`.
+    """
+    text = str(getattr(exc, "error", "") or exc)
+    return "error parsing tool call" in text
 
 
 _META_KEYS = (

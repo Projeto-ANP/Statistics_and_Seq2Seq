@@ -251,6 +251,10 @@ def run_react_loop(
                     break
                 error_left -= 1
                 result.llm_error_retries += 1
+                if hasattr(client, "seed_offset"):
+                    # Same seed + same prompt fails the same way (the "error parsing
+                    # tool call" 500 is deterministic), so retries must vary it.
+                    client.seed_offset = (LLM_ERROR_RETRIES - error_left) + (EMPTY_RESPONSE_RETRIES - empty_left)
                 result.errors.append(
                     f"iteration {iteration}: transient LLM error, retrying "
                     f"({LLM_ERROR_RETRIES - error_left}/{LLM_ERROR_RETRIES}): {exc}"
@@ -265,7 +269,7 @@ def run_react_loop(
             empty_left -= 1
             result.empty_responses += 1
             if hasattr(client, "seed_offset"):
-                client.seed_offset = EMPTY_RESPONSE_RETRIES - empty_left
+                client.seed_offset = (LLM_ERROR_RETRIES - error_left) + (EMPTY_RESPONSE_RETRIES - empty_left)
             empty_metas.append(dict(llm_meta))
             why = ", ".join(
                 f"{k}={llm_meta[k]}" for k in ("done_reason", "eval_count", "thinking_chars", "num_ctx")

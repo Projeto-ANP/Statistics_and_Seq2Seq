@@ -367,7 +367,12 @@ def exec_dataset_orchestrator(
 
     cfg.combinator = _as_role(combinator_model)
     if combinator_reasoning is not None:
-        cfg.combinator.reasoning = bool(combinator_reasoning)
+        # Pass through as-is: the CLI already normalised this to `False` (off) or a
+        # lowercase intensity string ("low"/"medium"/"high"). Do NOT coerce to bool —
+        # `bool("low")` is True, which tells Ollama "reasoning on, default budget"
+        # instead of capping the budget (and keeps the harmony tool-call channel
+        # active, which is the source of the "error parsing tool call" 500s).
+        cfg.combinator.reasoning = combinator_reasoning
     cfg.diagnostician = _as_role(diagnostician_model)
     cfg.reporter = _as_role(reporter_model)
 

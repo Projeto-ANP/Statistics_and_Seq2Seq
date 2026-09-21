@@ -57,7 +57,11 @@ class LLMRole:
     #: Do NOT reach for `format="json"` as an alternative: on gpt-oss it makes the
     #: response empty every time (ollama/ollama#11867). The three-line text contract
     #: exists precisely to avoid depending on structured-output support.
-    reasoning: Optional[bool] = None
+    #:
+    #: `False` is "off"; the intensity strings "low"/"medium"/"high" cap the
+    #: reasoning budget (gpt-oss only). Both are meaningful and distinct to Ollama —
+    #: `bool("low") is True`, which is NOT the same as "low".
+    reasoning: Optional[Union[bool, str]] = None
 
     @property
     def enabled(self) -> bool:
