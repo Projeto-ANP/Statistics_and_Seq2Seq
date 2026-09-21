@@ -100,6 +100,43 @@ def test_diagnosis_survives_empty_cards():
     assert d["regime"] in PH.REGIMES and d["narrative"]
 
 
+def test_deterministic_narrative_describes_the_series_in_prose():
+    """The control arm must read like an analyst's note, not a dump of numbers."""
+    card = {
+        "trend_strength": 0.85,
+        "seasonal_strength": 0.15,
+        "trend_direction": "growing",
+        "trend_relative_change": 0.45,
+        "seasonal_period": 12,
+        "n_validation_windows": 3,
+        "stationarity": {"verdict": "non_stationary"},
+        "outliers": {"n_outliers": 3, "pct": 6.0},
+        "features": {"spectral_entropy": 0.62, "crosses_zero": False},
+    }
+    pool = {
+        "ranking_stability": {"mean_kendall_tau": 0.5, "verdict": "stable"},
+        "error_table": {"relative_spread": 0.4},
+        "error_correlation": {},
+    }
+    d = PH.deterministic_diagnosis(card, pool)
+    assert d["source"] == "deterministic" and d["regime"] == "trend_dominated"
+    assert "upward trend" in d["narrative"]
+    assert "stable" in d["narrative"]
+
+
+def test_trend_direction_helper_reads_growing_declining_and_flat():
+    import numpy as np
+
+    from orchestrator_react.features import trend_direction
+
+    up = np.linspace(100.0, 200.0, 40)
+    assert trend_direction(up, up)["direction"] == "growing"
+    down = np.linspace(200.0, 100.0, 40)
+    assert trend_direction(down, down)["direction"] == "declining"
+    flat = np.full(40, 100.0)
+    assert trend_direction(flat, flat)["direction"] == "flat"
+
+
 def test_run_diagnosis_without_a_client_is_the_deterministic_one():
     s, series, pool = cards()
     d = PH.run_diagnosis(s, series, None, pool)

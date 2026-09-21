@@ -384,6 +384,44 @@ def _linear_parts(y: np.ndarray) -> Tuple[float, np.ndarray]:
     return float(coeffs[0]), y - np.polyval(coeffs, idx)
 
 
+def trend_direction(trend: np.ndarray, series: np.ndarray) -> Dict[str, Any]:
+    """Direction and net magnitude of the STL trend, relative to the series level.
+
+    `direction` is "growing" / "declining" / "flat" / "undetermined";
+    `relative_change` is the net change of the trend across the whole sample divided
+    by the mean absolute level, so it is comparable across series of different scale
+    (a monthly fuel series in the hundreds vs. an ETT series hovering near zero).
+    """
+    t = np.asarray(trend, dtype=float)
+    x = np.asarray(series, dtype=float)
+    n = int(t.size)
+    if n < 2:
+        return {"direction": "undetermined", "relative_change": None}
+    idx = np.arange(n, dtype=float)
+    valid = np.isfinite(t)
+    if int(valid.sum()) < 2:
+        return {"direction": "undetermined", "relative_change": None}
+    slope = float(np.polyfit(idx[valid], t[valid], 1)[0])
+    level = float(np.nanmean(np.abs(x)))
+    if not np.isfinite(level) or level <= EPS:
+        level = float(np.nanstd(x))
+    relative_change = None
+    if level and np.isfinite(level) and level > EPS:
+        relative_change = float(slope * (n - 1) / level)
+    if relative_change is None:
+        direction = "flat"
+    elif relative_change > 0.1:
+        direction = "growing"
+    elif relative_change < -0.1:
+        direction = "declining"
+    else:
+        direction = "flat"
+    return {
+        "direction": direction,
+        "relative_change": round(relative_change, 4) if relative_change is not None else None,
+    }
+
+
 def component_champions(
     y_true: np.ndarray,
     y_preds: np.ndarray,

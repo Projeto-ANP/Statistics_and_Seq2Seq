@@ -147,12 +147,15 @@ def deterministic_diagnosis(
     if series_card.get("n_validation_windows", 0) <= 3:
         risks.append("only 3 validation windows: weight estimation is high variance")
 
-    narrative = (
-        f"Trend strength {trend} and seasonal strength {seasonal} put this series in the "
-        f"{regime.replace('_', ' ')} regime, with {predictability} predictability. "
-        f"Ranking stability across windows is {stability.get('verdict', 'unknown')}"
-        + (f" (Kendall tau {tau})" if tau is not None else "")
-        + f", which favours a {hint.replace('_', ' ')} combination."
+    narrative = _narrate_series(
+        series_card=series_card,
+        trend=trend,
+        seasonal=seasonal,
+        entropy=entropy,
+        predictability=predictability,
+        hint=hint,
+        tau=tau,
+        stability_verdict=stability.get("verdict", "unknown"),
     )
 
     return {
@@ -163,6 +166,84 @@ def deterministic_diagnosis(
         "narrative": narrative,
         "source": "deterministic",
     }
+
+
+def _narrate_series(
+    series_card: Dict[str, Any],
+    trend: Optional[float],
+    seasonal: Optional[float],
+    entropy: Optional[float],
+    predictability: str,
+    hint: str,
+    tau: Optional[float],
+    stability_verdict: str,
+) -> str:
+    """A human-readable reading of the series, for readers who never saw the cards.
+
+    Written in plain prose from the already-computed numbers — never a new figure —
+    so the deterministic arm produces the same kind of interpretation the LLM arm
+    does: what the series looks like and what that implies for combining. It reads
+    as a short analyst's note, e.g. "the series is on a strong upward trend ...".
+    """
+    trend_dir = series_card.get("trend_direction")
+    rel_change = series_card.get("trend_relative_change")
+    seasonal_period = series_card.get("seasonal_period")
+    stationarity_verdict = (series_card.get("stationarity") or {}).get("verdict")
+    outliers = series_card.get("outliers") or {}
+    n_outliers = outliers.get("n_outliers")
+    outlier_pct = outliers.get("pct")
+    crosses_zero = bool((series_card.get("features") or {}).get("crosses_zero"))
+
+    sentences: List[str] = []
+
+    if trend is not None:
+        strength = "strong" if trend >= 0.6 else "moderate" if trend >= 0.3 else "weak"
+        if strength == "weak":
+            sentences.append("The series shows no clear long-run trend.")
+        elif trend_dir == "growing":
+            change = f" (a net rise of ~{rel_change:.0%} of its level)" if rel_change is not None else ""
+            sentences.append(f"The series is dominated by a {strength} upward trend{change}.")
+        elif trend_dir == "declining":
+            change = f" (a net fall of ~{-rel_change:.0%} of its level)" if rel_change is not None else ""
+            sentences.append(f"The series is dominated by a {strength} downward trend{change}.")
+        else:
+            sentences.append(f"The series carries a {strength} long-run trend.")
+
+    if seasonal is not None:
+        if seasonal >= 0.6:
+            per = f" (period {seasonal_period})" if seasonal_period else ""
+            sentences.append(f"Seasonality is strong{per}: a repeating cycle explains much of the movement.")
+        elif seasonal >= 0.3:
+            sentences.append("A moderate seasonal pattern is present.")
+        else:
+            sentences.append("There is little seasonal structure.")
+
+    if entropy is not None:
+        if predictability == "low":
+            sentences.append("The spectrum is close to white noise, so most of the variation is irregular and hard to predict.")
+        elif predictability == "high":
+            sentences.append("The series is quite predictable: its energy concentrates in a few structured frequencies.")
+        else:
+            sentences.append("Predictability is middling — structured signal and irregular noise are balanced.")
+
+    if stationarity_verdict in ("stationary", "non_stationary", "ambiguous"):
+        word = stationarity_verdict.replace("non_stationary", "non-stationary")
+        sentences.append(f"The series reads as {word} by the ADF/KPSS tests.")
+
+    if n_outliers:
+        pct = f", ~{outlier_pct:.0f}% of the sample" if isinstance(outlier_pct, (int, float)) else ""
+        sentences.append(f"A few outliers stand out ({n_outliers} points{pct}).")
+
+    if crosses_zero:
+        sentences.append("The series crosses zero, so percentage errors are unstable and mean-based combinations are safer than ratio-based ones.")
+
+    sentences.append(
+        f"Across validation windows the model ranking is {stability_verdict}"
+        + (f" (Kendall tau {tau})" if tau is not None else "")
+        + f", which favours a {hint.replace('_', ' ')} combination."
+    )
+
+    return " ".join(sentences)
 
 
 def run_diagnosis(

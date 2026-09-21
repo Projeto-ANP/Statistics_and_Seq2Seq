@@ -57,6 +57,7 @@ def series_profile(state: ReactState) -> Dict[str, Any]:
     if state.seasonal_period:
         period = int(state.seasonal_period)
     trend, seasonal, resid = F.stl_decompose(series, period)
+    trend_info = F.trend_direction(trend, series)
 
     profile: Dict[str, Any] = {
         "source": source,
@@ -70,6 +71,8 @@ def series_profile(state: ReactState) -> Dict[str, Any]:
         "n_validation_windows": state.n_windows,
         "n_models": state.n_models,
         **F.stl_strengths(trend, seasonal, resid),
+        "trend_direction": trend_info["direction"],
+        "trend_relative_change": trend_info["relative_change"],
         "stationarity": F.stationarity(series),
         "outliers": F.outlier_flags(series),
         "features": F.fast_features(series, period),
