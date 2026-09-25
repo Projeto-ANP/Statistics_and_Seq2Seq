@@ -46,7 +46,7 @@ from orchestrator_react.csv_writer import CORE_COLUMNS, compute_metrics  # noqa:
 from orchestrator_react.data_source import load_series_source  # noqa: E402
 
 sys.path.insert(0, os.path.join(_ROOT, "JEV"))
-from laya_loop import LayaAgent, run_laya_loop  # noqa: E402
+from laya_loop import LayaAgent, run_gate_pass, run_laya_loop  # noqa: E402
 
 # Mesmo mapa do run_tsf_batch.py (nomes MAIÚSCULOS para ETTh/ETTm são outro arquivo!).
 DATASET_SOURCES: Dict[str, str] = {
@@ -110,6 +110,8 @@ def run_dataset(
     option_format: str = "text",
     dataset_card: bool = True,
     menu: str = "flat",
+    gate: bool = False,
+    gate_checkpoint: Optional[str] = None,
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -142,6 +144,10 @@ def run_dataset(
     csv_path = os.path.join(out_dir, f"{dataset}.csv")
 
     agent = LayaAgent(checkpoint=checkpoint, max_len=max_len)
+    gate_agent = (
+        LayaAgent(checkpoint=gate_checkpoint, max_len=max_len)
+        if gate and gate_checkpoint else agent
+    )
 
     todo = indices if indices is not None else list(range(n_series))
 
@@ -205,6 +211,24 @@ def run_dataset(
             attempt = loop.final_attempt
             if attempt is None:
                 raise RuntimeError("no strategy was selected")
+            final_origin = attempt.origin
+            gate_scores = None
+            if gate:
+                # H3: o gate re-ranqueia TODO o histórico; final = argmax P
+                gate_scores = run_gate_pass(
+                    state, gate_agent, series_card, pool_card, budget=state_budget,
+                )
+                if gate_scores:
+                    best_g = max(gate_scores, key=lambda s: s["p_best"])
+                    key = json.dumps(best_g["spec"], sort_keys=True, default=str)
+                    match = next(
+                        (a for a in state.attempts
+                         if json.dumps(a.spec, sort_keys=True, default=str) == key),
+                        None,
+                    )
+                    if match is not None and match is not attempt:
+                        attempt = match
+                        final_origin = "gate"
             forecast, _ = state.apply_to_test(attempt.spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
@@ -249,16 +273,17 @@ def run_dataset(
                 "final_test": str(ing.final_test),
                 "description": json.dumps({
                     "strategy": attempt.spec,
-                    "origin": attempt.origin,
+                    "origin": final_origin,
                     "loop": loop.summary(),
                     "score": round(float(attempt.score), 4),
+                    "gate_scores": gate_scores,
                 }, ensure_ascii=False, default=str),
-                "origin": attempt.origin,
+                "origin": final_origin,
                 "react_iterations_used": loop.iterations_used,
                 "react_stop_reason": loop.stop_reason,
                 "seed_floor_smape": floor["smape"] if floor else None,
                 "seed_floor_rmse": floor["rmse"] if floor else None,
-                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}_{option_format}",
+                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}_{option_format}{'_gate' if gate else ''}{'_staged' if menu == 'staged' else ''}",
             })
             per_series.append(metrics)
             if floor:
@@ -279,8 +304,8 @@ def run_dataset(
                     else f"obs={entry.get('observation', '')}"
                 )
                 print(
-                    f"         laya iter {entry['iteration']} -> {entry['action']}"
-                    f" conf={entry['confidence']} {detail}"
+                    f"         laya iter {entry.get('iteration', '?')} -> {entry.get('action', '?')}"
+                    f" conf={entry.get('confidence')} {detail}"
                 )
             ext = I.read_external_baselines(dataset, idx, results_dir=results_dir)
             for name, stats in ext.items():
@@ -296,7 +321,7 @@ def run_dataset(
                 "description": json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
                 "origin": "", "react_iterations_used": 0, "react_stop_reason": "error",
                 "seed_floor_smape": None, "seed_floor_rmse": None,
-                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}_{option_format}",
+                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}_{option_format}{'_gate' if gate else ''}{'_staged' if menu == 'staged' else ''}",
             })
             print(f"[{idx:>4}] FAILED: {type(exc).__name__}: {exc}")
 
@@ -361,6 +386,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--menu", choices=["flat", "staged"], default="flat",
                    help="flat = menu plano de ~34 opções; staged = turno em "
                         "etapas (movimento × grupo × método) numa chamada")
+    p.add_argument("--gate", action="store_true",
+                   help="H3: após o loop, o gate re-ranqueia TODO o histórico "
+                        "e o final = argmax P('é o melhor')")
+    p.add_argument("--gate-checkpoint", default=None,
+                   help="checkpoint do gate (default: o mesmo do explorador; "
+                        "use o fine-tuned quando terminar o treino)")
     p.add_argument("--no-dataset-card", action="store_true",
                    help="não montar o DATASET CARD (prior cross-series LOO)")
     p.add_argument("--no-seeds", action="store_true",
@@ -391,6 +422,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 option_format=args.option_format,
                 dataset_card=not args.no_dataset_card,
                 menu=args.menu,
+                gate=args.gate,
+                gate_checkpoint=args.gate_checkpoint,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,

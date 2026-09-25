@@ -392,19 +392,13 @@ def build_staged_questions(
     no_seeds: bool = False,
     fmt: str = "text",
 ) -> Dict[str, Dict[str, Any]]:
-    """Turno em ETAPAS: uma chamada com perguntas tipadas independentes.
-
-    move (que tipo de movimento) × recipe (qual grupo) × method (qual método)
-    × single (qual modelo) × build (qual receita de construção, no-seeds). A
-    composição é feita pelo CÓDIGO com os argmax de cada pergunta — o
-    classificador pontua cada dimensão separadamente (softmax pequenos, mais
-    focados que o menu plano de 34 opções).
-    """
+    """Turno em ETAPAS CONDICIONAIS: chamada 1 decide o movimento; a chamada 2
+    só faz a pergunta adequada ao movimento (receita+método OU modelo OU
+    construção). A composição é feita pelo CÓDIGO com os argmax."""
     recipes = _group_recipes(state)
     ev = model_evidence(state, series_card)
     top_single = sorted(ev, key=lambda n: ev[n]["rank"])[:5]
 
-    questions: Dict[str, Dict[str, Any]] = {}
     moves = {
         "combine": "test a combination over a group of models",
         "single": "test one model alone",
@@ -412,37 +406,39 @@ def build_staged_questions(
     }
     if no_seeds:
         moves["build"] = "build a new group of models first (stable/top-k/pruned)"
-    questions["move"] = {
-        "type": "choice",
-        "instructions": "What kind of move should be tested now?",
-        "criteria": moves,
-    }
-    questions["recipe"] = {
-        "type": "choice",
-        "instructions": "Which group of models?",
-        "criteria": {
-            rname: _fmt_recipe(rname, members, ev, fmt)
-            for rname, (_, members) in recipes.items()
+    return {
+        "move": {
+            "type": "choice",
+            "instructions": "Given the series and the current history, what kind of move should be tested now?",
+            "criteria": moves,
         },
-    }
-    questions["method"] = {
-        "type": "choice",
-        "instructions": "Which combination method over that group?",
-        "criteria": {
-            "mean": "plain average",
-            "median": "median (robust to an outlying model)",
-            "trimmed_mean": "trimmed mean (drop 20% from each tail)",
-            "weighted_inverse": "weighted average with weights = 1/validation error",
-            "weighted_softmax": "weighted average with weights = softmax(-validation error)",
+        "combine": {
+            "recipe": {
+                "type": "choice",
+                "instructions": "Which group of models?",
+                "criteria": {
+                    rname: _fmt_recipe(rname, members, ev, fmt)
+                    for rname, (_, members) in recipes.items()
+                },
+            },
+            "method": {
+                "type": "choice",
+                "instructions": "Which combination method over that group?",
+                "criteria": {
+                    "mean": "plain average",
+                    "median": "median (robust to an outlying model)",
+                    "trimmed_mean": "trimmed mean (drop 20% from each tail)",
+                    "weighted_inverse": "weighted average with weights = 1/validation error",
+                    "weighted_softmax": "weighted average with weights = softmax(-validation error)",
+                },
+            },
         },
-    }
-    questions["single"] = {
-        "type": "choice",
-        "instructions": "Which model alone?",
-        "criteria": {n: _fmt_model(n, ev.get(n), fmt) for n in top_single},
-    }
-    if no_seeds:
-        questions["build"] = {
+        "single": {
+            "type": "choice",
+            "instructions": "Which model alone?",
+            "criteria": {n: _fmt_model(n, ev.get(n), fmt) for n in top_single},
+        },
+        "build": {
             "type": "choice",
             "instructions": "Which group recipe?",
             "criteria": {
@@ -452,8 +448,43 @@ def build_staged_questions(
                 "top5": "the 5 models with the lowest validation error",
                 "prune": "drop near-duplicate models (correlation > 0.95)",
             },
-        }
-    return questions
+        },
+    }
+
+
+def _compose_staged(
+    state: ReactState,
+    answers: Dict[str, Any],
+    recipes: Dict[str, tuple],
+) -> tuple:
+    """Traduz as respostas das etapas em uma ação concreta.
+
+    Retorna (kind, spec_ou_tool, label) onde kind ∈ {"accept","tool","strategy",
+    "weighted"}.
+    """
+    move = str((answers.get("move") or {}).get("choice") or "accept")
+    if move == "accept":
+        return ("accept", None, "accept")
+    if move == "build":
+        tool = str((answers.get("build") or {}).get("choice") or "stable5")
+        if tool in BUILD_TOOLS:
+            return ("tool", tool, f"build:{tool}")
+        return ("accept", None, "accept")
+    if move == "single":
+        name = str((answers.get("single") or {}).get("choice") or "")
+        if not name:
+            return ("accept", None, "accept")
+        return ("strategy", {"combine": "best_single", "model": name}, f"best_{name}")
+    rname = str((answers.get("recipe") or {}).get("choice") or "full")
+    method = str((answers.get("method") or {}).get("choice") or "mean")
+    if rname not in recipes:
+        rname = "full"
+    handle, members = recipes[rname]
+    spec: Dict[str, Any] = {"combine": method, "pool": handle}
+    if method == "trimmed_mean":
+        spec["trim_pct"] = 0.2
+    kind = "weighted" if method.startswith("weighted_") else "strategy"
+    return (kind, spec, f"{method}_{rname}")
 
 
 def _fmt_recipe(rname: str, members: list, ev: dict, fmt: str) -> str:
@@ -589,25 +620,41 @@ def run_laya_loop(
                 series_card, pool_card, state, budget=state_budget,
                 scratchpad=scratch or None, dataset_card=dataset_card,
             )
-            questions = build_staged_questions(state, series_card, no_seeds=no_seeds, fmt=fmt)
+            qs = build_staged_questions(state, series_card, no_seeds=no_seeds, fmt=fmt)
+            # ── chamada 1: o MOVIMENTO ───────────────────────────────────
             t_pred = time.perf_counter()
             try:
-                out = agent.predict(stext, questions)
-                answers = {qid: out["answers"].get(qid) or {} for qid in questions}
+                out1 = agent.predict(stext, {"move": qs["move"]})
+                answers = {"move": out1["answers"].get("move") or {}}
                 pred_error = None
             except Exception as exc:
                 result.errors.append(f"iteration {iteration}: {type(exc).__name__}: {exc}")
                 result.stop_reason = "laya_error"
                 pred_error = f"{type(exc).__name__}: {exc}"
                 answers = {}
-            pred_s = time.perf_counter() - t_pred
+            pred1_s = time.perf_counter() - t_pred
+            move = str(answers["move"].get("choice") or "accept")
+            # ── chamada 2 (condicional): só a pergunta do movimento ─────
+            pred2_s = 0.0
+            if pred_error is None and move in ("combine", "single", "build"):
+                t_pred2 = time.perf_counter()
+                try:
+                    out2 = agent.predict(stext, qs[move])
+                    answers.update(out2["answers"] or {})
+                except Exception as exc:
+                    result.errors.append(
+                        f"iteration {iteration}: follow-up {move}: {type(exc).__name__}: {exc}"
+                    )
+                    pred_error = f"follow-up {move}: {type(exc).__name__}: {exc}"
+                pred2_s = time.perf_counter() - t_pred2
+            pred_s = pred1_s + pred2_s
             kind, spec_or_tool, label = _compose_staged(
                 state, answers, _group_recipes(state),
             )
             step: Dict[str, Any] = {
                 "iteration": iteration,
                 "state_before": stext,
-                "question": questions,
+                "question": qs,
                 "answer": {
                     qid: {"choice": a.get("choice"),
                           "confidence": a.get("confidence"),
@@ -615,7 +662,9 @@ def run_laya_loop(
                     for qid, a in answers.items()
                 },
                 "pred_error": pred_error,
-                "timing": {"predict_s": round(pred_s, 4)},
+                "timing": {"predict_s": round(pred_s, 4),
+                           "predict1_s": round(pred1_s, 4),
+                           "predict2_s": round(pred2_s, 4)},
             }
             if pred_error is not None:
                 result.step_details.append(step)
@@ -640,7 +689,10 @@ def run_laya_loop(
                 continue
             tried[label] = tried.get(label, 0) + 1
             t_tool = time.perf_counter()
-            entry: Dict[str, Any] = {"iteration": iteration, "action": label}
+            entry: Dict[str, Any] = {
+                "iteration": iteration, "action": label,
+                "confidence": (answers.get("move") or {}).get("confidence"),
+            }
             if kind == "tool":
                 tool_fn_name, targs = BUILD_TOOLS[spec_or_tool]
                 existing = set(state.pools)
@@ -891,6 +943,51 @@ def run_laya_loop(
 
     result.final_attempt = state.best_attempt()
     return result
+
+
+GATE_INSTRUCTIONS = (
+    "Is this candidate strategy the best available strategy for this series on "
+    "the validation windows (nested leave-one-out)? Answer yes only if you "
+    "expect it to be strictly the best on validation."
+)
+
+
+def run_gate_pass(
+    state: ReactState,
+    agent: Any,
+    series_card: Dict[str, Any],
+    pool_card: Dict[str, Any],
+    budget: int = 8000,
+) -> List[Dict[str, Any]]:
+    """H3: o gate pontua TODO o histórico (sementes + propostas).
+
+    Para cada candidato único do histórico, monta o estado com a estratégia
+    candidata e pergunta P("é o melhor na validação"). Mesmo formato do dataset
+    de fine-tune (`build_finetune_dataset.py`), então treino e inferência casam.
+    """
+    seen = set()
+    scored: List[Dict[str, Any]] = []
+    for a in state.ranked_attempts():
+        key = _spec_key(a.spec)
+        if key in seen:
+            continue
+        seen.add(key)
+        stext = build_state_text(series_card, pool_card, state, budget=budget)
+        stext += "\nCANDIDATE STRATEGY: " + json.dumps(a.spec, sort_keys=True, default=str)
+        try:
+            out = agent.predict(stext, {
+                "gate": {"type": "noul", "instructions": GATE_INSTRUCTIONS},
+            })
+            p = float(out["answers"]["gate"].get("noul", 0.5))
+        except Exception:
+            p = 0.5
+        scored.append({
+            "id": a.attempt_id, "spec": a.spec,
+            "score_val": round(float(a.score), 6),
+            "p_best": round(p, 4),
+            "origin": a.origin,
+        })
+    return scored
 
 
 def _brief_history(state: ReactState) -> List[Dict[str, Any]]:
