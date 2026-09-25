@@ -164,6 +164,23 @@ turno, estado ANTES, pergunta com TODAS as opções, resposta crua (escolha +
 probabilidades + tokens), ação executada, resultado (score/rank/já-testado/é-o-
 melhor), estado DEPOIS e tempos (predict_s, tool_s, turn_s).
 
+## A2 — LLM propõe + gate decide (rodadas interativas)
+
+`JEV/run_a2.py`: por série, R rodadas de **gpt-oss ReAct propõe** (orçamento
+curto) → **gate fine-tuned pontua o histórico por janela (LOO)** → o LLM da
+rodada seguinte lê o bloco `GATE VERDICT` no prompt (`react_loop` ganhou o
+parâmetro `gate_verdict`, injetado no `build_turn_prompt`) e adapta a
+exploração. Final = argmax P do gate.
+
+- O LLM nunca escolhe o final; o gate nunca gera (System 2 explora, System 1 decide).
+- `--reasoning low` é o default; `--rounds 2 --per-round 4`.
+- Rodada real exige `--gate-checkpoint` (fine-tuned, alvo por janela `valw`);
+  sem ele o gate é zero-shot (medido como ruído — só smoke).
+
+**A3 (próximo)**: o LLM escreve as OPÇÕES tipadas (com o raciocínio dele no
+texto de cada opção) e o gate responde sobre o material do LLM — o "pool de
+perguntas" gerado pelo LLM.
+
 ## O que está implementado
 
 | arquivo | o que faz | onde roda |

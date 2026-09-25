@@ -148,6 +148,7 @@ def run_react_loop(
     config: Optional[ReactConfig] = None,
     skip_reason: str = "",
     diagnosis: Optional[Dict[str, Any]] = None,
+    gate_verdict: Optional[Dict[str, Any]] = None,
     on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
 ) -> ReactResult:
     """Runs the decision loop and returns the winning attempt plus the full trace.
@@ -209,6 +210,7 @@ def run_react_loop(
             show_rationales=config.show_attempt_rationales,
             diagnosis=diagnosis,
             prompt_format=config.prompt_format,
+            gate_verdict=gate_verdict,
         )
 
         # Two different things can go wrong asking for one turn, and both are

@@ -1376,6 +1376,70 @@ def run_gate_pass(
     return scored
 
 
+def run_gate_pass_windows(
+    state: ReactState,
+    agent: Any,
+    series_card: Dict[str, Any],
+    pool_card: Dict[str, Any],
+    budget: int = 8000,
+) -> List[Dict[str, Any]]:
+    """A2: o gate pontua cada candidato POR JANELA (LOO), 3 perguntas noul.
+
+    O veredito janela-a-janela é o que o LLM lê na rodada seguinte ("o gate
+    acha que isso é frágil na janela recente").
+    """
+    seen = set()
+    scored: List[Dict[str, Any]] = []
+    for a in state.ranked_attempts():
+        key = _spec_key(a.spec)
+        if key in seen:
+            continue
+        seen.add(key)
+        stext = build_state_text(series_card, pool_card, state, budget=budget)
+        stext += "\nCANDIDATE STRATEGY: " + json.dumps(a.spec, sort_keys=True, default=str)
+        pw = []
+        for w in range(3):
+            q = {
+                "transfer": {
+                    "type": "noul",
+                    "instructions": (
+                        f"Will this candidate strategy be the winner of validation "
+                        f"window {w + 1} of 3, scored leave-one-out (everything else "
+                        f"fitted on the other two windows)? Answer yes only if you "
+                        f"expect it to win that window."
+                    ),
+                }
+            }
+            try:
+                out = agent.predict(stext, q)
+                pw.append(float(out["answers"]["transfer"].get("noul", 0.5)))
+            except Exception:
+                pw.append(0.5)
+        scored.append({
+            "id": a.attempt_id,
+            "spec": a.spec,
+            "strategy": a.brief(include_rationale=False)["strategy"],
+            "score_val": round(float(a.score), 6),
+            "p_windows": [round(x, 3) for x in pw],
+            "p_mean": round(float(np.mean(pw)), 3),
+            "origin": a.origin,
+        })
+    return scored
+
+
+def build_verdict(scored: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Bloco 'GATE VERDICT' que o LLM lê na rodada seguinte."""
+    ranked = sorted(scored, key=lambda s: -s["p_mean"])
+    return {
+        "ranking": ranked,
+        "note": (
+            "Use this to guide your next proposals: strengthen the candidates the "
+            "gate ranks highest, or test variations of them; avoid repeating ideas "
+            "the gate scores low."
+        ),
+    }
+
+
 def _brief_history(state: ReactState) -> List[Dict[str, Any]]:
     """Placar resumido pós-turno (para o 'estado depois' na telemetria)."""
     return [a.brief(include_rationale=False) for a in state.ranked_attempts()[:5]]

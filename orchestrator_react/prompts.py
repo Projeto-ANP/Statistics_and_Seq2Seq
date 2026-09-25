@@ -274,6 +274,7 @@ def build_turn_prompt(
     show_rationales: bool = True,
     diagnosis: Optional[Dict[str, Any]] = None,
     prompt_format: str = "text",
+    gate_verdict: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget.
 
@@ -369,6 +370,23 @@ def build_turn_prompt(
         parts.append("LAST OBSERVATION (full):")
         parts.append(_compact(last_observation, limit=1400))
         close_("last_observation")
+
+    if gate_verdict:
+        parts.append("")
+        open_("gate_verdict")
+        parts.append(
+            "GATE VERDICT - a trained classifier scored every strategy in the "
+            "history (higher P = more likely to be the best on validation, scored "
+            "leave-one-out per window):"
+        )
+        for row in (gate_verdict.get("ranking") or [])[:10]:
+            parts.append(
+                f"  {row['id']}: P={row['p_mean']} (windows {row['p_windows']}) "
+                f"{row['strategy']} origin={row['origin']}"
+            )
+        if gate_verdict.get("note"):
+            parts.append(gate_verdict["note"])
+        close_("gate_verdict")
 
     remaining = max_iterations - iteration + 1
     pending = _unscored_weights(state)
