@@ -104,6 +104,7 @@ def run_dataset(
     max_iterations: int = 12,
     no_seeds: bool = False,
     state_budget: int = 1400,
+    option_format: str = "text",
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -172,7 +173,7 @@ def run_dataset(
             pool_card = phase2["report"]
             loop = run_laya_loop(
                 state, agent, series_card, pool_card, max_iterations=max_iterations,
-                no_seeds=no_seeds, state_budget=state_budget,
+                no_seeds=no_seeds, state_budget=state_budget, fmt=option_format,
             )
             attempt = loop.final_attempt
             if attempt is None:
@@ -180,6 +181,35 @@ def run_dataset(
             forecast, _ = state.apply_to_test(attempt.spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
+
+            # ── artifact de telemetria por série (debug completo) ───────────
+            art_dir = os.path.join(out_dir, "llm_artifacts", dataset)
+            os.makedirs(art_dir, exist_ok=True)
+            art_path = os.path.join(art_dir, f"dataset_{idx}.json")
+            try:
+                with open(art_path, "w", encoding="utf-8") as fh:
+                    json.dump({
+                        "dataset": dataset, "series": int(idx),
+                        "config": {
+                            "checkpoint": checkpoint, "max_len": agent.max_len,
+                            "option_format": option_format,
+                            "max_iterations": max_iterations,
+                            "state_budget": state_budget, "no_seeds": no_seeds,
+                        },
+                        "final": {
+                            "strategy": attempt.spec, "origin": attempt.origin,
+                            "score": round(float(attempt.score), 6),
+                        },
+                        "stop_reason": loop.stop_reason,
+                        "iterations_used": loop.iterations_used,
+                        "floor_smape_test": floor["smape"] if floor else None,
+                        "final_smape_test": metrics["smape"],
+                        "trace": loop.trace,
+                        "step_details": loop.step_details,
+                        "errors": loop.errors,
+                    }, fh, ensure_ascii=False, indent=2, default=str)
+            except Exception:
+                pass
 
             rows.append({
                 "dataset_index": str(idx),
@@ -201,7 +231,7 @@ def run_dataset(
                 "react_stop_reason": loop.stop_reason,
                 "seed_floor_smape": floor["smape"] if floor else None,
                 "seed_floor_rmse": floor["rmse"] if floor else None,
-                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}",
+                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}_{option_format}",
             })
             per_series.append(metrics)
             if floor:
@@ -239,7 +269,7 @@ def run_dataset(
                 "description": json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
                 "origin": "", "react_iterations_used": 0, "react_stop_reason": "error",
                 "seed_floor_smape": None, "seed_floor_rmse": None,
-                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}",
+                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}_{option_format}",
             })
             print(f"[{idx:>4}] FAILED: {type(exc).__name__}: {exc}")
 
@@ -295,6 +325,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--max-len", type=int, default=None,
                    help="max_len do laya (english: 512; multilingual: até 8192)")
     p.add_argument("--max-iterations", type=int, default=12)
+    p.add_argument("--option-format", choices=["text", "raw"], default="text",
+                   help="evidência dos modelos nas opções: 'text' (resumo "
+                        "comparativo) ou 'raw' (números crus) — o A/B")
     p.add_argument("--state-budget", type=int, default=1400,
                    help="orçamento do estado do classificador em chars "
                         "(english: ~1400; multilingual 8192: pode subir p/ ~8000)")
@@ -323,6 +356,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 max_iterations=args.max_iterations,
                 no_seeds=args.no_seeds,
                 state_budget=args.state_budget,
+                option_format=args.option_format,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,

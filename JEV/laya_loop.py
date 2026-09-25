@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 # O probe de TF do transformers pode travar na construção do modelo; o próprio
 # README do laya manda usar USE_TF=0 nesse caso.
@@ -100,6 +103,10 @@ class LayaLoopResult:
     stop_reason: str = ""
     trace: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    #: Telemetria completa por turno (para debug/artifacts): estado ANTES,
+    #: pergunta com todas as opções, resposta crua, ação executada, resultado,
+    #: estado DEPOIS e tempos.
+    step_details: List[Dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -130,35 +137,154 @@ def build_state_text(
     state: ReactState,
     budget: int = 1400,
 ) -> str:
-    """Estado que o classificador lê — só cartões compactos + histórico.
+    """Estado que o classificador lê: cartões + regime + histórico.
 
-    Deliberadamente SEM o system prompt do agente ReAct: as opções carregam
-    seus próprios critérios na pergunta, e o checkpoint english tem 512 tokens
-    de orçamento. `budget` é em caracteres (≈4 chars/token).
+    O bloco `regime` resume em uma frase as características da série
+    (tendência, sazonalidade, estabilidade do ranking) e os campeões — o
+    vínculo entre a forma da série e quais modelos tendem a funcionar.
     """
     ranked = state.ranked_attempts()[:6]
     hist = [a.brief(include_rationale=False) for a in ranked]
+    stab = pool_card.get("ranking_stability") or {}
+    tc = (series_card.get("trend_champion") or {}).get("model")
+    sc = (series_card.get("seasonality_champion") or {}).get("model")
+    regime = (
+        f"trend={series_card.get('trend_strength')}, "
+        f"seasonal={series_card.get('seasonal_strength')}, "
+        f"model ranking {stab.get('verdict', '?')} "
+        f"(tau={stab.get('mean_kendall_tau')})"
+    )
     payload = {
         "series": P._slim_series_card(series_card),
         "pool": P._slim_pool_card(pool_card),
+        "regime": {
+            "summary": regime,
+            "trend_champion": tc,
+            "seasonality_champion": sc,
+        },
         "history_best_first": hist,
     }
     return P._compact(payload, limit=budget)
 
 
-def build_candidates(state: ReactState, no_seeds: bool = False) -> Dict[str, Dict[str, Any]]:
-    """Ações concretas do menu: estratégia -> label legível.
+def model_evidence(state: ReactState, series_card: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Evidência POR MODELO: erro (médio e por janela), estabilidade de ranking,
+    tendência do erro, top-3, campeões de tendência/sazonalidade."""
+    es = T.error_summary(state, top_n=state.n_models)
+    rs = T.ranking_stability(state)
+    by_model = {r["model"]: r for r in es["top"]}
+    movers = {m["model"]: m for m in rs.get("biggest_movers", [])}
+    top3 = set(rs.get("always_top3", []))
+    tc = (series_card.get("trend_champion") or {}).get("model")
+    sc = (series_card.get("seasonality_champion") or {}).get("model")
+    per_w = np.abs(state.y_preds - state.y_true[:, None, :]).mean(axis=2)  # (W, M)
+    out: Dict[str, Dict[str, Any]] = {}
+    for j, name in enumerate(state.model_names):
+        e = by_model.get(name)
+        if e is None:
+            continue
+        werr = per_w[:, j]
+        if werr[-1] < werr[0] - 1e-12:
+            trend = "improving"
+        elif werr[-1] > werr[0] + 1e-12:
+            trend = "degrading"
+        else:
+            trend = "flat"
+        m = movers.get(name)
+        champion = "trend" if name == tc else ("seasonal" if name == sc else None)
+        out[name] = {
+            "error": e["error"], "rank": e["rank"],
+            "per_window": [round(float(v), 4) for v in werr],
+            "rank_spread": int(m["rank_spread"]) if m else 0,
+            "ranks": m["ranks"] if m else None,
+            "always_top3": name in top3,
+            "trend": trend,
+            "champion": champion,
+        }
+    return out
 
-    Pools ordenados: pool_full primeiro, depois por tamanho (k=5,7,9 das
-    sementes estáveis). Cada pool × {mean, median, trimmed_mean}, mais os
-    top-3 modelos como best_single. `accept` não é estratégia — é tratado no
-    loop.
 
-    `no_seeds=True` (o agente parte de histórico vazio, sem as sementes da
-    Fase 2) adiciona AÇÕES DE FERRAMENTA para construir pools do zero:
-    select_stable k=5/7/9, select_top_k k=5 e prune_redundant.
+def _fmt_model(name: str, ev: Optional[Dict[str, Any]], fmt: str) -> str:
+    """Evidência de um modelo no formato 'raw' (números) ou 'text' (resumo)."""
+    if ev is None:
+        return name
+    if fmt == "raw":
+        ranks = ev["ranks"] if ev["ranks"] else []
+        return (
+            f"{name}(err={ev['error']:.4f}, per_window={ev['per_window']}, "
+            f"ranks={ranks}, rank_spread={ev['rank_spread']}, {ev['trend']}"
+            f"{', ' + ev['champion'] + ' champion' if ev['champion'] else ''})"
+        )
+    bits = [f"{name}(err={ev['error']:.2f}"]
+    if ev["rank"] == 1:
+        bits.append("lowest error")
+    if ev["always_top3"]:
+        bits.append("always top3")
+    elif ev["rank_spread"] > 0:
+        bits.append("stable rank" if ev["rank_spread"] <= 4 else "unstable rank")
+    if ev["trend"] == "improving":
+        bits.append("improving")
+    elif ev["trend"] == "degrading":
+        bits.append("degrading")
+    if ev["champion"] == "trend":
+        bits.append("trend champion")
+    elif ev["champion"] == "seasonal":
+        bits.append("seasonality champion")
+    return " ".join(bits) + ")"
+
+
+def _group_recipes(state: ReactState) -> Dict[str, tuple]:
+    """Receitas de grupo: (handle, membros). Determinísticas, reusam handles."""
+    recipes: Dict[str, tuple] = {"full": (FULL_POOL, state.pool_names(FULL_POOL))}
+    for k in (5, 7, 9):
+        try:
+            h = T.select_stable(state, k=k)["pool"]
+            recipes[f"stable{k}"] = (h, state.pool_names(h))
+        except Exception:
+            pass
+    try:
+        h = T.select_top_k(state, k=5)["pool"]
+        recipes["top5"] = (h, state.pool_names(h))
+    except Exception:
+        pass
+    try:
+        h = T.prune_redundant(state, pool=FULL_POOL, corr_threshold=0.95)["pool"]
+        recipes["prune"] = (h, state.pool_names(h))
+    except Exception:
+        pass
+    return recipes
+
+
+#: Métodos do menu v2: combinações diretas + pesos sobre cada receita de grupo.
+V2_METHODS = ("mean", "median", "trimmed_mean", "weighted_inverse", "weighted_softmax")
+
+_METHOD_WORDS = {
+    "mean": "average",
+    "median": "median",
+    "trimmed_mean": "trimmed mean (drop 20% from each tail)",
+    "weighted_inverse": "weighted average with weights = 1/validation error",
+    "weighted_softmax": "weighted average with weights = softmax(-validation error)",
+}
+
+
+def build_candidates(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    pool_card: Dict[str, Any],
+    no_seeds: bool = False,
+    fmt: str = "text",
+) -> Dict[str, Dict[str, Any]]:
+    """Menu v2: receita de grupo × método, com EVIDÊNCIA por modelo.
+
+    Cada opção é uma ação composta CONCRETA: a receita define o grupo (com a
+    lista de membros e a evidência de cada um) e o método define a combinação.
+    O classificador só escolhe; a montagem é determinística. `fmt` controla a
+    apresentação da evidência: "raw" (números crus) ou "text" (resumo).
+
+    `no_seeds=True` adiciona ações de ferramenta para construir pools do zero.
     """
     known = _history_keys(state)
+    ev = model_evidence(state, series_card)
     cands: Dict[str, Dict[str, Any]] = {}
 
     if no_seeds:
@@ -176,38 +302,41 @@ def build_candidates(state: ReactState, no_seeds: bool = False) -> Dict[str, Dic
             "n_models": 0, "tested": False,
         }
 
-    handles = sorted(
-        state.pools,
-        key=lambda h: (h != FULL_POOL, len(state.pools.get(h, []) or []), h),
-    )
-    handles = handles[:MAX_POOLS_IN_MENU]
-    for h in handles:
-        n = len(state.pools[h])
-        for method in MENU_METHODS:
-            spec: Dict[str, Any] = {"combine": method, "pool": h}
+    recipes = _group_recipes(state)
+    for rname, (handle, members) in recipes.items():
+        n = len(members)
+        for method in V2_METHODS:
+            label = f"{method}_{rname}"
+            info: Dict[str, Any] = {
+                "kind": "weighted" if method.startswith("weighted_") else "strategy",
+                "spec": {"combine": method, "pool": handle},
+                "n_models": n, "members": members, "evidence": ev,
+                "recipe": rname, "tested": False,
+            }
             if method == "trimmed_mean":
-                spec["trim_pct"] = 0.2
-            label = f"{method}_{h}"
-            cands[label] = {
-                "kind": "strategy", "spec": spec, "n_models": n,
-                "tested": _spec_key(spec) in known,
-            }
-    try:
-        top = T.select_top_k(state, k=min(TOP_K_BEST_SINGLE, state.n_models))
-        for entry in top["models"]:
-            name = entry if isinstance(entry, str) else entry["model"]
-            spec = {"combine": "best_single", "model": str(name)}
-            label = f"best_{name}"
-            cands[label] = {
-                "kind": "strategy", "spec": spec, "n_models": 1,
-                "tested": _spec_key(spec) in known,
-            }
-    except Exception:
-        pass
+                info["spec"]["trim_pct"] = 0.2
+            if info["kind"] == "weighted":
+                info["tested"] = any(
+                    a.spec.get("combine") == "weighted" and a.spec.get("pool") == handle
+                    for a in state.attempts
+                )
+            else:
+                info["tested"] = _spec_key(info["spec"]) in known
+            cands[label] = info
+
+    top_models = sorted(ev, key=lambda name: ev[name]["rank"])[:TOP_K_BEST_SINGLE]
+    for name in top_models:
+        spec = {"combine": "best_single", "model": name}
+        label = f"best_{name}"
+        cands[label] = {
+            "kind": "strategy", "spec": spec, "n_models": 1,
+            "members": [name], "evidence": ev,
+            "tested": _spec_key(spec) in known,
+        }
     return cands
 
 
-def _describe(label: str, info: Dict[str, Any]) -> str:
+def _describe_option(label: str, info: Dict[str, Any], fmt: str = "text") -> str:
     if info.get("kind") == "tool":
         tool = info["tool"]
         args = info["args"]
@@ -219,12 +348,15 @@ def _describe(label: str, info: Dict[str, Any]) -> str:
         return "drop near-duplicate models from the full pool (new pool handle)"
     spec = info["spec"]
     method = spec["combine"]
-    n = info["n_models"]
+    ev = info.get("evidence", {})
+    members = info.get("members", [])
+    shown = members[:5]
+    mtext = "; ".join(_fmt_model(m, ev.get(m), fmt) for m in shown)
     suffix = " (already tested)" if info["tested"] else ""
     if method == "best_single":
-        return f"use only model {spec['model']} as the forecast{suffix}"
-    what = {"mean": "average", "median": "median", "trimmed_mean": "trimmed mean"}[method]
-    return f"{what} of the {n} models in pool {spec['pool']}{suffix}"
+        return f"use only model {_fmt_model(spec['model'], ev.get(spec['model']), fmt)} as the forecast{suffix}"
+    what = _METHOD_WORDS.get(method, method)
+    return f"{what} of the {len(members)} models [{mtext}]{suffix}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -241,6 +373,7 @@ def run_laya_loop(
     state_budget: int = 1400,
     patience: int = 3,
     no_seeds: bool = False,
+    fmt: str = "text",
     on_step: Optional[Any] = None,
 ) -> LayaLoopResult:
     """Roda o loop de decisão do classificador e devolve a melhor tentativa.
@@ -249,26 +382,32 @@ def run_laya_loop(
     `no_seeds=True`, onde o histórico começa vazio e o menu passa a incluir
     ações de ferramenta para construir pools do zero. O classificador só
     escolhe entre ações concretas; a execução continua determinística.
+
+    `fmt="raw"` apresenta a evidência dos modelos como números crus;
+    `fmt="text"` como resumo comparativo (para o A/B).
+
+    Cada turno é registrado em `result.step_details` com telemetria completa:
+    estado antes, pergunta+opções, resposta crua (probabilidades), ação
+    executada, resultado, estado depois e tempos.
     """
     result = LayaLoopResult(final_attempt=state.best_attempt())
     if not state.attempts and not no_seeds:
         raise RuntimeError("histórico vazio: rode pool.run_phase2 antes do loop")
 
-    # O classificador não "aprende" com a observation como o ReAct: sem um freio
-    # ele repete a mesma escolha até o orçamento acabar. `patience` turnos
-    # seguidos sem informação nova encerram o loop (análogo ao early_stop_patience
-    # do react_loop).
     patience = max(1, int(patience))
     stale = 0
     last_chosen: Optional[str] = None
 
     for iteration in range(1, max(1, int(max_iterations)) + 1):
         result.iterations_used = iteration
-        cands = build_candidates(state, no_seeds=no_seeds)
+        t_turn = time.perf_counter()
+        cands = build_candidates(state, series_card, pool_card, no_seeds=no_seeds, fmt=fmt)
         if not cands:
             result.stop_reason = "no_candidates"
             break
-        criteria: Dict[str, str] = {label: _describe(label, info) for label, info in cands.items()}
+        criteria: Dict[str, str] = {
+            label: _describe_option(label, info, fmt) for label, info in cands.items()
+        }
         if state.attempts:
             criteria["accept"] = "stop now and keep the current best strategy"
         stext = build_state_text(series_card, pool_card, state, budget=state_budget)
@@ -279,6 +418,8 @@ def run_laya_loop(
                 "criteria": criteria,
             }
         }
+
+        t_pred = time.perf_counter()
         try:
             out = agent.predict(stext, question)
             answer = out["answers"]["next_action"]
@@ -286,17 +427,42 @@ def run_laya_loop(
             conf = answer.get("confidence", answer.get("probability"))
             probs = answer.get("probabilities")
             usage = out.get("usage")
+            pred_error = None
         except Exception as exc:
             result.errors.append(f"iteration {iteration}: {type(exc).__name__}: {exc}")
             result.stop_reason = "laya_error"
-            break
+            pred_error = f"{type(exc).__name__}: {exc}"
+            chosen, conf, probs, usage = "", None, None, None
+        pred_s = time.perf_counter() - t_pred
 
+        step: Dict[str, Any] = {
+            "iteration": iteration,
+            "state_before": stext,
+            "question": question,
+            "answer": {
+                "choice": chosen,
+                "confidence": conf,
+                "probabilities": {k: round(float(v), 4) for k, v in (probs or {}).items()},
+                "input_tokens": (usage or {}).get("input_tokens"),
+            },
+            "pred_error": pred_error,
+            "timing": {"predict_s": round(pred_s, 4)},
+        }
+
+        if pred_error is not None:
+            result.step_details.append(step)
+            break
         if chosen == "accept":
             result.stop_reason = "laya_accept"
+            step["executed"] = "accept (keep current best)"
+            step["state_after"] = _brief_history(state)
+            step["timing"]["tool_s"] = 0.0
+            result.step_details.append(step)
             break
         if chosen not in cands:
             result.errors.append(f"iteration {iteration}: laya escolheu label fora do menu: {chosen!r}")
             result.stop_reason = "laya_error"
+            result.step_details.append(step)
             break
 
         info = cands[chosen]
@@ -308,6 +474,7 @@ def run_laya_loop(
             "probabilities": {k: round(float(v), 4) for k, v in (probs or {}).items()},
             "input_tokens": (usage or {}).get("input_tokens"),
         }
+        t_tool = time.perf_counter()
 
         if info.get("kind") == "tool":
             # ação de ferramenta: executa, registra o handle e continua
@@ -324,6 +491,15 @@ def run_laya_loop(
             except Exception as exc:
                 entry["observation"] = f"error: {exc}"
                 new_handle = False
+            tool_s = time.perf_counter() - t_tool
+            step.update({
+                "executed": {"tool": info["tool"], "args": info["args"],
+                             "observation": entry.get("observation")},
+                "state_after": _brief_history(state),
+                "timing": {"predict_s": step["timing"]["predict_s"],
+                           "tool_s": round(tool_s, 4)},
+            })
+            result.step_details.append(step)
             result.trace.append(entry)
             if on_step is not None:
                 try:
@@ -340,15 +516,36 @@ def run_laya_loop(
                 break
             continue
 
-        spec = info["spec"]
+        spec = dict(info["spec"])
+        if info.get("kind") == "weighted":
+            method = spec["combine"]
+            wres = (
+                T.weights_inverse_error(state, pool=spec["pool"])
+                if method == "weighted_inverse"
+                else T.weights_softmax_neg_error(state, pool=spec["pool"])
+            )
+            spec = {"combine": "weighted", "pool": spec["pool"],
+                    "weights": wres.get("weights")}
         attempt, is_new = state.evaluate(
             spec, rationale=f"laya selected {chosen}", origin="agent", iteration=iteration
         )
+        tool_s = time.perf_counter() - t_tool
         entry.update({
             "score": round(float(attempt.score), 4) if attempt.score == attempt.score else None,
             "rank": state.ranked_attempts().index(attempt) + 1,
             "already_tested": not is_new,
         })
+        step.update({
+            "executed": {"spec": spec},
+            "result": {"score": entry["score"], "rank": entry["rank"],
+                       "already_tested": not is_new,
+                       "is_best": attempt is state.best_attempt()},
+            "state_after": _brief_history(state),
+            "timing": {"predict_s": step["timing"]["predict_s"],
+                       "tool_s": round(tool_s, 4),
+                       "turn_s": round(time.perf_counter() - t_turn, 4)},
+        })
+        result.step_details.append(step)
         result.trace.append(entry)
         if on_step is not None:
             try:
@@ -370,3 +567,8 @@ def run_laya_loop(
 
     result.final_attempt = state.best_attempt()
     return result
+
+
+def _brief_history(state: ReactState) -> List[Dict[str, Any]]:
+    """Placar resumido pós-turno (para o 'estado depois' na telemetria)."""
+    return [a.brief(include_rationale=False) for a in state.ranked_attempts()[:5]]

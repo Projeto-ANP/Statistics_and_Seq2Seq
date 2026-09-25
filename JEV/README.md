@@ -136,6 +136,28 @@ sobre um menu enumerado de estratégias, sem as ferramentas de pesos e sem o
 contexto cross-series do agente LLM". Se quisermos a troca LIMPA, falta: adicionar
 o DATASET CARD + handles + semente pooled ao run LAYA (paridade total de contexto).
 
+## Menu v2 — evidência por modelo + telemetria completa
+
+`laya_loop.py` agora monta o menu como **receita de grupo × método** com
+**evidência por modelo** embutida em cada opção:
+
+- receitas: full, stable5/7/9, top5, prune — cada uma lista os membros com
+  erro (médio e por janela), estabilidade de ranking, tendência do erro e
+  campeões de tendência/sazonalidade;
+- métodos: mean, median, trimmed_mean, weighted_inverse, weighted_softmax;
+- formato da evidência controlado por `--option-format`:
+  - `text` — resumo comparativo ("lowest error", "always top3", "improving",
+    "seasonality champion");
+  - `raw` — números crus (`err=…, per_window=[…], ranks=[…], rank_spread=…`);
+- o ESTADO ganhou o bloco `regime` (tendência, sazonalidade, estabilidade do
+  ranking, campeões).
+
+Telemetria de debug por série em
+`orchestrator_laya_<version>/llm_artifacts/<dataset>/dataset_<i>.json`: por
+turno, estado ANTES, pergunta com TODAS as opções, resposta crua (escolha +
+probabilidades + tokens), ação executada, resultado (score/rank/já-testado/é-o-
+melhor), estado DEPOIS e tempos (predict_s, tool_s, turn_s).
+
 ## O que está implementado
 
 | arquivo | o que faz | onde roda |
