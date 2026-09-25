@@ -53,12 +53,18 @@ class LayaAgent:
     """Wrapper mínimo sobre `laya.load`, com carga lazy e mensagens claras."""
 
     def __init__(self, checkpoint: str = "english", max_len: Optional[int] = None) -> None:
+        # "english" | "multilingual" | caminho LOCAL de um checkpoint fine-tuned
+        # (diretório com model.safetensors + rl_agent_config.json)
         if checkpoint not in ("english", "multilingual"):
-            raise ValueError(f"checkpoint deve ser 'english' ou 'multilingual', got {checkpoint!r}")
+            if not (os.path.isdir(checkpoint) or "/" in checkpoint or "\\" in checkpoint):
+                raise ValueError(
+                    f"checkpoint deve ser 'english', 'multilingual' ou um caminho "
+                    f"local de checkpoint fine-tuned, got {checkpoint!r}"
+                )
         self.checkpoint = checkpoint
         self.max_len = max_len
         self._agent: Any = None
-        self.name = f"laya-{checkpoint}"
+        self.name = os.path.basename(str(checkpoint).rstrip("/")) if checkpoint not in ("english", "multilingual") else f"laya-{checkpoint}"
 
     def load(self) -> None:
         if self._agent is not None:
@@ -72,8 +78,10 @@ class LayaAgent:
             ) from exc
         if self.checkpoint == "english":
             self._agent = laya.load("convaiinnovations/laya")
-        else:
+        elif self.checkpoint == "multilingual":
             self._agent = laya.load("convaiinnovations/laya", subfolder="multilingual")
+        else:
+            self._agent = laya.load(self.checkpoint)  # diretório local fine-tuned
 
     def predict(self, state_text: str, question: Dict[str, Any]) -> Dict[str, Any]:
         self.load()
@@ -138,21 +146,41 @@ def build_state_text(
     return P._compact(payload, limit=budget)
 
 
-def build_candidates(state: ReactState) -> Dict[str, Dict[str, Any]]:
+def build_candidates(state: ReactState, no_seeds: bool = False) -> Dict[str, Dict[str, Any]]:
     """Ações concretas do menu: estratégia -> label legível.
 
     Pools ordenados: pool_full primeiro, depois por tamanho (k=5,7,9 das
     sementes estáveis). Cada pool × {mean, median, trimmed_mean}, mais os
     top-3 modelos como best_single. `accept` não é estratégia — é tratado no
     loop.
+
+    `no_seeds=True` (o agente parte de histórico vazio, sem as sementes da
+    Fase 2) adiciona AÇÕES DE FERRAMENTA para construir pools do zero:
+    select_stable k=5/7/9, select_top_k k=5 e prune_redundant.
     """
+    known = _history_keys(state)
+    cands: Dict[str, Dict[str, Any]] = {}
+
+    if no_seeds:
+        for k in (5, 7, 9):
+            cands[f"select_stable_k{k}"] = {
+                "kind": "tool", "tool": "select_stable", "args": {"k": k},
+                "n_models": 0, "tested": False,
+            }
+        cands["select_top_k_k5"] = {
+            "kind": "tool", "tool": "select_top_k", "args": {"k": 5},
+            "n_models": 0, "tested": False,
+        }
+        cands["prune_redundant_full"] = {
+            "kind": "tool", "tool": "prune_redundant", "args": {"pool": FULL_POOL},
+            "n_models": 0, "tested": False,
+        }
+
     handles = sorted(
         state.pools,
         key=lambda h: (h != FULL_POOL, len(state.pools.get(h, []) or []), h),
     )
     handles = handles[:MAX_POOLS_IN_MENU]
-    known = _history_keys(state)
-    cands: Dict[str, Dict[str, Any]] = {}
     for h in handles:
         n = len(state.pools[h])
         for method in MENU_METHODS:
@@ -160,22 +188,35 @@ def build_candidates(state: ReactState) -> Dict[str, Dict[str, Any]]:
             if method == "trimmed_mean":
                 spec["trim_pct"] = 0.2
             label = f"{method}_{h}"
-            cands[label] = {"spec": spec, "n_models": n,
-                            "tested": _spec_key(spec) in known}
+            cands[label] = {
+                "kind": "strategy", "spec": spec, "n_models": n,
+                "tested": _spec_key(spec) in known,
+            }
     try:
         top = T.select_top_k(state, k=min(TOP_K_BEST_SINGLE, state.n_models))
         for entry in top["models"]:
             name = entry if isinstance(entry, str) else entry["model"]
             spec = {"combine": "best_single", "model": str(name)}
             label = f"best_{name}"
-            cands[label] = {"spec": spec, "n_models": 1,
-                            "tested": _spec_key(spec) in known}
+            cands[label] = {
+                "kind": "strategy", "spec": spec, "n_models": 1,
+                "tested": _spec_key(spec) in known,
+            }
     except Exception:
         pass
     return cands
 
 
 def _describe(label: str, info: Dict[str, Any]) -> str:
+    if info.get("kind") == "tool":
+        tool = info["tool"]
+        args = info["args"]
+        if tool == "select_stable":
+            return (f"select the {args['k']} models with the most consistent ranking "
+                    "across windows (new pool handle)")
+        if tool == "select_top_k":
+            return f"select the {args['k']} models with the lowest validation error (new pool handle)"
+        return "drop near-duplicate models from the full pool (new pool handle)"
     spec = info["spec"]
     method = spec["combine"]
     n = info["n_models"]
@@ -199,15 +240,18 @@ def run_laya_loop(
     max_iterations: int = 12,
     state_budget: int = 1400,
     patience: int = 3,
+    no_seeds: bool = False,
     on_step: Optional[Any] = None,
 ) -> LayaLoopResult:
     """Roda o loop de decisão do classificador e devolve a melhor tentativa.
 
-    `state` já vem semeado pela Fase 2 (`pool.run_phase2`). O classificador só
+    `state` já vem semeado pela Fase 2 (`pool.run_phase2`) — exceto com
+    `no_seeds=True`, onde o histórico começa vazio e o menu passa a incluir
+    ações de ferramenta para construir pools do zero. O classificador só
     escolhe entre ações concretas; a execução continua determinística.
     """
     result = LayaLoopResult(final_attempt=state.best_attempt())
-    if not state.attempts:
+    if not state.attempts and not no_seeds:
         raise RuntimeError("histórico vazio: rode pool.run_phase2 antes do loop")
 
     # O classificador não "aprende" com a observation como o ReAct: sem um freio
@@ -220,12 +264,13 @@ def run_laya_loop(
 
     for iteration in range(1, max(1, int(max_iterations)) + 1):
         result.iterations_used = iteration
-        cands = build_candidates(state)
+        cands = build_candidates(state, no_seeds=no_seeds)
         if not cands:
             result.stop_reason = "no_candidates"
             break
         criteria: Dict[str, str] = {label: _describe(label, info) for label, info in cands.items()}
-        criteria["accept"] = "stop now and keep the current best strategy"
+        if state.attempts:
+            criteria["accept"] = "stop now and keep the current best strategy"
         stext = build_state_text(series_card, pool_card, state, budget=state_budget)
         question = {
             "next_action": {
@@ -254,21 +299,56 @@ def run_laya_loop(
             result.stop_reason = "laya_error"
             break
 
-        spec = cands[chosen]["spec"]
-        attempt, is_new = state.evaluate(
-            spec, rationale=f"laya selected {chosen}", origin="agent", iteration=iteration
-        )
-        entry = {
+        info = cands[chosen]
+        entry: Dict[str, Any] = {
             "iteration": iteration,
             "action": chosen,
             "confidence": conf,
             "probability_of_chosen": (probs or {}).get(chosen),
             "probabilities": {k: round(float(v), 4) for k, v in (probs or {}).items()},
             "input_tokens": (usage or {}).get("input_tokens"),
+        }
+
+        if info.get("kind") == "tool":
+            # ação de ferramenta: executa, registra o handle e continua
+            tool_fn = getattr(T, info["tool"])
+            existing = set(state.pools)
+            try:
+                obs = tool_fn(state, **info["args"])
+                handle = obs.get("pool")
+                new_handle = handle is not None and handle not in existing
+                entry["observation"] = (
+                    f"pool {handle} ({len(obs.get('models', []))} models)"
+                    if handle else json.dumps(obs, default=str)[:120]
+                )
+            except Exception as exc:
+                entry["observation"] = f"error: {exc}"
+                new_handle = False
+            result.trace.append(entry)
+            if on_step is not None:
+                try:
+                    on_step(state.dataset_index, entry)
+                except Exception:
+                    pass
+            if new_handle:
+                stale = 0
+            else:
+                stale += 1
+            last_chosen = chosen
+            if stale >= patience:
+                result.stop_reason = f"no new information in {stale} consecutive turns"
+                break
+            continue
+
+        spec = info["spec"]
+        attempt, is_new = state.evaluate(
+            spec, rationale=f"laya selected {chosen}", origin="agent", iteration=iteration
+        )
+        entry.update({
             "score": round(float(attempt.score), 4) if attempt.score == attempt.score else None,
             "rank": state.ranked_attempts().index(attempt) + 1,
             "already_tested": not is_new,
-        }
+        })
         result.trace.append(entry)
         if on_step is not None:
             try:

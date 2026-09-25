@@ -6,6 +6,75 @@ orquestrador, inspiradas na família **JEV** (TypeSafe) — modelos de *decisão
 em `ENTENDIMENTO_ORCHESTRATOR_REACT.md` §2-§5 (resumo: transferência das
 propostas do agente 10% no NN5; decisão final = gargalo).
 
+## Resultados medidos — v0 (zero-shot, english, menu de 16 opções)
+
+Executado no servidor (GPU), 2026-09-25, `orchestrator_laya_laya_v0/`.
+
+| dataset | LAYA v0 | piso sementes (determinístico) | agente gpt-oss (v5) | ADE | FFORMA |
+|---|---|---|---|---|---|
+| NN5 (111 séries) | 0.1188 | 0.1156 | 0.1177 | 0.1178 | 0.1197 |
+| ETTM2 (7 séries) | 0.2417 | 0.2030 | 0.1608 | 0.1872 | 0.1654 |
+
+Custo: NN5 em **17,3 s** (vs ~24 min do LLM) — ~1000× mais barato/rápido.
+
+Leituras (verificadas com `diagnostics/analyze_run.py`):
+
+1. **O classificador zero-shot tem o MESMO comportamento anti-preditivo do
+   LLM**: intervém em 45/111 séries (LLM: 50/111), final pior que a melhor
+   semente no teste em 94/111 (LLM: 95/111), delta médio vs oráculo +0.0128
+   (LLM: +0.0117). **Conclusão forte: o gargalo é a função-objetivo (argmin
+   sobre 3 janelas de validação), não o tomador de decisão.** Trocar o LLM
+   por um classificador não conserta; consertar o objetivo sim.
+2. **As probabilidades do LAYA não separam escolha boa de ruim zero-shot**:
+   fração que bate o piso no teste por faixa de `probability_of_chosen` —
+   0-0.50: 9,2% | 0.50-0.70: 31,9% | 0.70-0.85: 16,1% | 0.85-1.00: 19,4%
+   (não-monotônico). No geral só 14,5% das estratégias avaliadas batem o piso
+   no teste (LLM: 10%). Não usar a confiança como gate sem fine-tune.
+3. **O menu importa**: o pior erro do LAYA (ETTM2 série 5: 0.7310) veio de
+   `best_single` sobre um modelo que venceu as 3 janelas por sorte; o gpt-oss
+   escapou da mesma série (0.2251) com média de pool PODADO — opção que o menu
+   v0 não tinha. Adicionar pools de `prune_redundant` ao menu é o próximo fix
+   barato.
+4. **Caminho confirmado**: fine-tune do LAYA/BERT sobre os desfechos rotulados
+   (456 propostas do LLM + 304 do LAYA, todas com validação E teste) — é a
+   Alternativa 1/5. O zero-shot serviu para medir a régua e provar que o
+   problema não é o modelo.
+
+## Fine-tune do LAYA — receita (o caminho que sobrou)
+
+O zero-shot mediu perto do acaso na nossa tarefa (14,5% de acerto contra o piso
+no teste). O próprio repo diz: *"treat Laya as a fast base to specialise, not as
+a zero-shot decision engine"* — fine-tuned 0.766 vs 0.362 zero-shot no benchmark
+deles; no caso browser-agent: top-1 entre ~45 candidatos 0.10 → 0.66, sucesso
+real 0% → 62%.
+
+**Como funciona o treino** (`notebooks/laya_finetune_typed_decisions_2xT4_kaggle.ipynb`
+no repo do laya): dataset de decisões (state + questions + resposta correta) →
+treino com **RLCD** (recompensa = regra de pontuação própria, policy gradient
+estilo GRPO) → ajuste de temperaturas por tipo de pergunta → avaliação → push
+pro Hub. O pacote pip já expõe as peças (`laya.proper_reward`, `laya.ece_score`,
+`laya.LayaEvaluator`, `laya.td_lambda_targets`).
+
+**Tempo**: referência deles = **4-5 h para 30k perguntas × 4 épocas em 2×T4**.
+Nosso dataset (~760 decisões: 456 do LLM + 304 do LAYA) é ~40× menor → **minutos
+a ~1 h em T4** (Kaggle 2×T4 é gratuito); CPU funciona mas multiplica por ~5-10×.
+
+**O rótulo é a decisão mais importante** — três opções:
+1. **Imitação**: rotular com a ação que o agente tomou. Aprende o comportamento
+   atual (ruim: 10-14% de transferência). Não fazer.
+2. **Desfecho (o certo)**: rotular com a ação cuja estratégia VENCEU na janela
+   de teste — ou `accept` quando nenhuma proposta bate a semente. Ensina
+   exatamente o que queremos prever; é a Alternativa 1 do mapa (gate aprendido).
+3. **Híbrido**: imitação como pré-treino, desfecho como fine-tune.
+
+**Pipeline no nosso repo**: (1) `JEV/build_finetune_dataset.py` exporta
+`(state, questions, label)` dos runs existentes via replay determinístico
+(o `analyze_run.py` já faz o replay; falta o export); (2) rodar o notebook
+(Kaggle 2×T4 ou a GPU do servidor); (3) plugar o checkpoint local direto no
+loop — o `laya_loop.LayaAgent` já aceita caminho local:
+`run_laya.py --checkpoint ./JEV/models/laya_nn5_finetuned` (o `laya.load` aceita
+diretório local com `model.safetensors` + `rl_agent_config.json`).
+
 ## O que está implementado
 
 | arquivo | o que faz | onde roda |

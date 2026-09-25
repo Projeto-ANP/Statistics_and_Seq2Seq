@@ -53,7 +53,10 @@ DATASET_SOURCES: Dict[str, str] = {
     "ETTM2": "ETTM2.tsf",
     "ANP_MONTHLY": "mes_11_venda_mensal.tsf",
     "NN5_WEEKLY_DATASET": "nn5_weekly_dataset.tsf",
+    "NN5_DAILY_DATASET_WITHOUT_MISSING_VALUES": "nn5_daily_dataset_without_missing_values.tsf",
     "M4_WEEKLY_DATASET": "m4_weekly_dataset.tsf",
+    "M4_HOURLY_DATASET": "m4_hourly_dataset.tsf",
+    "PEDESTRIAN_COUNTS_DATASET": "pedestrian_counts_dataset.tsf",
     "US_BIRTHS_DATASET": "us_births_dataset.tsf",
 }
 
@@ -99,6 +102,7 @@ def run_dataset(
     checkpoint: str = "english",
     max_len: Optional[int] = None,
     max_iterations: int = 12,
+    no_seeds: bool = False,
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -156,10 +160,18 @@ def run_dataset(
             )
             state = ing.state
             phase2 = POOL.run_phase2(state, cfg)
+            if no_seeds:
+                # braço "sem sementes": o agente parte de histórico vazio e não
+                # recebe os pools estáveis da Fase 2 (pool_full permanece — é a
+                # base, não uma semente). O pool card continua no estado.
+                state.attempts.clear()
+                for handle in [h for h in list(state.pools) if h != "pool_full"]:
+                    del state.pools[handle]
             series_card = T.series_profile(state)
             pool_card = phase2["report"]
             loop = run_laya_loop(
                 state, agent, series_card, pool_card, max_iterations=max_iterations,
+                no_seeds=no_seeds,
             )
             attempt = loop.final_attempt
             if attempt is None:
@@ -188,7 +200,7 @@ def run_dataset(
                 "react_stop_reason": loop.stop_reason,
                 "seed_floor_smape": floor["smape"] if floor else None,
                 "seed_floor_rmse": floor["rmse"] if floor else None,
-                "ablation_config": f"laya_{checkpoint}_{version}",
+                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}",
             })
             per_series.append(metrics)
             if floor:
@@ -204,9 +216,13 @@ def run_dataset(
                 + (f"  | FLOOR smape={floor['smape']:.4f}" if floor else "")
             )
             for entry in loop.trace:
+                detail = (
+                    f"rank={entry['rank']}" if "rank" in entry
+                    else f"obs={entry.get('observation', '')}"
+                )
                 print(
                     f"         laya iter {entry['iteration']} -> {entry['action']}"
-                    f" conf={entry['confidence']} rank={entry['rank']}"
+                    f" conf={entry['confidence']} {detail}"
                 )
             ext = I.read_external_baselines(dataset, idx, results_dir=results_dir)
             for name, stats in ext.items():
@@ -222,7 +238,7 @@ def run_dataset(
                 "description": json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
                 "origin": "", "react_iterations_used": 0, "react_stop_reason": "error",
                 "seed_floor_smape": None, "seed_floor_rmse": None,
-                "ablation_config": f"laya_{checkpoint}_{version}",
+                "ablation_config": f"laya_{checkpoint}_{version}{'_noseeds' if no_seeds else ''}",
             })
             print(f"[{idx:>4}] FAILED: {type(exc).__name__}: {exc}")
 
@@ -241,7 +257,9 @@ def run_dataset(
             f"  pocid={summary['pocid']:.2f}  mape={summary['mape']:.4f}"
             f"  mae={summary['mae']:.4f}"
         )
-        if floor_sum:
+        if no_seeds:
+            print("  baseline   (n/a - no-seeds arm: o agente partiu de histórico vazio)")
+        elif floor_sum:
             delta = summary["rmse"] - floor_sum["rmse"]
             if abs(delta) < 1e-12:
                 note = "  (== seed floor: no agent contribution this run)"
@@ -276,6 +294,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--max-len", type=int, default=None,
                    help="max_len do laya (english: 512; multilingual: até 8192)")
     p.add_argument("--max-iterations", type=int, default=12)
+    p.add_argument("--no-seeds", action="store_true",
+                   help="ablação: o agente parte de histórico VAZIO — sem as "
+                        "sementes da Fase 2 (o menu ganha ações de construção de pool)")
     p.add_argument("--indices", nargs="+", type=int, default=None)
     p.add_argument("--source-dir", default=DEFAULT_SOURCE_DIR)
     p.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR)
@@ -296,6 +317,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 checkpoint=args.checkpoint,
                 max_len=args.max_len,
                 max_iterations=args.max_iterations,
+                no_seeds=args.no_seeds,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,

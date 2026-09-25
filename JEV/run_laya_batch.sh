@@ -20,7 +20,8 @@ mkdir -p logs
 
 VERSION="${VERSION:-laya_v0}"
 CHECKPOINT="${CHECKPOINT:-english}"
-DATASETS="${DATASETS:-ETTM2 NN5_WEEKLY_DATASET}"
+# Todos os datasets com CSVs de modelos em resultados/ (Laya é rápido: ~17s no NN5).
+DATASETS="${DATASETS:-ETTM2 NN5_WEEKLY_DATASET ETTH1 ETTH2 ETTM1 ANP_MONTHLY M4_WEEKLY_DATASET M4_HOURLY_DATASET NN5_DAILY_DATASET_WITHOUT_MISSING_VALUES PEDESTRIAN_COUNTS_DATASET US_BIRTHS_DATASET}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-12}"
 
 for d in $DATASETS; do
@@ -33,5 +34,22 @@ for d in $DATASETS; do
     2>&1 | tee "logs/${VERSION}_${d}.log" \
     || { echo "FALHOU $d ($CHECKPOINT)"; echo "FALHOU $d ($CHECKPOINT)" >> logs/_laya_failures.txt; }
 done
+
+# ── braço "sem sementes" (ablação: agente parte de histórico vazio) ──────────
+# Ativado com NOSEEDS=1 na chamada da batelada.
+if [ "${NOSEEDS:-0}" = "1" ]; then
+  NV="${VERSION}_noseeds"
+  for d in $DATASETS; do
+    echo "===== $d ($CHECKPOINT, NO-SEEDS) -> version $NV ====="
+    python3 JEV/run_laya.py \
+      --datasets "$d" \
+      --version "$NV" \
+      --checkpoint "$CHECKPOINT" \
+      --max-iterations "$MAX_ITERATIONS" \
+      --no-seeds \
+      2>&1 | tee "logs/${NV}_${d}.log" \
+      || { echo "FALHOU $d ($CHECKPOINT, no-seeds)"; echo "FALHOU $d ($CHECKPOINT, no-seeds)" >> logs/_laya_failures.txt; }
+  done
+fi
 
 echo "===== BATELADA LAYA CONCLUÍDA ====="
