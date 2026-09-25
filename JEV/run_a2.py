@@ -138,7 +138,12 @@ def run_dataset(
 
     print(f"dataset      : {dataset}")
     print(f"llm          : {combinator_model} reasoning={reasoning} | rodadas={rounds} x {per_round} iters")
-    print(f"gate         : {gate_checkpoint or 'ZERO-SHOT (smoke — não é o resultado real)'}")
+    gate_label = (
+        f"logístico por-janela (LOO, {gate_data})"
+        if gate_mode == "logistic"
+        else (gate_checkpoint or "LAY A ZERO-SHOT (smoke — não é o resultado real)")
+    )
+    print(f"gate         : {gate_label}")
     print(f"writing to   : {out_dir}")
     print("-" * 74, flush=True)
 
@@ -167,10 +172,30 @@ def run_dataset(
             round_cfg = ReactConfig(max_iterations=per_round)
             verdict = None
             react_results = []
+
+            # ── início da série: o que a etapa determinística entregou ─────
+            seed_leader = state.best_attempt()
+            print(
+                f"[{idx:>4}] INÍCIO: melhor semente = {seed_leader.brief(include_rationale=False)['strategy']} "
+                f"(score {seed_leader.score:.4f}) | histórico inicial = {len(state.attempts)}",
+                flush=True,
+            )
+
+            def _on_step(_i, entry):
+                args = json.dumps(entry.get("action_args") or {}, ensure_ascii=False, default=str)[:90]
+                thought = " ".join(str(entry.get("thought") or "").split())[:120]
+                print(
+                    f"[{idx:>4}]   r{r+1}.{entry['iteration']} | {entry.get('action')} {args}",
+                    flush=True,
+                )
+                if thought:
+                    print(f"[{idx:>4}]     think: {thought}", flush=True)
+
             for r in range(rounds):
                 rr = run_react_loop(
                     state=state, client=client, series_card=series_card,
                     pool_card=pool_card, config=round_cfg, gate_verdict=verdict,
+                    on_step=_on_step,
                 )
                 react_results.append(rr.summary())
                 scored = gate_pass(state, series_card, pool_card)
@@ -180,6 +205,13 @@ def run_dataset(
                     f"stop={rr.stop_reason} | histórico={len(state.attempts)}",
                     flush=True,
                 )
+                top = sorted(scored, key=lambda s: -s["p_mean"])[:4]
+                for s in top:
+                    print(
+                        f"[{idx:>4}]     GATE {s['id']:<4} {s['strategy'][:38]:<38} "
+                        f"P={s['p_windows']} mean={s['p_mean']} ({s['origin']})",
+                        flush=True,
+                    )
 
             # ── final: argmax P do gate (ou argmin se sem gate) ─────────────
             final_origin = "gate"
@@ -192,9 +224,22 @@ def run_dataset(
             if final_spec is None:
                 final_spec = state.best_attempt().spec
                 final_origin = "argmin"
+            argmin_g = min(scored, key=lambda s: s["score_val"])
             forecast, _ = state.apply_to_test(final_spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
+
+            print(
+                f"[{idx:>4}] ESCOLHA DO GATE: {best_g['id']} {best_g['strategy'][:38]} "
+                f"(P={best_g['p_mean']}, windows {best_g['p_windows']}, origin={best_g['origin']})",
+                flush=True,
+            )
+            print(
+                f"[{idx:>4}]   argmin seria : {argmin_g['id']} {argmin_g['strategy'][:38]} "
+                f"(score {argmin_g['score_val']:.4f})"
+                f"{'  <- gate discorda do argmin' if argmin_g['id'] != best_g['id'] else ''}",
+                flush=True,
+            )
 
             rows.append({
                 "dataset_index": str(idx), "horizon": ing.horizon, "regressor": experiment,
@@ -219,7 +264,7 @@ def run_dataset(
                 floor_rows.append(floor)
             ok += 1
             print(
-                f"[{idx:>4}] final={final_spec['combine']:<14} origin={final_origin:<14} "
+                f"[{idx:>4}] RESULTADO    {final_spec['combine']:<14} origin={final_origin:<14} "
                 f"| TEST smape={metrics['smape']:.4f} | FLOOR smape={floor['smape'] if floor else float('nan'):.4f}"
             )
             ext = I.read_external_baselines(dataset, idx, results_dir=results_dir)
