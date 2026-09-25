@@ -671,6 +671,19 @@ def run_laya_loop(
                 result.step_details.append(step)
                 break
             if kind == "accept":
+                if not state.attempts:
+                    # composição degenerada: nada a aceitar ainda — conta como
+                    # turno sem informação e continua
+                    result.errors.append(
+                        f"iteration {iteration}: composed 'accept' with empty history"
+                    )
+                    stale += 1
+                    step["executed"] = "accept ignored (empty history)"
+                    result.step_details.append(step)
+                    if stale >= patience:
+                        result.stop_reason = f"no new information in {stale} consecutive turns"
+                        break
+                    continue
                 result.stop_reason = "laya_accept"
                 step["executed"] = "accept (keep current best)"
                 step["state_after"] = _brief_history(state)
