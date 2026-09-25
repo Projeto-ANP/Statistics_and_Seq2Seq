@@ -69,6 +69,64 @@ class LogisticGate:
         return float(self.model.predict_proba(X)[0, 1])
 
 
+class LogisticGateW:
+    """Gate logístico POR JANELA: 3 modelos (label_val_w0/1/2), LOO por dataset.
+
+    Substitui o LAYA fine-tuned como gate do A2 (treino <1s, sem GPU). A nota
+    final é a média dos 3 P — o mesmo formato p_windows/p_mean do veredito.
+    """
+
+    def __init__(self, data_path: str, holdout: str, seed: int = 0) -> None:
+        rows: List[dict] = []
+        with open(data_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                if r.get("dataset") == holdout:
+                    continue
+                rows.append(r)
+        if not rows:
+            raise RuntimeError(
+                f"sem exemplos de treino para o holdout {holdout!r} em {data_path}"
+            )
+        self.models = []
+        self.n_train = []
+        for w in range(3):
+            X, y = [], []
+            for r in rows:
+                target = r.get(f"label_val_w{w}")
+                if target is None:
+                    continue
+                feats = {
+                    "score_val": r.get("score_val"),
+                    "rank": r.get("rank"),
+                    "margem_pct": r.get("margem_pct"),
+                    "n_attempts": r.get("n_attempts"),
+                    "tau": r.get("tau"),
+                    "n_models": r.get("n_models"),
+                    "origin_agent": 1.0 if r.get("origin") == "agent" else 0.0,
+                    "turn": r.get("turn", 0),
+                }
+                if any(v is None for v in feats.values()):
+                    continue
+                X.append([float(feats[f]) for f in FEATURES])
+                y.append(int(target))
+            if not X:
+                raise RuntimeError(f"sem exemplos para a janela {w} do holdout {holdout!r}")
+            m = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed)
+            m.fit(np.asarray(X), np.asarray(y))
+            self.models.append(m)
+            self.n_train.append(len(y))
+        self.holdout = holdout
+
+    def score(self, feats: Dict[str, float]):
+        X = np.asarray([[float(feats[f]) for f in FEATURES]], dtype=float)
+        pw = [float(m.predict_proba(X)[0, 1]) for m in self.models]
+        return pw, float(np.mean(pw))
+
+
 def candidate_features(state: Any, attempt: Any, pool_card: Dict[str, Any]) -> Dict[str, float]:
     """Features de um candidato do histórico — tudo só-validação, computável
     na inferência sem tocar no teste."""

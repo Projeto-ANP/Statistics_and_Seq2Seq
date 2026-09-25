@@ -64,6 +64,8 @@ def run_dataset(
     combinator_model: str = "gpt-oss:20b",
     reasoning: Optional[str] = "low",
     gate_checkpoint: Optional[str] = None,
+    gate_mode: str = "logistic",
+    gate_data: str = "JEV/data/gate_dataset.jsonl",
     rounds: int = 2,
     per_round: int = 4,
     dataset_card: bool = True,
@@ -94,6 +96,32 @@ def run_dataset(
     combinator.reasoning = reasoning
     client = build_client(combinator)
     gate_agent = LayaAgent(checkpoint=gate_checkpoint) if gate_checkpoint else None
+    gate_cache: Dict[str, Any] = {}
+    if gate_mode == "logistic":
+        from logistic_gate import LogisticGateW, candidate_features
+
+        def gate_pass(state, series_card, pool_card):
+            gate_w = gate_cache.setdefault(dataset, LogisticGateW(gate_data, holdout=dataset))
+            seen, scored = set(), []
+            for a in state.ranked_attempts():
+                key = json.dumps(a.spec, sort_keys=True, default=str)
+                if key in seen:
+                    continue
+                seen.add(key)
+                feats = candidate_features(state, a, pool_card)
+                pw, pm = gate_w.score(feats)
+                scored.append({
+                    "id": a.attempt_id, "spec": a.spec,
+                    "strategy": a.brief(include_rationale=False)["strategy"],
+                    "score_val": round(float(a.score), 6),
+                    "p_windows": [round(x, 3) for x in pw],
+                    "p_mean": round(pm, 3),
+                    "origin": a.origin,
+                })
+            return scored
+    else:
+        def gate_pass(state, series_card, pool_card):
+            return run_gate_pass_windows(state, gate_agent, series_card, pool_card)
 
     todo = indices if indices is not None else list(range(n_series))
     priors: Dict[int, Dict[str, float]] = {}
@@ -145,9 +173,8 @@ def run_dataset(
                     pool_card=pool_card, config=round_cfg, gate_verdict=verdict,
                 )
                 react_results.append(rr.summary())
-                if gate_agent is not None:
-                    scored = run_gate_pass_windows(state, gate_agent, series_card, pool_card)
-                    verdict = build_verdict(scored)
+                scored = gate_pass(state, series_card, pool_card)
+                verdict = build_verdict(scored)
                 print(
                     f"[{idx:>4}] rodada {r+1}: +iters={rr.iterations_used} "
                     f"stop={rr.stop_reason} | histórico={len(state.attempts)}",
@@ -157,12 +184,11 @@ def run_dataset(
             # ── final: argmax P do gate (ou argmin se sem gate) ─────────────
             final_origin = "gate"
             final_spec = None
-            if gate_agent is not None:
-                scored = run_gate_pass_windows(state, gate_agent, series_card, pool_card)
-                best_g = max(scored, key=lambda s: s["p_mean"])
-                final_spec = best_g["spec"]
-                if best_g["origin"] == "baseline":
-                    final_origin = "gate(baseline)"
+            scored = gate_pass(state, series_card, pool_card)
+            best_g = max(scored, key=lambda s: s["p_mean"])
+            final_spec = best_g["spec"]
+            if best_g["origin"] == "baseline":
+                final_origin = "gate(baseline)"
             if final_spec is None:
                 final_spec = state.best_attempt().spec
                 final_origin = "argmin"
@@ -247,6 +273,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--combinator", default="gpt-oss:20b")
     p.add_argument("--reasoning", default="low")
     p.add_argument("--gate-checkpoint", default=None)
+    p.add_argument("--gate-mode", choices=["logistic", "laya"], default="logistic",
+                   help="logistic = gate logístico por-janela (default, sem GPU); "
+                        "laya = checkpoint fine-tuned")
+    p.add_argument("--gate-data", default="JEV/data/gate_dataset.jsonl")
     p.add_argument("--rounds", type=int, default=2)
     p.add_argument("--per-round", type=int, default=4)
     p.add_argument("--no-dataset-card", action="store_true")
@@ -268,6 +298,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 combinator_model=args.combinator,
                 reasoning=None if args.reasoning == "None" else args.reasoning,
                 gate_checkpoint=args.gate_checkpoint,
+                gate_mode=args.gate_mode,
+                gate_data=args.gate_data,
                 rounds=args.rounds, per_round=args.per_round,
                 dataset_card=not args.no_dataset_card,
                 indices=args.indices,
