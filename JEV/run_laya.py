@@ -112,6 +112,8 @@ def run_dataset(
     menu: str = "flat",
     gate: bool = False,
     gate_checkpoint: Optional[str] = None,
+    logistic_gate: bool = False,
+    gate_data: str = "JEV/data/gate_dataset.jsonl",
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -148,6 +150,8 @@ def run_dataset(
         LayaAgent(checkpoint=gate_checkpoint, max_len=max_len)
         if gate and gate_checkpoint else agent
     )
+    #: Cache dos gates logísticos por dataset (um fit por dataset, <1s cada).
+    gate_cache: Dict[str, Any] = {}
 
     todo = indices if indices is not None else list(range(n_series))
 
@@ -229,6 +233,37 @@ def run_dataset(
                     if match is not None and match is not attempt:
                         attempt = match
                         final_origin = "gate"
+            elif logistic_gate:
+                # H3 com regressão logística (LOO por dataset, treino <1s)
+                from logistic_gate import LogisticGate, candidate_features
+
+                gate_model = gate_cache.setdefault(
+                    dataset, LogisticGate(gate_data, holdout=dataset)
+                )
+                seen, scored_lg = set(), []
+                for a in state.ranked_attempts():
+                    key = json.dumps(a.spec, sort_keys=True, default=str)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    feats = candidate_features(state, a, pool_card)
+                    p = gate_model.score(feats)
+                    scored_lg.append({
+                        "id": a.attempt_id, "spec": a.spec,
+                        "score_val": round(float(a.score), 6),
+                        "p_best": round(p, 4), "origin": a.origin,
+                    })
+                gate_scores = scored_lg
+                best_g = max(scored_lg, key=lambda s: s["p_best"])
+                key = json.dumps(best_g["spec"], sort_keys=True, default=str)
+                match = next(
+                    (a for a in state.attempts
+                     if json.dumps(a.spec, sort_keys=True, default=str) == key),
+                    None,
+                )
+                if match is not None and match is not attempt:
+                    attempt = match
+                    final_origin = "gate_logistic"
             forecast, _ = state.apply_to_test(attempt.spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
@@ -392,6 +427,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--gate-checkpoint", default=None,
                    help="checkpoint do gate (default: o mesmo do explorador; "
                         "use o fine-tuned quando terminar o treino)")
+    p.add_argument("--logistic-gate", action="store_true",
+                   help="H3 com gate de REGRESSÃO LOGÍSTICA (LOO, treino <1s)")
+    p.add_argument("--gate-data", default="JEV/data/gate_dataset.jsonl",
+                   help="dataset de treino do gate logístico")
     p.add_argument("--no-dataset-card", action="store_true",
                    help="não montar o DATASET CARD (prior cross-series LOO)")
     p.add_argument("--no-seeds", action="store_true",
@@ -424,6 +463,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 menu=args.menu,
                 gate=args.gate,
                 gate_checkpoint=args.gate_checkpoint,
+                logistic_gate=args.logistic_gate,
+                gate_data=args.gate_data,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,
