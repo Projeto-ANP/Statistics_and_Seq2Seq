@@ -29,13 +29,27 @@ sys.path.insert(0, _ROOT)
 os.chdir(_ROOT)
 
 QUESTION = {
-    "transfer": {
-        "type": "noul",
-        "instructions": (
-            "Will this candidate strategy beat the best seeded baseline on the "
-            "blind test window? Answer yes only if you expect it to be strictly better."
-        ),
-    }
+    "label": {
+        "transfer": {
+            "type": "noul",
+            "instructions": (
+                "Will this candidate strategy beat every reference combination (FFORMA, "
+                "ADE, and the seeded baselines) on the blind test window? Answer yes "
+                "only if you expect it to be strictly better than all of them."
+            ),
+        }
+    },
+    "label_dyn": {
+        "transfer": {
+            "type": "noul",
+            "instructions": (
+                "Is this candidate strategy the best available strategy for this "
+                "series — better than every individual model, every combination "
+                "(mean, median, dba, trimmed, weighted) and every seeded baseline? "
+                "Answer yes only if you expect it to be strictly the best."
+            ),
+        }
+    },
 }
 
 
@@ -45,6 +59,10 @@ def main() -> int:
     ap.add_argument("--data", default="JEV/data/gate_dataset.jsonl")
     ap.add_argument("--holdout", required=True)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--target", choices=["label", "label_dyn"], default="label",
+                    help="label = gate vs melhor referência (fallback = melhor ref); "
+                         "label_dyn = ranqueador dinâmico (escolhe o argmax de P "
+                         "entre TODOS os candidatos)")
     ap.add_argument("--sweep", type=str, default="0.3,0.4,0.5,0.6,0.7,0.8,0.9")
     args = ap.parse_args()
 
@@ -64,12 +82,12 @@ def main() -> int:
     ys, ps = [], []
     for r in rows:
         try:
-            out = agent.predict(r["state"], QUESTION)
+            out = agent.predict(r["state"], QUESTION[args.target])
             p = float(out["answers"]["transfer"].get("noul", 0.5))
         except Exception as exc:
             print(f"  [warn] {r['source']} série {r['series']}: {type(exc).__name__}: {exc}")
             p = 0.5
-        ys.append(int(r["label"]))
+        ys.append(int(r[args.target]))
         ps.append(p)
 
     ys = np.array(ys)
@@ -84,26 +102,48 @@ def main() -> int:
     df["p"] = ps
     df["smape_test"] = df["smape_test"].astype(float)
     df["floor_smape_test"] = df["floor_smape_test"].astype(float)
+    df["ref_best_smape"] = df["ref_best_smape"].astype(float)
     proposals = df[df.origin == "agent"]
 
-    floor_mean = df.drop_duplicates(subset=["series"])["floor_smape_test"].mean()
+    per_series = df.drop_duplicates(subset=["series"])
+    ref_mean = per_series["ref_best_smape"].mean()
+    floor_mean = per_series["floor_smape_test"].mean()
     print(f"\npiso das sementes (oráculo, este dataset): {floor_mean:.4f}")
-    print(f"{'tau':>5} {'séries c/ troca':>14} {'sMAPE final':>11} {'vs piso':>9}")
+    print(f"melhor referência (piso ou FFORMA/ADE/etc): {ref_mean:.4f}")
+
+    if args.target == "label_dyn":
+        # ranqueador dinâmico: por série, escolhe o candidato de MAIOR P entre
+        # TODOS os candidatos do universo (sementes + individuais + propostas)
+        finals, universe_best = [], []
+        for series, g in df.groupby("series"):
+            best = g.loc[g.p.idxmax()]
+            finals.append(float(best["smape_test"]))
+            universe_best.append(float(g["universe_best_smape"].iloc[0]))
+        print(f"\nRANQUEADOR DINÂMICO (argmax de P sobre todos os candidatos):")
+        print(f"  sMAPE final      : {np.mean(finals):.4f}")
+        print(f"  oráculo universo : {np.mean(universe_best):.4f} "
+              f"(o que seria possível acertando sempre)")
+        print(f"  melhor referência: {ref_mean:.4f}")
+        print(f"  vs melhor ref    : {np.mean(finals) - ref_mean:+.4f}")
+        print(f"  vs oráculo       : {np.mean(finals) - np.mean(universe_best):+.4f}")
+        return 0
+
+    print(f"{'tau':>5} {'séries c/ troca':>14} {'sMAPE final':>11} {'vs melhor ref':>14}")
     for tau in [float(t) for t in args.sweep.split(",")]:
         finals = []
         n_swap = 0
         for series, g in proposals.groupby("series"):
-            floor = df[(df.series == series)].iloc[0]["floor_smape_test"]
+            fallback = df[(df.series == series)].iloc[0]["ref_best_smape"]
             above = g[g.p > tau]
             if len(above) == 0:
-                finals.append(floor)
+                finals.append(float(fallback))
             else:
                 # escolhe pela MAIOR P (não pelo desfecho)
                 best = above.loc[above.p.idxmax()]
                 finals.append(float(best["smape_test"]))
                 n_swap += 1
         mean_s = float(np.mean(finals))
-        print(f"{tau:>5.2f} {n_swap:>14} {mean_s:>11.4f} {mean_s - floor_mean:>+9.4f}")
+        print(f"{tau:>5.2f} {n_swap:>14} {mean_s:>11.4f} {mean_s - ref_mean:>+14.4f}")
     return 0
 
 

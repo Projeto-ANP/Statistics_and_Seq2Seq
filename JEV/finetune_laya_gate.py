@@ -27,12 +27,22 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 os.chdir(_ROOT)
 
-INSTRUCTIONS = (
-    "Will this candidate strategy beat the best seeded baseline on the blind "
-    "test window? Answer yes only if you expect it to be strictly better."
-)
+TARGET_INSTRUCTIONS = {
+    "label": (
+        "Will this candidate strategy beat every reference combination (FFORMA, ADE, "
+        "and the seeded baselines) on the blind test window? Answer yes only if you "
+        "expect it to be strictly better than all of them."
+    ),
+    "label_dyn": (
+        "Is this candidate strategy the best available strategy for this series — "
+        "better than every individual model, every combination (mean, median, dba, "
+        "trimmed, weighted) and every seeded baseline? Answer yes only if you expect "
+        "it to be strictly the best."
+    ),
+}
 
-Q_SPEC = {"t": "noul", "ins": INSTRUCTIONS, "crit": {}}
+def make_q_spec(target: str) -> dict:
+    return {"t": "noul", "ins": TARGET_INSTRUCTIONS[target], "crit": {}}
 
 EPOCHS = 4
 MICRO_BATCH = 8
@@ -90,10 +100,11 @@ def fit_one_temp(sel):
     return float(torch.clamp(log_t.exp(), 0.1, 10.0).item())
 
 
-def build_items(data_path: str, holdout: str, tok, cfg):
+def build_items(data_path: str, holdout: str, tok, cfg, target: str):
     """Cada exemplo vira um item de treino: ids + markers + target suavizado."""
     from laya.common import build_sequence, render_options, QTYPES
 
+    q_spec = make_q_spec(target)
     items = []
     skipped = 0
     with open(data_path, encoding="utf-8") as fh:
@@ -104,19 +115,19 @@ def build_items(data_path: str, holdout: str, tok, cfg):
             row = json.loads(line)
             if row["dataset"] == holdout:
                 continue
-            p_true = 0.9 if int(row["label"]) == 1 else 0.1
-            target = [1.0 - p_true, p_true]
+            p_true = 0.9 if int(row[target]) == 1 else 0.1
+            target_vec = [1.0 - p_true, p_true]
             label = 1 if p_true > 0.5 else 0
-            k = len(render_options(Q_SPEC))
+            k = len(render_options(q_spec))
             seq, markers = build_sequence(
-                tok, row["state"], Q_SPEC, cfg["max_len"], cfg["head_max_len"]
+                tok, row["state"], q_spec, cfg["max_len"], cfg["head_max_len"]
             )
             if len(markers) != k or not seq:
                 skipped += 1
                 continue
             items.append({
                 "ids": seq, "markers": markers,
-                "qtype": QTYPES["noul"], "target": target, "label": label,
+                "qtype": QTYPES["noul"], "target": target_vec, "label": label,
             })
     print(f"itens de treino: {len(items)} (pulados: {skipped})")
     return items
@@ -126,6 +137,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="JEV/data/gate_dataset.jsonl")
     ap.add_argument("--holdout", required=True, help="dataset deixado de fora (LOO)")
+    ap.add_argument("--target", choices=["label", "label_dyn"], default="label",
+                    help="label = bate a melhor referência; label_dyn = é o "
+                         "melhor do universo (ranqueador dinâmico)")
     ap.add_argument("--base-model", default="convaiinnovations/laya")
     ap.add_argument("--output", default=None)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
@@ -134,7 +148,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     if args.output is None:
-        args.output = f"JEV/models/laya_gate_{args.holdout.lower()}"
+        tgt = "dyn" if args.target == "label_dyn" else "ref"
+        args.output = f"JEV/models/laya_gate_{args.holdout.lower()}_{tgt}"
 
     from huggingface_hub import snapshot_download
     from safetensors.torch import load_file, save_file
@@ -170,7 +185,7 @@ def main() -> int:
     model.to(device)
     model.train()
 
-    all_items = build_items(args.data, args.holdout, tok, cfg)
+    all_items = build_items(args.data, args.holdout, tok, cfg, args.target)
     if len(all_items) < 50:
         print("poucos itens de treino (<50) — verifique o --holdout e o dataset")
         return 2

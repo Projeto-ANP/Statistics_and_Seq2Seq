@@ -48,13 +48,17 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--only-agents", action="store_true",
                     help="avaliar só propostas de origem agent (sem as sementes)")
+    ap.add_argument("--target", choices=["label", "label_seed", "label_dyn"], default="label",
+                    help="label = bate a MELHOR referência (FFORMA/ADE/piso); "
+                         "label_seed = bate só o piso; label_dyn = é o MELHOR "
+                         "candidato do universo da série (ranqueador dinâmico)")
     args = ap.parse_args()
 
     df = load(args.data)
     if args.only_agents:
         df = df[df.origin == "agent"]
-    print(f"exemplos: {len(df)} | label=1: {df.label.mean():.3f} "
-          f"(taxa base de transferência)")
+    df["label"] = df[args.target]
+    print(f"alvo: {args.target} | exemplos: {len(df)} | label=1: {df.label.mean():.3f}")
 
     datasets = sorted(df.dataset.unique())
     print(f"\n{'fold (avaliado)':<22} {'n':>5} {'AUC':>7} {'Brier':>7} {'taxa base':>10}")

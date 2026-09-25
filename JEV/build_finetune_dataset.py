@@ -132,8 +132,15 @@ class Emitter:
 def make_example(
     source: str, dataset: str, idx: int, st, series_card, pool_card,
     spec: dict, attempt, floor: float, ing, turn: int, origin: str,
+    ref_best: float, ref_winner: str, references: dict,
 ) -> dict:
-    """Uma linha do dataset. `st` é o estado NO MOMENTO da avaliação."""
+    """Uma linha do dataset. `st` é o estado NO MOMENTO da avaliação.
+
+    Dois rótulos:
+    - `label`     : 1 se bate a MELHOR referência (piso ou FFORMA/ADE/mean/
+                    median/dba) — a meta real do trabalho.
+    - `label_seed`: 1 se bate só o piso das sementes (ablação).
+    """
     try:
         fc, _ = st.apply_to_test(spec)
         ts = smape(fc, ing.test_values)
@@ -155,7 +162,114 @@ def make_example(
         "spec": spec,
         "score_val": round(float(attempt.score), 6) if np.isfinite(attempt.score) else None,
         "smape_test": round(ts, 6), "floor_smape_test": round(floor, 6),
-        "label": int(ts < floor),
+        "label": int(ts < ref_best),
+        "label_seed": int(ts < floor),
+        "ref_best_smape": round(ref_best, 6),
+        "ref_winner": ref_winner,
+        "references": {k: round(v, 6) for k, v in references.items()},
+        "origin": origin, "turn": int(turn),
+        "rank": rank, "margem_pct": margem, "n_attempts": len(st.attempts),
+        "tau": round(float(tau), 4) if tau is not None else None,
+        "n_models": n_models,
+    }
+
+
+def series_references(dataset: str, idx: int, floor: float) -> tuple:
+    """Melhor referência por série = min(piso, FFORMA, ADE, mean, median, dba)."""
+    refs = {"seed_floor": floor}
+    try:
+        ext = I.read_external_baselines(dataset, idx, results_dir=BASE)
+        for name, stats in ext.items():
+            if isinstance(stats, dict) and stats.get("available") and stats.get("smape") is not None:
+                refs[name] = float(stats["smape"])
+    except Exception:
+        pass
+    winner = min(refs, key=lambda k: refs[k])
+    return refs[winner], winner, refs
+
+
+def _spec_key(spec: dict) -> str:
+    return json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def evaluate_universe(st, ing) -> dict:
+    """Universo de candidatos da série: tudo que o pipeline sabe produzir.
+
+    = sementes (mean/median/dba/trimmed/estáveis, já no histórico) + best_single
+    de CADA modelo do pool + median/mean/dba do pool completo (se faltar).
+    Devolve {spec_key: test_smape} para TODOS os candidatos (determinístico).
+    """
+    out: dict = {}
+    for a in st.attempts:
+        key = _spec_key(a.spec)
+        if key not in out:
+            fc, _ = st.apply_to_test(a.spec)
+            out[key] = smape(fc, ing.test_values)
+    for name in st.model_names:
+        spec = {"combine": "best_single", "model": name}
+        key = _spec_key(spec)
+        if key not in out:
+            try:
+                fc, _ = st.apply_to_test(spec)
+                out[key] = smape(fc, ing.test_values)
+            except Exception:
+                pass
+    for method in ("mean", "median", "dba"):
+        spec = {"combine": method, "pool": FULL_POOL}
+        key = _spec_key(spec)
+        if key not in out:
+            try:
+                fc, _ = st.apply_to_test(spec)
+                out[key] = smape(fc, ing.test_values)
+            except Exception:
+                pass
+    return out
+
+
+def make_example(
+    source: str, dataset: str, idx: int, st, series_card, pool_card,
+    spec: dict, attempt, floor: float, ing, turn: int, origin: str,
+    ref_best: float, ref_winner: str, references: dict, universe: dict,
+) -> dict:
+    """Uma linha do dataset. `st` é o estado NO MOMENTO da avaliação.
+
+    Três rótulos:
+    - `label`     : 1 se bate a MELHOR referência (piso ou FFORMA/ADE/mean/
+                    median/dba) — a meta real do trabalho.
+    - `label_seed`: 1 se bate só o piso das sementes (ablação).
+    - `label_dyn` : 1 se é O MELHOR candidato do universo da série (ranqueador
+                    dinâmico — nenhuma referência nomeada).
+    """
+    try:
+        fc, _ = st.apply_to_test(spec)
+        ts = smape(fc, ing.test_values)
+    except Exception:
+        return None
+    ranked = st.ranked_attempts()
+    rank = ranked.index(attempt) + 1 if attempt in ranked else None
+    best = st.best_attempt()
+    margem = None
+    if best is not None and best is not attempt and np.isfinite(best.score):
+        margem = round(float((attempt.score - best.score) / (abs(best.score) or 1.0)), 6)
+    n_models = 1 if spec.get("combine") == "best_single" else len(st.get_pool(spec.get("pool") or FULL_POOL))
+    tau = (pool_card.get("ranking_stability") or {}).get("mean_kendall_tau")
+    state_text = build_state_text(series_card, pool_card, st, budget=8000)
+    state_text += "\nCANDIDATE STRATEGY: " + json.dumps(spec, sort_keys=True, default=str)
+    best_universe = min(universe.values()) if universe else float("inf")
+    return {
+        "source": source, "dataset": dataset, "series": int(idx),
+        "state": state_text,
+        "spec": spec,
+        "score_val": round(float(attempt.score), 6) if np.isfinite(attempt.score) else None,
+        "smape_test": round(ts, 6), "floor_smape_test": round(floor, 6),
+        "label": int(ts < ref_best),
+        "label_seed": int(ts < floor),
+        "label_dyn": int(ts <= best_universe + 1e-9),
+        "universe_best_smape": round(best_universe, 6),
+        "universe_size": len(universe),
+        "ref_best_smape": round(ref_best, 6),
+        "ref_winner": ref_winner,
+        "references": {k: round(v, 6) for k, v in references.items()},
         "origin": origin, "turn": int(turn),
         "rank": rank, "margem_pct": margem, "n_attempts": len(st.attempts),
         "tau": round(float(tau), 4) if tau is not None else None,
@@ -233,11 +347,19 @@ def main() -> int:
                     print(f"  [warn] {dataset}#{idx}: {type(exc).__name__}: {exc}")
                     continue
 
+                ref_best, ref_winner, references = series_references(dataset, idx, floor)
+                # universo estático: sementes + best_single de CADA modelo +
+                # mean/median/dba do pool completo (calculado antes de qualquer
+                # replay; não depende do agente)
+                universe = evaluate_universe(st, ing)
+
                 if emitter.include_seeds and not no_seeds:
                     for a in seeds:
                         row = make_example(
                             run, dataset, idx, st, series_card, pool_card,
                             a.spec, a, floor, ing, turn=0, origin="baseline",
+                            ref_best=ref_best, ref_winner=ref_winner,
+                            references=references, universe=universe,
                         )
                         if row:
                             emitter.emit(row, (dataset, idx, json.dumps(a.spec, sort_keys=True), "seed"))
@@ -264,6 +386,8 @@ def main() -> int:
                             run, dataset, idx, st, series_card, pool_card,
                             attempt.spec, attempt, floor, ing,
                             turn=int(entry.get("iteration", 0)), origin="agent",
+                            ref_best=ref_best, ref_winner=ref_winner,
+                            references=references, universe=universe,
                         )
                         if row:
                             emitter.emit(row, (run, dataset, idx, json.dumps(attempt.spec, sort_keys=True), entry.get("iteration")))
@@ -297,6 +421,8 @@ def main() -> int:
                             run, dataset, idx, st, series_card, pool_card,
                             attempt.spec, attempt, floor, ing,
                             turn=int(entry.get("iteration", 0)), origin="agent",
+                            ref_best=ref_best, ref_winner=ref_winner,
+                            references=references, universe=universe,
                         )
                         if row:
                             emitter.emit(row, (run, dataset, idx, json.dumps(attempt.spec, sort_keys=True), entry.get("iteration")))
