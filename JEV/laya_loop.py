@@ -639,8 +639,11 @@ def run_laya_loop(
             pred2_s = 0.0
             if pred_error is None and move in ("combine", "single", "build"):
                 t_pred2 = time.perf_counter()
+                # combine já é um dicionário de perguntas; single/build são uma
+                # pergunta só e precisam ser embrulhadas {nome: pergunta}
+                follow_q = qs[move] if move == "combine" else {move: qs[move]}
                 try:
-                    out2 = agent.predict(stext, qs[move])
+                    out2 = agent.predict(stext, follow_q)
                     answers.update(out2["answers"] or {})
                 except Exception as exc:
                     result.errors.append(
