@@ -620,6 +620,26 @@ def exec_dataset_orchestrator(
     log(f"done in {elapsed:.1f}s | ok: {ok} | failed: {failed}")
 
     summary_metrics = _summarise(per_series)
+
+    # Piso das sementes (braço determinístico, use_llm=False) computado DOS
+    # MESMOS outcomes deste run: por série, a melhor tentativa de origem
+    # "baseline" aplicada ao teste. Não refaz nenhuma chamada ao LLM — as
+    # sementes já foram avaliadas na Fase 2 de cada série.
+    floor_rows: List[Dict[str, float]] = []
+    for o in outcomes:
+        if not (o.success and o.state is not None):
+            continue
+        seeds = [a for a in o.state.attempts if getattr(a, "origin", "") == "baseline"]
+        if not seeds:
+            continue
+        best_seed = min(seeds, key=lambda a: a.score if a.score == a.score else float("inf"))
+        try:
+            fc, _ = o.state.apply_to_test(best_seed.spec)
+            floor_rows.append(compute_metrics(fc, o.test_values))
+        except Exception:
+            continue
+    floor_metrics = _summarise(floor_rows)
+
     if summary_metrics:
         log("")
         log(f"DATASET SUMMARY over {len(per_series)} series (mean across series):")
@@ -630,6 +650,21 @@ def exec_dataset_orchestrator(
             f"  mape={summary_metrics['mape']:.4f}"
             f"  mae={summary_metrics['mae']:.4f}"
         )
+        if floor_metrics:
+            delta = summary_metrics["rmse"] - floor_metrics["rmse"]
+            if abs(delta) < 1e-12:
+                note = "  (== seed floor: no agent contribution this run)"
+            elif delta < 0:
+                note = "  <- this run is better"
+            else:
+                note = "  <- this run is WORSE than the seed floor"
+            log(
+                f"  baseline   smape={floor_metrics['smape']:.4f}"
+                f"  rmse={floor_metrics['rmse']:.4f}"
+                f"  pocid={floor_metrics['pocid']:.2f}"
+                f"  mape={floor_metrics['mape']:.4f}"
+                f"  mae={floor_metrics['mae']:.4f}{note}"
+            )
         for name, stats in _external_summary(outcomes).items():
             better = "  <- this run is better" if stats["rmse"] > summary_metrics["rmse"] else ""
             log(
@@ -673,6 +708,7 @@ def exec_dataset_orchestrator(
         "csv_path": writer.csv_path if writer else None,
         "artifacts_dir": writer.artifacts_dir if (writer and save_artifacts) else None,
         "elapsed_s": elapsed,
+        "baseline_metrics": floor_metrics,
         "columns": COLS_SERIE,
         "outcomes": outcomes,
     }
