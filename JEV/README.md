@@ -104,6 +104,38 @@ loop — o `laya_loop.LayaAgent` já aceita caminho local:
 `run_laya.py --checkpoint ./JEV/models/laya_nn5_finetuned` (o `laya.load` aceita
 diretório local com `model.safetensors` + `rl_agent_config.json`).
 
+## Auditoria: o que difere entre o run LAYA e o run padrão (gpt-oss)
+
+A troca LLM→classificador NÃO é 100% limpa. O contrato de avaliação é o mesmo;
+4 adaptações foram necessárias (e precisam ser reportadas no paper):
+
+**IDÊNTICO (sem adaptação):**
+- Fase 0 (ingestão), Fase 2 (sementes mean/median/dba + pools estáveis — MESMOS
+  valores), Fase 4 (aplicação à janela de teste);
+- Contrato de avaliação: `state.evaluate` com backtest ANINHADO nas 3 janelas +
+  princípio 5 (aplicada = melhor do histórico);
+- Orçamento: 12 iterações; métricas; baseline dos logs;
+- Cartões mostrados ao tomador de decisão: `_slim_series_card` /
+  `_slim_pool_card` / `attempt.brief` — as MESMAS funções do prompt do LLM.
+
+**ADAPTADO (porque o classificador não gera texto):**
+
+| aspecto | run padrão (gpt-oss) | run LAYA |
+|---|---|---|
+| espaço de ação | 24 ferramentas, argumentos livres gerados | MENU fixo de ~13-16 ações concretas (mean/median/trimmed × 4 pools + best_single top-3 + accept); argumentos definidos pelo menu |
+| ferramentas de pesos | inverse_error, softmax, trend, ols, feature_based, pooled | NENHUMA no menu v0 |
+| semente pooled meta-model | semeada quando ≥20 séries | NÃO anexada → semente ausente (piso difere levemente em NN5: 0.1156 vs 0.1157) |
+| contexto cross-series | DATASET CARD (prior LOO) + diagnosis + lista de handles + scratchpad no prompt | ausentes do estado do classificador (só cards + histórico top-6) |
+| formato do prompt | system prompt (papel + catálogo + regras) + turn prompt | estado compacto/rico + pergunta com critérios por opção |
+| saída | CSV de 58 colunas + artifacts JSON | CSV enxuto (13 core + poucas colunas) |
+| early-stop | patience de propostas sem melhora | stale-stop de escolhas repetidas |
+
+**Consequência para o paper**: dizer "só trocamos o tomador de decisão" seria
+impreciso. O honesto é: "mesmo protocolo de avaliação; o classificador decide
+sobre um menu enumerado de estratégias, sem as ferramentas de pesos e sem o
+contexto cross-series do agente LLM". Se quisermos a troca LIMPA, falta: adicionar
+o DATASET CARD + handles + semente pooled ao run LAYA (paridade total de contexto).
+
 ## O que está implementado
 
 | arquivo | o que faz | onde roda |

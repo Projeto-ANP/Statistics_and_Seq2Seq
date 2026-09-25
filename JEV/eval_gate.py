@@ -50,6 +50,26 @@ QUESTION = {
             ),
         }
     },
+    "label_val": {
+        "transfer": {
+            "type": "noul",
+            "instructions": (
+                "Is this candidate strategy the best available strategy for this "
+                "series on the validation windows (nested leave-one-out)? Answer "
+                "yes only if you expect it to be strictly the best on validation."
+            ),
+        }
+    },
+    "label_val_seed": {
+        "transfer": {
+            "type": "noul",
+            "instructions": (
+                "Will this candidate strategy beat every seeded baseline on the "
+                "validation windows (nested leave-one-out)? Answer yes only if you "
+                "expect it to be strictly better than all of them on validation."
+            ),
+        }
+    },
 }
 
 
@@ -59,10 +79,11 @@ def main() -> int:
     ap.add_argument("--data", default="JEV/data/gate_dataset.jsonl")
     ap.add_argument("--holdout", required=True)
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--target", choices=["label", "label_dyn"], default="label",
-                    help="label = gate vs melhor referência (fallback = melhor ref); "
-                         "label_dyn = ranqueador dinâmico (escolhe o argmax de P "
-                         "entre TODOS os candidatos)")
+    ap.add_argument("--target", choices=["label", "label_dyn", "label_val",
+                                          "label_val_seed", "label_val_w"],
+                    default="label_val_w",
+                    help="label_val/label_val_seed/label_val_w = alvos SÓ de "
+                         "validação; label/label_dyn = teste (só análise)")
     ap.add_argument("--sweep", type=str, default="0.3,0.4,0.5,0.6,0.7,0.8,0.9")
     args = ap.parse_args()
 
@@ -82,8 +103,26 @@ def main() -> int:
     ys, ps = [], []
     for r in rows:
         try:
-            out = agent.predict(r["state"], QUESTION[args.target])
-            p = float(out["answers"]["transfer"].get("noul", 0.5))
+            if args.target == "label_val_w":
+                pw = []
+                for w in range(3):
+                    q = {
+                        "transfer": {
+                            "type": "noul",
+                            "instructions": (
+                                f"Will this candidate strategy be the winner of "
+                                f"validation window {w + 1} of 3, scored leave-one-out "
+                                f"(everything else fitted on the other two windows)? "
+                                f"Answer yes only if you expect it to win that window."
+                            ),
+                        }
+                    }
+                    out = agent.predict(r["state"], q)
+                    pw.append(float(out["answers"]["transfer"].get("noul", 0.5)))
+                p = float(np.mean(pw))
+            else:
+                out = agent.predict(r["state"], QUESTION[args.target])
+                p = float(out["answers"]["transfer"].get("noul", 0.5))
         except Exception as exc:
             print(f"  [warn] {r['source']} série {r['series']}: {type(exc).__name__}: {exc}")
             p = 0.5
@@ -111,7 +150,7 @@ def main() -> int:
     print(f"\npiso das sementes (oráculo, este dataset): {floor_mean:.4f}")
     print(f"melhor referência (piso ou FFORMA/ADE/etc): {ref_mean:.4f}")
 
-    if args.target == "label_dyn":
+    if args.target in ("label_dyn", "label_val", "label_val_w"):
         # ranqueador dinâmico: por série, escolhe o candidato de MAIOR P entre
         # TODOS os candidatos do universo (sementes + individuais + propostas)
         finals, universe_best = [], []
@@ -126,6 +165,24 @@ def main() -> int:
         print(f"  melhor referência: {ref_mean:.4f}")
         print(f"  vs melhor ref    : {np.mean(finals) - ref_mean:+.4f}")
         print(f"  vs oráculo       : {np.mean(finals) - np.mean(universe_best):+.4f}")
+        return 0
+
+    if args.target == "label_val_seed":
+        # gate treinado só em validação: troca a semente se P > tau
+        print(f"{'tau':>5} {'séries c/ troca':>14} {'sMAPE final':>11} {'vs piso':>9}")
+        for tau in [float(t) for t in args.sweep.split(",")]:
+            finals, n_swap = [], 0
+            for series, g in proposals.groupby("series"):
+                floor = df[(df.series == series)].iloc[0]["floor_smape_test"]
+                above = g[g.p > tau]
+                if len(above) == 0:
+                    finals.append(float(floor))
+                else:
+                    best = above.loc[above.p.idxmax()]
+                    finals.append(float(best["smape_test"]))
+                    n_swap += 1
+            mean_s = float(np.mean(finals))
+            print(f"{tau:>5.2f} {n_swap:>14} {mean_s:>11.4f} {mean_s - floor_mean:>+9.4f}")
         return 0
 
     print(f"{'tau':>5} {'séries c/ troca':>14} {'sMAPE final':>11} {'vs melhor ref':>14}")

@@ -27,6 +27,12 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 FEATURES = ["score_val", "rank", "margem_pct", "n_attempts", "tau", "n_models",
             "origin_agent", "turn"]
 
+#: Para alvos de VALIDAÇÃO o score/rank/margem carregam o rótulo na própria
+#: feature (seria trapaça medir AUC com eles). O modelo real (LAYA texto) vê o
+#: histórico com scores no estado — a questão honesta é se ele generaliza além
+#: do argmin; o baseline tabular é medido SEM essas colunas.
+VAL_FEATURES = ["n_attempts", "tau", "n_models", "origin_agent", "turn"]
+
 
 def load(data_path: str) -> pd.DataFrame:
     rows = []
@@ -48,17 +54,23 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--only-agents", action="store_true",
                     help="avaliar só propostas de origem agent (sem as sementes)")
-    ap.add_argument("--target", choices=["label", "label_seed", "label_dyn"], default="label",
-                    help="label = bate a MELHOR referência (FFORMA/ADE/piso); "
-                         "label_seed = bate só o piso; label_dyn = é o MELHOR "
-                         "candidato do universo da série (ranqueador dinâmico)")
+    ap.add_argument("--target", choices=["label", "label_seed", "label_dyn",
+                                          "label_val", "label_val_seed",
+                                          "label_val_w"],
+                    default="label_val_w",
+                    help="label/label_seed/label_dyn = alvos de teste (só análise); "
+                         "label_val = melhor do universo na VALIDAÇÃO; "
+                         "label_val_seed = vence as sementes na VALIDAÇÃO; "
+                         "label_val_w = vence a MAIORIA das 3 janelas LOO (treino)")
     args = ap.parse_args()
 
     df = load(args.data)
     if args.only_agents:
         df = df[df.origin == "agent"]
     df["label"] = df[args.target]
-    print(f"alvo: {args.target} | exemplos: {len(df)} | label=1: {df.label.mean():.3f}")
+    feats = VAL_FEATURES if args.target.startswith("label_val") else FEATURES
+    print(f"alvo: {args.target} | features: {feats} | exemplos: {len(df)} "
+          f"| label=1: {df.label.mean():.3f}")
 
     datasets = sorted(df.dataset.unique())
     print(f"\n{'fold (avaliado)':<22} {'n':>5} {'AUC':>7} {'Brier':>7} {'taxa base':>10}")
@@ -69,9 +81,9 @@ def main() -> int:
         if len(te) < 20 or len(tr) < 50:
             print(f"{holdout:<22} {len(te):>5}  (poucos exemplos, pulado)")
             continue
-        X_tr = tr[FEATURES].fillna(0.0).values
+        X_tr = tr[feats].fillna(0.0).values
         y_tr = tr.label.values.astype(int)
-        X_te = te[FEATURES].fillna(0.0).values
+        X_te = te[feats].fillna(0.0).values
         y_te = te.label.values.astype(int)
         model = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=args.seed)
         model.fit(X_tr, y_tr)
@@ -93,9 +105,9 @@ def main() -> int:
     if datasets:
         tr = df[df.dataset != datasets[-1]]
         m = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=args.seed)
-        m.fit(tr[FEATURES].fillna(0.0).values, tr.label.values.astype(int))
+        m.fit(tr[feats].fillna(0.0).values, tr.label.values.astype(int))
         print("\ncoeficientes (último fold):")
-        for name, coef in sorted(zip(FEATURES, m.coef_[0]), key=lambda kv: -abs(kv[1])):
+        for name, coef in sorted(zip(feats, m.coef_[0]), key=lambda kv: -abs(kv[1])):
             print(f"  {name:<14} {coef:+.3f}")
     return 0
 
