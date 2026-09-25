@@ -103,6 +103,7 @@ def run_dataset(
     max_len: Optional[int] = None,
     max_iterations: int = 12,
     no_seeds: bool = False,
+    state_budget: int = 1400,
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -171,7 +172,7 @@ def run_dataset(
             pool_card = phase2["report"]
             loop = run_laya_loop(
                 state, agent, series_card, pool_card, max_iterations=max_iterations,
-                no_seeds=no_seeds,
+                no_seeds=no_seeds, state_budget=state_budget,
             )
             attempt = loop.final_attempt
             if attempt is None:
@@ -294,6 +295,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--max-len", type=int, default=None,
                    help="max_len do laya (english: 512; multilingual: até 8192)")
     p.add_argument("--max-iterations", type=int, default=12)
+    p.add_argument("--state-budget", type=int, default=1400,
+                   help="orçamento do estado do classificador em chars "
+                        "(english: ~1400; multilingual 8192: pode subir p/ ~8000)")
     p.add_argument("--no-seeds", action="store_true",
                    help="ablação: o agente parte de histórico VAZIO — sem as "
                         "sementes da Fase 2 (o menu ganha ações de construção de pool)")
@@ -318,6 +322,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 max_len=args.max_len,
                 max_iterations=args.max_iterations,
                 no_seeds=args.no_seeds,
+                state_budget=args.state_budget,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,
