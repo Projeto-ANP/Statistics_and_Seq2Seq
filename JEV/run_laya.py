@@ -109,6 +109,7 @@ def run_dataset(
     state_budget: int = 1400,
     option_format: str = "text",
     dataset_card: bool = True,
+    menu: str = "flat",
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -199,7 +200,7 @@ def run_dataset(
             loop = run_laya_loop(
                 state, agent, series_card, pool_card, max_iterations=max_iterations,
                 no_seeds=no_seeds, state_budget=state_budget, fmt=option_format,
-                dataset_card=card,
+                dataset_card=card, staged=(menu == "staged"),
             )
             attempt = loop.final_attempt
             if attempt is None:
@@ -357,6 +358,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--state-budget", type=int, default=1400,
                    help="orçamento do estado do classificador em chars "
                         "(english: ~1400; multilingual 8192: pode subir p/ ~8000)")
+    p.add_argument("--menu", choices=["flat", "staged"], default="flat",
+                   help="flat = menu plano de ~34 opções; staged = turno em "
+                        "etapas (movimento × grupo × método) numa chamada")
     p.add_argument("--no-dataset-card", action="store_true",
                    help="não montar o DATASET CARD (prior cross-series LOO)")
     p.add_argument("--no-seeds", action="store_true",
@@ -386,6 +390,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 state_budget=args.state_budget,
                 option_format=args.option_format,
                 dataset_card=not args.no_dataset_card,
+                menu=args.menu,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,
