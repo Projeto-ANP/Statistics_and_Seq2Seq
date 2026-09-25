@@ -539,6 +539,192 @@ def _compose_staged(
     return (kind, spec, f"{method}_{rname}")
 
 
+def _leader_kind(state: ReactState) -> str:
+    """Tipo da estratégia que lidera a validação agora (para a pergunta de
+    OBSERVAÇÃO)."""
+    leader = state.best_attempt()
+    if leader is None:
+        return "no_leader"
+    method = leader.spec.get("combine")
+    if method == "best_single":
+        return "single"
+    if method == "weighted":
+        return "weighted"
+    return "combination"
+
+
+_OBS_CRITERIA = {
+    "combination": "a robust combination over a group of models (mean/median/trimmed)",
+    "weighted": "a weighted combination",
+    "single": "one model alone",
+    "no_leader": "the history is empty - nothing scored yet",
+}
+
+#: (tipo do líder) -> decisões oferecidas, com o prior anti-single embutido.
+_DECISION_CRITERIA = {
+    "combination": {
+        "new_combination": "test a DIFFERENT combination (choose a group recipe and a method)",
+        "diversify_single": "test a single model as a different kind of bet",
+        "accept": "accept the leader",
+    },
+    "weighted": {
+        "new_combination": "test a different combination (choose a group recipe and a method)",
+        "diversify_single": "test a single model as a different kind of bet",
+        "accept": "accept the leader",
+    },
+    "single": {
+        "diversify_combination": (
+            "test a COMBINATION over a group to reduce the risk of a single model"
+        ),
+        "another_single": "test another single model",
+        "accept": "accept the leader",
+    },
+    "no_leader": {
+        "build": "build a group of models first (stable/top-k/pruned)",
+        "combine": "test a combination over a group of models",
+        "single": "test a single model",
+    },
+}
+
+_DECISION_INSTRUCTIONS = {
+    "combination": (
+        "The leader is a robust combination. Combinations over groups have "
+        "generally transferred better than single models in past series; prefer "
+        "them unless the history strongly suggests otherwise."
+    ),
+    "weighted": (
+        "The leader is a weighted combination. Combinations over groups have "
+        "generally transferred better than single models in past series; prefer "
+        "them unless the history strongly suggests otherwise."
+    ),
+    "single": (
+        "The leader is a single model. Single-model bets rarely transfer well; "
+        "consider testing a combination over a group instead, unless the single "
+        "model's evidence is overwhelming."
+    ),
+    "no_leader": (
+        "Nothing has been scored yet. Start by building a group or testing a "
+        "combination; combinations over groups generally transfer better than "
+        "single models."
+    ),
+}
+
+
+def build_reasoning_questions(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    no_seeds: bool = False,
+    fmt: str = "text",
+) -> Dict[str, Any]:
+    """Turno em 3 PASSOS (reasoning por construção):
+
+    1. q1 OBSERVAÇÃO: qual TIPO de estratégia lidera a validação agora?
+    2. q2 DECISÃO condicionada à observação (prior anti-single embutido)
+    3. q3 PARÂMETROS conforme a decisão (receita×método / modelo / construção)
+
+    Cada resposta é registrada na telemetria — a cadeia vira o "raciocínio".
+    """
+    recipes = _group_recipes(state)
+    ev = model_evidence(state, series_card)
+    top_single = sorted(ev, key=lambda n: ev[n]["rank"])[:5]
+    leader_kind = _leader_kind(state)
+
+    q1 = {
+        "type": "choice",
+        "instructions": (
+            "Read the current history. What KIND of strategy has the best "
+            "validation score right now?"
+        ),
+        "criteria": _OBS_CRITERIA,
+    }
+    q2 = {
+        "type": "choice",
+        "instructions": _DECISION_INSTRUCTIONS[leader_kind],
+        "criteria": _DECISION_CRITERIA[leader_kind],
+    }
+    q3 = {
+        "combine": {
+            "recipe": {
+                "type": "choice",
+                "instructions": "Which group of models?",
+                "criteria": {
+                    rname: _fmt_recipe(rname, members, ev, fmt)
+                    for rname, (_, members) in recipes.items()
+                },
+            },
+            "method": {
+                "type": "choice",
+                "instructions": "Which combination method over that group?",
+                "criteria": {
+                    "mean": "plain average",
+                    "median": "median (robust to an outlying model)",
+                    "trimmed_mean": "trimmed mean (drop 20% from each tail)",
+                    "weighted_inverse": "weighted average with weights = 1/validation error",
+                    "weighted_softmax": "weighted average with weights = softmax(-validation error)",
+                },
+            },
+        },
+        "single": {
+            "type": "choice",
+            "instructions": "Which model alone?",
+            "criteria": {n: _fmt_model(n, ev.get(n), fmt) for n in top_single},
+        },
+        "build": {
+            "type": "choice",
+            "instructions": "Which group recipe?",
+            "criteria": {
+                "stable5": "the 5 models with the most consistent ranking across windows",
+                "stable7": "the 7 models with the most consistent ranking across windows",
+                "stable9": "the 9 models with the most consistent ranking across windows",
+                "top5": "the 5 models with the lowest validation error",
+                "prune": "drop near-duplicate models (correlation > 0.95)",
+            },
+        },
+    }
+    return {"q1": q1, "q2": q2, "q3": q3, "leader_kind": leader_kind}
+
+
+#: decisão do q2 -> (tipo de composição, chave do q3)
+_DECISION_TO_PATH = {
+    "new_combination": "combine",
+    "diversify_combination": "combine",
+    "combine": "combine",
+    "diversify_single": "single",
+    "another_single": "single",
+    "single": "single",
+    "build": "build",
+    "accept": "accept",
+}
+
+
+def _compose_reasoning(answers: Dict[str, Any], recipes: Dict[str, tuple]) -> tuple:
+    """Compõe a ação a partir das respostas de q1/q2/q3."""
+    decision = str((answers.get("q2") or {}).get("choice") or "accept")
+    path = _DECISION_TO_PATH.get(decision, "accept")
+    if path == "accept":
+        return ("accept", None, "accept")
+    if path == "build":
+        tool = str((answers.get("build") or {}).get("choice") or "stable5")
+        if tool in BUILD_TOOLS:
+            return ("tool", tool, f"build:{tool}")
+        return ("accept", None, "accept")
+    if path == "single":
+        name = str((answers.get("single") or {}).get("choice") or "")
+        if not name:
+            return ("accept", None, "accept")
+        return ("strategy", {"combine": "best_single", "model": name}, f"best_{name}")
+    rname = str((answers.get("recipe") or {}).get("choice") or "full")
+    method = str((answers.get("method") or {}).get("choice") or "mean")
+    if rname not in recipes:
+        rname = "full"
+    handle, members = recipes[rname]
+    spec: Dict[str, Any] = {"combine": method, "pool": handle}
+    if method == "trimmed_mean":
+        spec["trim_pct"] = 0.2
+    kind = "weighted" if method.startswith("weighted_") else "strategy"
+    return (kind, spec, f"{method}_{rname}")
+
+
 def _describe_option(label: str, info: Dict[str, Any], fmt: str = "text") -> str:
     if info.get("kind") == "tool":
         tool = info["tool"]
@@ -579,6 +765,7 @@ def run_laya_loop(
     fmt: str = "text",
     dataset_card: Optional[Dict[str, Any]] = None,
     staged: bool = False,
+    reasoning: bool = False,
     on_step: Optional[Any] = None,
 ) -> LayaLoopResult:
     """Roda o loop de decisão do classificador e devolve a melhor tentativa.
@@ -754,6 +941,188 @@ def run_laya_loop(
                         "weights": wres.get("weights")}
             attempt, is_new = state.evaluate(
                 spec, rationale=f"laya composed {label}", origin="agent", iteration=iteration
+            )
+            tool_s = time.perf_counter() - t_tool
+            entry.update({
+                "score": round(float(attempt.score), 4) if attempt.score == attempt.score else None,
+                "rank": state.ranked_attempts().index(attempt) + 1,
+                "already_tested": not is_new,
+            })
+            step.update({
+                "executed": {"spec": spec},
+                "result": {"score": entry["score"], "rank": entry["rank"],
+                           "already_tested": not is_new,
+                           "is_best": attempt is state.best_attempt()},
+                "state_after": _brief_history(state),
+                "timing": {"predict_s": step["timing"]["predict_s"],
+                           "tool_s": round(tool_s, 4),
+                           "turn_s": round(time.perf_counter() - t_turn, 4)},
+            })
+            result.step_details.append(step)
+            result.trace.append(entry)
+            if not is_new or label == last_chosen:
+                stale += 1
+            else:
+                stale = 0
+            last_chosen = label
+            if stale >= patience:
+                result.stop_reason = f"no new information in {stale} consecutive turns"
+                break
+            continue
+
+        # ── modo REASONING (3 passos): observação → decisão → parâmetros ────
+        if reasoning:
+            scratch = [
+                {"iter": e["iteration"], "action": e["action"],
+                 "score": e.get("score"), "rank": e.get("rank")}
+                for e in result.trace[-6:]
+            ]
+            stext = build_state_text(
+                series_card, pool_card, state, budget=state_budget,
+                scratchpad=scratch or None, dataset_card=dataset_card,
+            )
+            rqs = build_reasoning_questions(state, series_card, no_seeds=no_seeds, fmt=fmt)
+            pred_error = None
+            answers: Dict[str, Any] = {}
+            # ── chamada 1: OBSERVAÇÃO (ler o placar) ──────────────────────
+            t1 = time.perf_counter()
+            try:
+                out1 = agent.predict(stext, {"q1": rqs["q1"]})
+                answers["q1"] = out1["answers"].get("q1") or {}
+            except Exception as exc:
+                result.errors.append(f"iteration {iteration}: q1: {type(exc).__name__}: {exc}")
+                result.stop_reason = "laya_error"
+                pred_error = f"q1: {type(exc).__name__}: {exc}"
+            pred1_s = time.perf_counter() - t1
+            # ── chamada 2: DECISÃO (condicionada ao tipo do líder) ─────────
+            pred2_s = 0.0
+            if pred_error is None:
+                t2 = time.perf_counter()
+                try:
+                    out2 = agent.predict(stext, {"q2": rqs["q2"]})
+                    answers["q2"] = out2["answers"].get("q2") or {}
+                except Exception as exc:
+                    result.errors.append(f"iteration {iteration}: q2: {type(exc).__name__}: {exc}")
+                    pred_error = f"q2: {type(exc).__name__}: {exc}"
+                pred2_s = time.perf_counter() - t2
+            # ── chamada 3: PARÂMETROS conforme a decisão ───────────────────
+            pred3_s = 0.0
+            if pred_error is None:
+                path = _DECISION_TO_PATH.get(
+                    str((answers.get("q2") or {}).get("choice") or "accept"), "accept",
+                )
+                if path in ("combine", "single", "build"):
+                    t3 = time.perf_counter()
+                    try:
+                        out3 = agent.predict(stext, rqs["q3"][path])
+                        answers.update(out3["answers"] or {})
+                    except Exception as exc:
+                        result.errors.append(
+                            f"iteration {iteration}: q3/{path}: {type(exc).__name__}: {exc}"
+                        )
+                        pred_error = f"q3/{path}: {type(exc).__name__}: {exc}"
+                    pred3_s = time.perf_counter() - t3
+            pred_s = pred1_s + pred2_s + pred3_s
+            kind, spec_or_tool, label = _compose_reasoning(
+                answers, _group_recipes(state),
+            )
+            step: Dict[str, Any] = {
+                "iteration": iteration,
+                "state_before": stext,
+                "question": rqs,
+                "answer": {
+                    qid: {"choice": a.get("choice"),
+                          "confidence": a.get("confidence"),
+                          "probabilities": a.get("probabilities")}
+                    for qid, a in answers.items()
+                },
+                "pred_error": pred_error,
+                "timing": {"predict_s": round(pred_s, 4),
+                           "predict1_s": round(pred1_s, 4),
+                           "predict2_s": round(pred2_s, 4),
+                           "predict3_s": round(pred3_s, 4)},
+            }
+            if pred_error is not None:
+                result.step_details.append(step)
+                break
+            if kind == "accept":
+                if not state.attempts:
+                    result.errors.append(
+                        f"iteration {iteration}: composed 'accept' with empty history"
+                    )
+                    stale += 1
+                    step["executed"] = "accept ignored (empty history)"
+                    result.step_details.append(step)
+                    if stale >= patience:
+                        result.stop_reason = f"no new information in {stale} consecutive turns"
+                        break
+                    continue
+                result.stop_reason = "laya_accept"
+                step["executed"] = "accept (keep current best)"
+                step["state_after"] = _brief_history(state)
+                step["timing"]["tool_s"] = 0.0
+                result.step_details.append(step)
+                break
+            if tried.get(label, 0) >= 2:
+                stale += 1
+                result.trace.append({"iteration": iteration, "action": label,
+                                     "skipped": "composition repeated twice"})
+                step["executed"] = {"skipped": f"{label} já composto 2x"}
+                result.step_details.append(step)
+                if stale >= patience:
+                    result.stop_reason = f"no new information in {stale} consecutive turns"
+                    break
+                continue
+            tried[label] = tried.get(label, 0) + 1
+            t_tool = time.perf_counter()
+            entry: Dict[str, Any] = {
+                "iteration": iteration, "action": label,
+                "confidence": (answers.get("q2") or {}).get("confidence"),
+            }
+            if kind == "tool":
+                tool_fn_name, targs = BUILD_TOOLS[spec_or_tool]
+                existing = set(state.pools)
+                try:
+                    obs = getattr(T, tool_fn_name)(state, **targs)
+                    handle = obs.get("pool")
+                    new_handle = handle is not None and handle not in existing
+                    entry["observation"] = (
+                        f"pool {handle} ({len(obs.get('models', []))} models)"
+                        if handle else json.dumps(obs, default=str)[:120]
+                    )
+                except Exception as exc:
+                    entry["observation"] = f"error: {exc}"
+                    new_handle = False
+                tool_s = time.perf_counter() - t_tool
+                step.update({
+                    "executed": {"tool": tool_fn_name, "args": targs,
+                                 "observation": entry.get("observation")},
+                    "state_after": _brief_history(state),
+                    "timing": {"predict_s": step["timing"]["predict_s"],
+                               "tool_s": round(tool_s, 4)},
+                })
+                result.step_details.append(step)
+                result.trace.append(entry)
+                if new_handle:
+                    stale = 0
+                else:
+                    stale += 1
+                if stale >= patience:
+                    result.stop_reason = f"no new information in {stale} consecutive turns"
+                    break
+                continue
+            spec = dict(spec_or_tool)
+            if kind == "weighted":
+                method = spec["combine"]
+                wres = (
+                    T.weights_inverse_error(state, pool=spec["pool"])
+                    if method == "weighted_inverse"
+                    else T.weights_softmax_neg_error(state, pool=spec["pool"])
+                )
+                spec = {"combine": "weighted", "pool": spec["pool"],
+                        "weights": wres.get("weights")}
+            attempt, is_new = state.evaluate(
+                spec, rationale=f"laya reasoned {label}", origin="agent", iteration=iteration
             )
             tool_s = time.perf_counter() - t_tool
             entry.update({

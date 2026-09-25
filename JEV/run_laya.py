@@ -211,6 +211,7 @@ def run_dataset(
                 state, agent, series_card, pool_card, max_iterations=max_iterations,
                 no_seeds=no_seeds, state_budget=state_budget, fmt=option_format,
                 dataset_card=card, staged=(menu == "staged"),
+                reasoning=(menu == "reasoning"),
             )
             attempt = loop.final_attempt
             if attempt is None:
@@ -422,9 +423,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--state-budget", type=int, default=1400,
                    help="orçamento do estado do classificador em chars "
                         "(english: ~1400; multilingual 8192: pode subir p/ ~8000)")
-    p.add_argument("--menu", choices=["flat", "staged"], default="flat",
+    p.add_argument("--menu", choices=["flat", "staged", "reasoning"], default="flat",
                    help="flat = menu plano de ~34 opções; staged = turno em "
-                        "etapas (movimento × grupo × método) numa chamada")
+                        "etapas condicionais; reasoning = observação → decisão "
+                        "→ parâmetros (3 passos)")
     p.add_argument("--gate", action="store_true",
                    help="H3: após o loop, o gate re-ranqueia TODO o histórico "
                         "e o final = argmax P('é o melhor')")
