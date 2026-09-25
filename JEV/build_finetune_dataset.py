@@ -38,6 +38,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from orchestrator_react import ingest as I  # noqa: E402
+from orchestrator_react import metrics as M  # noqa: E402
 from orchestrator_react import pool as POOL  # noqa: E402
 from orchestrator_react import tools as T  # noqa: E402
 from orchestrator_react.config import ReactConfig  # noqa: E402
@@ -192,26 +193,41 @@ def _spec_key(spec: dict) -> str:
     return json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
 
 
+def _val_score(st, spec: dict) -> float:
+    """Score ANINHADO de validação do spec, SEM tocar no histórico do estado.
+
+    Igual ao `state.evaluate`, mas sem registrar a tentativa: backtest com
+    seleção aninhada (LOO dentro das 3 janelas) + composite score normalizado
+    contra a âncora (média do pool). É o MESMO número que o agente otimiza.
+    """
+    combined, _ = st.backtest(spec)
+    agg, _ = st._score_metrics(combined)
+    return float(M.composite_score(agg, st.baseline_aggregate(), st.config.score_weights()))
+
+
 def evaluate_universe(st, ing) -> dict:
     """Universo de candidatos da série: tudo que o pipeline sabe produzir.
 
     = sementes (mean/median/dba/trimmed/estáveis, já no histórico) + best_single
     de CADA modelo do pool + median/mean/dba do pool completo (se faltar).
-    Devolve {spec_key: test_smape} para TODOS os candidatos (determinístico).
+
+    Para cada candidato: `val_score` (score aninhado de VALIDAÇÃO — o único
+    usado nos rótulos de treino) e `test_smape` (SÓ para a avaliação final).
     """
     out: dict = {}
     for a in st.attempts:
         key = _spec_key(a.spec)
         if key not in out:
             fc, _ = st.apply_to_test(a.spec)
-            out[key] = smape(fc, ing.test_values)
+            out[key] = {"val_score": float(a.score), "test_smape": smape(fc, ing.test_values)}
     for name in st.model_names:
         spec = {"combine": "best_single", "model": name}
         key = _spec_key(spec)
         if key not in out:
             try:
                 fc, _ = st.apply_to_test(spec)
-                out[key] = smape(fc, ing.test_values)
+                out[key] = {"val_score": _val_score(st, spec),
+                            "test_smape": smape(fc, ing.test_values)}
             except Exception:
                 pass
     for method in ("mean", "median", "dba"):
@@ -220,7 +236,8 @@ def evaluate_universe(st, ing) -> dict:
         if key not in out:
             try:
                 fc, _ = st.apply_to_test(spec)
-                out[key] = smape(fc, ing.test_values)
+                out[key] = {"val_score": _val_score(st, spec),
+                            "test_smape": smape(fc, ing.test_values)}
             except Exception:
                 pass
     return out
@@ -228,17 +245,20 @@ def evaluate_universe(st, ing) -> dict:
 
 def make_example(
     source: str, dataset: str, idx: int, st, series_card, pool_card,
-    spec: dict, attempt, floor: float, ing, turn: int, origin: str,
-    ref_best: float, ref_winner: str, references: dict, universe: dict,
+    spec: dict, attempt, floor: float, floor_val: float, ing, turn: int,
+    origin: str, ref_best: float, ref_winner: str, references: dict,
+    universe: dict,
 ) -> dict:
     """Uma linha do dataset. `st` é o estado NO MOMENTO da avaliação.
 
-    Três rótulos:
-    - `label`     : 1 se bate a MELHOR referência (piso ou FFORMA/ADE/mean/
-                    median/dba) — a meta real do trabalho.
-    - `label_seed`: 1 se bate só o piso das sementes (ablação).
-    - `label_dyn` : 1 se é O MELHOR candidato do universo da série (ranqueador
-                    dinâmico — nenhuma referência nomeada).
+    Rótulos DE TREINO (SÓ validação — o teste fica intocado até a avaliação):
+    - `label_val`     : 1 se o candidato tem o MELHOR score aninhado de
+                        validação do universo da série (ranqueador dinâmico).
+    - `label_val_seed`: 1 se o candidato vence TODAS as sementes no score
+                        aninhado de validação.
+
+    Rótulos baseados no teste (guardados SÓ PARA ANÁLISE, nunca para treinar):
+    - `label` / `label_seed` / `label_dyn`: mesmas perguntas medidas no teste.
     """
     try:
         fc, _ = st.apply_to_test(spec)
@@ -255,18 +275,25 @@ def make_example(
     tau = (pool_card.get("ranking_stability") or {}).get("mean_kendall_tau")
     state_text = build_state_text(series_card, pool_card, st, budget=8000)
     state_text += "\nCANDIDATE STRATEGY: " + json.dumps(spec, sort_keys=True, default=str)
-    best_universe = min(universe.values()) if universe else float("inf")
+    val_score = float(attempt.score) if np.isfinite(attempt.score) else None
+    best_universe_test = min(v["test_smape"] for v in universe.values()) if universe else float("inf")
+    best_universe_val = min(v["val_score"] for v in universe.values() if v["val_score"] == v["val_score"]) if universe else float("inf")
     return {
         "source": source, "dataset": dataset, "series": int(idx),
         "state": state_text,
         "spec": spec,
-        "score_val": round(float(attempt.score), 6) if np.isfinite(attempt.score) else None,
+        "score_val": round(val_score, 6) if val_score is not None else None,
         "smape_test": round(ts, 6), "floor_smape_test": round(floor, 6),
+        # rótulos de treino (SÓ validação)
+        "label_val": int(val_score is not None and val_score <= best_universe_val + 1e-9),
+        "label_val_seed": int(val_score is not None and val_score < floor_val),
+        "universe_best_val_score": round(best_universe_val, 6),
+        "universe_size": len(universe),
+        # rótulos de teste (SÓ análise)
         "label": int(ts < ref_best),
         "label_seed": int(ts < floor),
-        "label_dyn": int(ts <= best_universe + 1e-9),
-        "universe_best_smape": round(best_universe, 6),
-        "universe_size": len(universe),
+        "label_dyn": int(ts <= best_universe_test + 1e-9),
+        "universe_best_smape": round(best_universe_test, 6),
         "ref_best_smape": round(ref_best, 6),
         "ref_winner": ref_winner,
         "references": {k: round(v, 6) for k, v in references.items()},
@@ -352,12 +379,13 @@ def main() -> int:
                 # mean/median/dba do pool completo (calculado antes de qualquer
                 # replay; não depende do agente)
                 universe = evaluate_universe(st, ing)
+                floor_val = min(a.score for a in seeds)
 
                 if emitter.include_seeds and not no_seeds:
                     for a in seeds:
                         row = make_example(
                             run, dataset, idx, st, series_card, pool_card,
-                            a.spec, a, floor, ing, turn=0, origin="baseline",
+                            a.spec, a, floor, floor_val, ing, turn=0, origin="baseline",
                             ref_best=ref_best, ref_winner=ref_winner,
                             references=references, universe=universe,
                         )
@@ -384,7 +412,7 @@ def main() -> int:
                             continue
                         row = make_example(
                             run, dataset, idx, st, series_card, pool_card,
-                            attempt.spec, attempt, floor, ing,
+                            attempt.spec, attempt, floor, floor_val, ing,
                             turn=int(entry.get("iteration", 0)), origin="agent",
                             ref_best=ref_best, ref_winner=ref_winner,
                             references=references, universe=universe,
@@ -419,7 +447,7 @@ def main() -> int:
                             continue
                         row = make_example(
                             run, dataset, idx, st, series_card, pool_card,
-                            attempt.spec, attempt, floor, ing,
+                            attempt.spec, attempt, floor, floor_val, ing,
                             turn=int(entry.get("iteration", 0)), origin="agent",
                             ref_best=ref_best, ref_winner=ref_winner,
                             references=references, universe=universe,

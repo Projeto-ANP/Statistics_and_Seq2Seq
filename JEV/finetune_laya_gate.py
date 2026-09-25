@@ -39,6 +39,16 @@ TARGET_INSTRUCTIONS = {
         "trimmed, weighted) and every seeded baseline? Answer yes only if you expect "
         "it to be strictly the best."
     ),
+    "label_val": (
+        "Is this candidate strategy the best available strategy for this series on "
+        "the validation windows (nested leave-one-out)? Answer yes only if you "
+        "expect it to be strictly the best on validation."
+    ),
+    "label_val_seed": (
+        "Will this candidate strategy beat every seeded baseline on the validation "
+        "windows (nested leave-one-out)? Answer yes only if you expect it to be "
+        "strictly better than all of them on validation."
+    ),
 }
 
 def make_q_spec(target: str) -> dict:
@@ -137,9 +147,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="JEV/data/gate_dataset.jsonl")
     ap.add_argument("--holdout", required=True, help="dataset deixado de fora (LOO)")
-    ap.add_argument("--target", choices=["label", "label_dyn"], default="label",
-                    help="label = bate a melhor referência; label_dyn = é o "
-                         "melhor do universo (ranqueador dinâmico)")
+    ap.add_argument("--target", choices=["label", "label_dyn", "label_val",
+                                          "label_val_seed"],
+                    default="label_val",
+                    help="label_val/label_val_seed = alvos SÓ de validação (treino); "
+                         "label/label_dyn = alvos de teste (só análise)")
     ap.add_argument("--base-model", default="convaiinnovations/laya")
     ap.add_argument("--output", default=None)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
@@ -148,8 +160,9 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     if args.output is None:
-        tgt = "dyn" if args.target == "label_dyn" else "ref"
-        args.output = f"JEV/models/laya_gate_{args.holdout.lower()}_{tgt}"
+        tag = {"label": "ref", "label_dyn": "dyn",
+               "label_val": "val", "label_val_seed": "valseed"}[args.target]
+        args.output = f"JEV/models/laya_gate_{args.holdout.lower()}_{tag}"
 
     from huggingface_hub import snapshot_download
     from safetensors.torch import load_file, save_file
