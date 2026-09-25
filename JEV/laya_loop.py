@@ -47,8 +47,19 @@ TOP_K_BEST_SINGLE = 3
 _INSTRUCTIONS = (
     "You are searching for the best forecast combination, scored on 3 validation "
     "windows (lower score is better). Pick ONE strategy to evaluate, or accept. "
-    "Prefer strategies that are NOT already in the history. If the history leader "
-    "looks strong and no untested option is promising, accept."
+    "Prefer strategies that are NOT already in the history. Read 'what you tried "
+    "so far': if an option you tried did not become the best, try a DIFFERENT kind "
+    "of option (different method, different group recipe, different model) instead "
+    "of repeating it. A typical good sequence: test a robust option like "
+    "median_stable5; if it does not lead, test a weighted option or the best "
+    "single model; then accept the leader. Rules: prefer small structured "
+    "comparisons over one sweeping decision; if a seeded baseline is leading and "
+    "nothing concrete suggests a deviation, accepting it is often the right move; "
+    "an option is only valid for the group of models it names; a weighted option "
+    "whose weights come out nearly equal gives the same forecast as the plain "
+    "average of that group, so do not retry the same idea; when you accept, the "
+    "justification must cite observable series characteristics, not just 'lowest "
+    "error'."
 )
 
 
@@ -136,12 +147,18 @@ def build_state_text(
     pool_card: Dict[str, Any],
     state: ReactState,
     budget: int = 1400,
+    scratchpad: Optional[List[Dict[str, Any]]] = None,
+    dataset_card: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Estado que o classificador lê: cartões + regime + histórico.
+    """Estado que o classificador lê: cartões + regime + histórico + scratchpad.
 
     O bloco `regime` resume em uma frase as características da série
     (tendência, sazonalidade, estabilidade do ranking) e os campeões — o
     vínculo entre a forma da série e quais modelos tendem a funcionar.
+    `scratchpad` são as ações JÁ TENTADAS pelo próprio classificador com o
+    resultado (sem isso, com entrada idêntica, um classificador determinístico
+    repete a mesma escolha para sempre). `dataset_card` é o prior cross-series
+    (o que funcionou nas OUTRAS séries, validação-only, LOO).
     """
     ranked = state.ranked_attempts()[:6]
     hist = [a.brief(include_rationale=False) for a in ranked]
@@ -154,7 +171,7 @@ def build_state_text(
         f"model ranking {stab.get('verdict', '?')} "
         f"(tau={stab.get('mean_kendall_tau')})"
     )
-    payload = {
+    payload: Dict[str, Any] = {
         "series": P._slim_series_card(series_card),
         "pool": P._slim_pool_card(pool_card),
         "regime": {
@@ -164,6 +181,10 @@ def build_state_text(
         },
         "history_best_first": hist,
     }
+    if dataset_card:
+        payload["dataset_card"] = dataset_card
+    if scratchpad:
+        payload["what_you_tried_so_far"] = scratchpad
     return P._compact(payload, limit=budget)
 
 
@@ -374,6 +395,7 @@ def run_laya_loop(
     patience: int = 3,
     no_seeds: bool = False,
     fmt: str = "text",
+    dataset_card: Optional[Dict[str, Any]] = None,
     on_step: Optional[Any] = None,
 ) -> LayaLoopResult:
     """Roda o loop de decisão do classificador e devolve a melhor tentativa.
@@ -397,20 +419,33 @@ def run_laya_loop(
     patience = max(1, int(patience))
     stale = 0
     last_chosen: Optional[str] = None
+    #: Opções já escolhidas; com >=2 tentativas saem do menu (força diversidade:
+    #: um classificador determinístico repete a escolha se a entrada não muda).
+    tried: Dict[str, int] = {}
 
     for iteration in range(1, max(1, int(max_iterations)) + 1):
         result.iterations_used = iteration
         t_turn = time.perf_counter()
         cands = build_candidates(state, series_card, pool_card, no_seeds=no_seeds, fmt=fmt)
+        for label in [l for l in list(cands) if tried.get(l, 0) >= 2]:
+            del cands[label]
         if not cands:
-            result.stop_reason = "no_candidates"
+            result.stop_reason = "menu_exhausted"
             break
         criteria: Dict[str, str] = {
             label: _describe_option(label, info, fmt) for label, info in cands.items()
         }
         if state.attempts:
             criteria["accept"] = "stop now and keep the current best strategy"
-        stext = build_state_text(series_card, pool_card, state, budget=state_budget)
+        scratch = [
+            {"iter": e["iteration"], "action": e["action"],
+             "score": e.get("score"), "rank": e.get("rank")}
+            for e in result.trace[-6:]
+        ]
+        stext = build_state_text(
+            series_card, pool_card, state, budget=state_budget,
+            scratchpad=scratch or None, dataset_card=dataset_card,
+        )
         question = {
             "next_action": {
                 "type": "choice",
@@ -466,6 +501,7 @@ def run_laya_loop(
             break
 
         info = cands[chosen]
+        tried[chosen] = tried.get(chosen, 0) + 1
         entry: Dict[str, Any] = {
             "iteration": iteration,
             "action": chosen,

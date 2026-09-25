@@ -150,7 +150,13 @@ o DATASET CARD + handles + semente pooled ao run LAYA (paridade total de context
     "seasonality champion");
   - `raw` — números crus (`err=…, per_window=[…], ranks=[…], rank_spread=…`);
 - o ESTADO ganhou o bloco `regime` (tendência, sazonalidade, estabilidade do
-  ranking, campeões).
+  ranking, campeões) e o **DATASET CARD** (prior cross-series LOO, o mesmo
+  `prompts.build_dataset_card` do LLM — desligável com `--no-dataset-card`);
+- as INSTRUÇÕES da pergunta agora carregam as regras de trabalho do system
+  prompt do gpt-oss condensadas + uma sequência típica de exemplo;
+- **scratchpad + força-diversidade**: o estado mostra `what_you_tried_so_far`
+  (ação, score, rank) e a opção escolhida 2× sai do menu — sem isso um
+  classificador determinístico repete a mesma escolha para sempre.
 
 Telemetria de debug por série em
 `orchestrator_laya_<version>/llm_artifacts/<dataset>/dataset_<i>.json`: por

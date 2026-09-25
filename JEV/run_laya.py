@@ -37,10 +37,13 @@ import pandas as pd  # noqa: E402
 
 from run_tsf_orchestrator import DEFAULT_MODELS  # noqa: E402
 from orchestrator_react import ingest as I  # noqa: E402
+from orchestrator_react import pipeline as PL  # noqa: E402
 from orchestrator_react import pool as POOL  # noqa: E402
+from orchestrator_react import prompts as PR  # noqa: E402
 from orchestrator_react import tools as T  # noqa: E402
 from orchestrator_react.config import ReactConfig  # noqa: E402
 from orchestrator_react.csv_writer import CORE_COLUMNS, compute_metrics  # noqa: E402
+from orchestrator_react.data_source import load_series_source  # noqa: E402
 
 sys.path.insert(0, os.path.join(_ROOT, "JEV"))
 from laya_loop import LayaAgent, run_laya_loop  # noqa: E402
@@ -105,6 +108,7 @@ def run_dataset(
     no_seeds: bool = False,
     state_budget: int = 1400,
     option_format: str = "text",
+    dataset_card: bool = True,
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -139,6 +143,20 @@ def run_dataset(
     agent = LayaAgent(checkpoint=checkpoint, max_len=max_len)
 
     todo = indices if indices is not None else list(range(n_series))
+
+    # ── pré-pass do DATASET CARD (prior cross-series LOO, só validação) ─────
+    priors: Dict[int, Dict[str, float]] = {}
+    if dataset_card:
+        try:
+            source = load_series_source(
+                source_file, n_expected_series=n_series, source_dir=source_dir,
+            )
+            priors = PL._build_strategy_priors(
+                models_eff, dataset, todo, cfg, source, results_dir, frames, {},
+            )
+        except Exception as exc:
+            print(f"WARNING: dataset card pre-pass falhou ({exc}); sem card",
+                  flush=True)
     print(f"dataset      : {dataset}")
     print(f"source       : {source_file}")
     print(f"models       : {len(models_eff)}")
@@ -171,9 +189,17 @@ def run_dataset(
                     del state.pools[handle]
             series_card = T.series_profile(state)
             pool_card = phase2["report"]
+            card = None
+            if priors.get(idx):
+                state.strategy_prior = priors[idx]
+                try:
+                    card = PR.build_dataset_card(state)
+                except Exception:
+                    card = None
             loop = run_laya_loop(
                 state, agent, series_card, pool_card, max_iterations=max_iterations,
                 no_seeds=no_seeds, state_budget=state_budget, fmt=option_format,
+                dataset_card=card,
             )
             attempt = loop.final_attempt
             if attempt is None:
@@ -331,6 +357,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--state-budget", type=int, default=1400,
                    help="orçamento do estado do classificador em chars "
                         "(english: ~1400; multilingual 8192: pode subir p/ ~8000)")
+    p.add_argument("--no-dataset-card", action="store_true",
+                   help="não montar o DATASET CARD (prior cross-series LOO)")
     p.add_argument("--no-seeds", action="store_true",
                    help="ablação: o agente parte de histórico VAZIO — sem as "
                         "sementes da Fase 2 (o menu ganha ações de construção de pool)")
@@ -357,6 +385,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 no_seeds=args.no_seeds,
                 state_budget=args.state_budget,
                 option_format=args.option_format,
+                dataset_card=not args.no_dataset_card,
                 indices=args.indices,
                 source_dir=args.source_dir,
                 results_dir=args.results_dir,
