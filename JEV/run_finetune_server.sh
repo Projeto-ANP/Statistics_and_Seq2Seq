@@ -24,16 +24,16 @@ python3 JEV/build_finetune_dataset.py 2>&1 | tee JEV/logs/build_dataset.log \
   || { echo "FALHOU build do dataset"; exit 1; }
 
 echo "===== 2/4 baseline logístico (LOO, alvos de validação) ====="
-for T in label_val label_val_seed; do
+for T in label_val label_val_seed label_val_w; do
   echo "----- alvo: $T -----"
   python3 JEV/run_gate_baseline.py --target "$T" 2>&1 | tee "JEV/logs/gate_baseline_${T}.log"
 done
 
-echo "===== 3-4/4 fine-tune + avaliação (2 holdouts x 2 alvos) ====="
+echo "===== 3-4/4 fine-tune + avaliação (2 holdouts x 3 alvos) ====="
 for H in ETTM2 NN5_WEEKLY_DATASET; do
   SLUG=$(echo "$H" | tr '[:upper:]' '[:lower:]')
-  for T in label_val label_val_seed; do
-    TAG=$([ "$T" = "label_val" ] && echo "val" || echo "valseed")
+  for T in label_val label_val_seed label_val_w; do
+    TAG=$([ "$T" = "label_val" ] && echo "val" || ([ "$T" = "label_val_w" ] && echo "valw" || echo "valseed"))
     echo "===== holdout $H / alvo $T ====="
     python3 JEV/finetune_laya_gate.py --holdout "$H" --target "$T" \
       2>&1 | tee "JEV/logs/finetune_${SLUG}_${TAG}.log" \

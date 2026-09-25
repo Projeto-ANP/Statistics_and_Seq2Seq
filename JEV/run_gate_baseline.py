@@ -55,11 +55,13 @@ def main() -> int:
     ap.add_argument("--only-agents", action="store_true",
                     help="avaliar só propostas de origem agent (sem as sementes)")
     ap.add_argument("--target", choices=["label", "label_seed", "label_dyn",
-                                          "label_val", "label_val_seed"],
-                    default="label_val",
+                                          "label_val", "label_val_seed",
+                                          "label_val_w"],
+                    default="label_val_w",
                     help="label/label_seed/label_dyn = alvos de teste (só análise); "
                          "label_val = melhor do universo na VALIDAÇÃO; "
-                         "label_val_seed = vence as sementes na VALIDAÇÃO (treino)")
+                         "label_val_seed = vence as sementes na VALIDAÇÃO; "
+                         "label_val_w = vence a MAIORIA das 3 janelas LOO (treino)")
     args = ap.parse_args()
 
     df = load(args.data)

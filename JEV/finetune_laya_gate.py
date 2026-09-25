@@ -51,7 +51,15 @@ TARGET_INSTRUCTIONS = {
     ),
 }
 
-def make_q_spec(target: str) -> dict:
+def make_q_spec(target: str, window: int = -1) -> dict:
+    if target == "label_val_w":
+        ins = (
+            f"Will this candidate strategy be the winner of validation window "
+            f"{window + 1} of 3, scored leave-one-out (everything else fitted on "
+            f"the other two windows)? Answer yes only if you expect it to win "
+            f"that window."
+        )
+        return {"t": "noul", "ins": ins, "crit": {}}
     return {"t": "noul", "ins": TARGET_INSTRUCTIONS[target], "crit": {}}
 
 EPOCHS = 4
@@ -111,10 +119,12 @@ def fit_one_temp(sel):
 
 
 def build_items(data_path: str, holdout: str, tok, cfg, target: str):
-    """Cada exemplo vira um item de treino: ids + markers + target suavizado."""
+    """Cada exemplo vira um item de treino: ids + markers + target suavizado.
+
+    `label_val_w` vira TRÊS itens (um por janela de validação, LOO).
+    """
     from laya.common import build_sequence, render_options, QTYPES
 
-    q_spec = make_q_spec(target)
     items = []
     skipped = 0
     with open(data_path, encoding="utf-8") as fh:
@@ -125,20 +135,32 @@ def build_items(data_path: str, holdout: str, tok, cfg, target: str):
             row = json.loads(line)
             if row["dataset"] == holdout:
                 continue
-            p_true = 0.9 if int(row[target]) == 1 else 0.1
-            target_vec = [1.0 - p_true, p_true]
-            label = 1 if p_true > 0.5 else 0
-            k = len(render_options(q_spec))
-            seq, markers = build_sequence(
-                tok, row["state"], q_spec, cfg["max_len"], cfg["head_max_len"]
-            )
-            if len(markers) != k or not seq:
-                skipped += 1
-                continue
-            items.append({
-                "ids": seq, "markers": markers,
-                "qtype": QTYPES["noul"], "target": target_vec, "label": label,
-            })
+
+            def _append(p_true: float, q_spec: dict):
+                nonlocal skipped
+                target_vec = [1.0 - p_true, p_true]
+                label = 1 if p_true > 0.5 else 0
+                k = len(render_options(q_spec))
+                seq, markers = build_sequence(
+                    tok, row["state"], q_spec, cfg["max_len"], cfg["head_max_len"]
+                )
+                if len(markers) != k or not seq:
+                    skipped += 1
+                    return
+                items.append({
+                    "ids": seq, "markers": markers,
+                    "qtype": QTYPES["noul"], "target": target_vec, "label": label,
+                })
+
+            if target == "label_val_w":
+                for w in range(3):
+                    lw = row.get(f"label_val_w{w}")
+                    if lw is None:
+                        skipped += 1
+                        continue
+                    _append(0.9 if int(lw) == 1 else 0.1, make_q_spec(target, w))
+            else:
+                _append(0.9 if int(row[target]) == 1 else 0.1, make_q_spec(target))
     print(f"itens de treino: {len(items)} (pulados: {skipped})")
     return items
 
@@ -148,10 +170,10 @@ def main() -> int:
     ap.add_argument("--data", default="JEV/data/gate_dataset.jsonl")
     ap.add_argument("--holdout", required=True, help="dataset deixado de fora (LOO)")
     ap.add_argument("--target", choices=["label", "label_dyn", "label_val",
-                                          "label_val_seed"],
-                    default="label_val",
-                    help="label_val/label_val_seed = alvos SÓ de validação (treino); "
-                         "label/label_dyn = alvos de teste (só análise)")
+                                          "label_val_seed", "label_val_w"],
+                    default="label_val_w",
+                    help="label_val/label_val_seed/label_val_w = alvos SÓ de "
+                         "validação (treino); label/label_dyn = teste (só análise)")
     ap.add_argument("--base-model", default="convaiinnovations/laya")
     ap.add_argument("--output", default=None)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
@@ -161,7 +183,8 @@ def main() -> int:
     args = ap.parse_args()
     if args.output is None:
         tag = {"label": "ref", "label_dyn": "dyn",
-               "label_val": "val", "label_val_seed": "valseed"}[args.target]
+               "label_val": "val", "label_val_seed": "valseed",
+               "label_val_w": "valw"}[args.target]
         args.output = f"JEV/models/laya_gate_{args.holdout.lower()}_{tag}"
 
     from huggingface_hub import snapshot_download

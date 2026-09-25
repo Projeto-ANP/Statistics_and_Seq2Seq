@@ -205,21 +205,40 @@ def _val_score(st, spec: dict) -> float:
     return float(M.composite_score(agg, st.baseline_aggregate(), st.config.score_weights()))
 
 
+def _val_score_per_window(st, spec: dict):
+    """Scores ANINHADOS por janela (LOO): pontua a janela w com o resto ajustado
+    sem ela. É o `attempt.per_window_scores` do `state.evaluate`."""
+    combined, _ = st.backtest(spec)
+    per_window = [
+        M.all_metrics(st.y_true[i], combined[i], zero=st.config.mape_zero,
+                      epsilon=st.config.mape_epsilon)
+        for i in range(st.n_windows)
+    ]
+    anchor = st.baseline_per_window()
+    w = st.config.score_weights()
+    return [float(M.composite_score(per_window[i], anchor[i], w))
+            for i in range(st.n_windows)]
+
+
 def evaluate_universe(st, ing) -> dict:
     """Universo de candidatos da série: tudo que o pipeline sabe produzir.
 
     = sementes (mean/median/dba/trimmed/estáveis, já no histórico) + best_single
     de CADA modelo do pool + median/mean/dba do pool completo (se faltar).
 
-    Para cada candidato: `val_score` (score aninhado de VALIDAÇÃO — o único
-    usado nos rótulos de treino) e `test_smape` (SÓ para a avaliação final).
+    Para cada candidato: `val_score` (agregado), `val_per_window` (score
+    aninhado por janela — os rótulos de treino) e `test_smape` (SÓ análise).
     """
     out: dict = {}
     for a in st.attempts:
         key = _spec_key(a.spec)
         if key not in out:
             fc, _ = st.apply_to_test(a.spec)
-            out[key] = {"val_score": float(a.score), "test_smape": smape(fc, ing.test_values)}
+            out[key] = {
+                "val_score": float(a.score),
+                "val_per_window": [float(v) for v in a.per_window_scores],
+                "test_smape": smape(fc, ing.test_values),
+            }
     for name in st.model_names:
         spec = {"combine": "best_single", "model": name}
         key = _spec_key(spec)
@@ -227,6 +246,7 @@ def evaluate_universe(st, ing) -> dict:
             try:
                 fc, _ = st.apply_to_test(spec)
                 out[key] = {"val_score": _val_score(st, spec),
+                            "val_per_window": _val_score_per_window(st, spec),
                             "test_smape": smape(fc, ing.test_values)}
             except Exception:
                 pass
@@ -237,6 +257,7 @@ def evaluate_universe(st, ing) -> dict:
             try:
                 fc, _ = st.apply_to_test(spec)
                 out[key] = {"val_score": _val_score(st, spec),
+                            "val_per_window": _val_score_per_window(st, spec),
                             "test_smape": smape(fc, ing.test_values)}
             except Exception:
                 pass
@@ -276,8 +297,15 @@ def make_example(
     state_text = build_state_text(series_card, pool_card, st, budget=8000)
     state_text += "\nCANDIDATE STRATEGY: " + json.dumps(spec, sort_keys=True, default=str)
     val_score = float(attempt.score) if np.isfinite(attempt.score) else None
+    cand_pw = [float(v) for v in getattr(attempt, "per_window_scores", []) or []]
     best_universe_test = min(v["test_smape"] for v in universe.values()) if universe else float("inf")
     best_universe_val = min(v["val_score"] for v in universe.values() if v["val_score"] == v["val_score"]) if universe else float("inf")
+    best_pw = [
+        min(v["val_per_window"][i] for v in universe.values()
+            if len(v["val_per_window"]) > i and v["val_per_window"][i] == v["val_per_window"][i])
+        for i in range(3)
+    ]
+    wins = [int(len(cand_pw) > i and cand_pw[i] <= best_pw[i] + 1e-9) for i in range(3)]
     return {
         "source": source, "dataset": dataset, "series": int(idx),
         "state": state_text,
@@ -287,7 +315,13 @@ def make_example(
         # rótulos de treino (SÓ validação)
         "label_val": int(val_score is not None and val_score <= best_universe_val + 1e-9),
         "label_val_seed": int(val_score is not None and val_score < floor_val),
+        "label_val_w0": wins[0] if wins else None,
+        "label_val_w1": wins[1] if len(wins) > 1 else None,
+        "label_val_w2": wins[2] if len(wins) > 2 else None,
+        "label_val_w": int(sum(wins) >= 2) if wins else None,
+        "val_per_window": [round(v, 6) for v in cand_pw],
         "universe_best_val_score": round(best_universe_val, 6),
+        "universe_best_val_per_window": [round(v, 6) for v in best_pw],
         "universe_size": len(universe),
         # rótulos de teste (SÓ análise)
         "label": int(ts < ref_best),
