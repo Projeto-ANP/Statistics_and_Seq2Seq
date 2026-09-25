@@ -6,8 +6,37 @@ orquestrador, inspiradas na família **JEV** (TypeSafe) — modelos de *decisão
 em `ENTENDIMENTO_ORCHESTRATOR_REACT.md` §2-§5 (resumo: transferência das
 propostas do agente 10% no NN5; decisão final = gargalo).
 
-## Resultados medidos — v0 (zero-shot, english, menu de 16 opções)
+## Resultados medidos — 2ª onda: 7 datasets × 3 braços + comparação
 
+sMAPE médio por dataset (2026-09-25, servidor):
+
+| dataset | english compacto | ml8192 rico | sem sementes | piso sementes | gpt-oss v5 |
+|---|---|---|---|---|---|
+| ETTM1 | 0.4592 | — | 0.4980 | 0.4604 | 0.4594 |
+| ETTM2 | 0.2417 | **0.2043** | 0.2072 | 0.2030 | **0.1610** |
+| ETTH1 | 0.2472 | — | 0.2485 | 0.2262 | 0.2276 |
+| ETTH2 | 0.1800 | — | 0.1910 | 0.1799 | 0.1794 |
+| ANP_MONTHLY | 0.2208 | — | 0.2222 | 0.2212 | 0.2209 |
+| NN5_WEEKLY | 0.1188 | **0.1172** | 0.1296 | 0.1156 | 0.1177 |
+| M4_WEEKLY | 0.0979 | — | 0.1036 | 0.0910 | 0.0923 |
+
+Leituras:
+
+1. **A compressão do estado MACHUCAVA — pergunta respondida com medição.**
+   Estado rico (multilingual 8192) recupera quase tudo: ETTM2 0.2417 → 0.2043
+   (≈ piso 0.2030); NN5 0.1188 → 0.1172 (≈ gpt-oss 0.1177). Mecanismo visível
+   por série: o estado comprimido levou o classificador a apostas `best_single`
+   (ETTM2 série 5: 0.7310); com estado rico ele ficou na semente (0.4531).
+2. **Mesmo com estado rico, o LAYA zero-shot não bate o piso em nenhum
+   dataset** (empata no ETTM2, perde por ~0.001 no NN5). Confirma: o gargalo é
+   a função-objetivo (argmin de 3 janelas), não o tomador de decisão.
+3. **Sem sementes é sempre pior** (7/7 datasets): o piso é proteção real.
+4. **gpt-oss é o único que bate o piso**, e só no ETTM2 (0.1610, via série 5).
+   Nos demais, ≈ piso ± ruído. Em ETTM1/ETTH1/ANP **ninguém** agrega nada.
+5. **Consequência para o fine-tune**: usar estado RICO (multilingual 8192) como
+   input do treino; o rótulo continua sendo o desfecho no teste (§fine-tune).
+
+## Resultados medidos — v0 (zero-shot, english, menu de 16 opções)
 Executado no servidor (GPU), 2026-09-25, `orchestrator_laya_laya_v0/`.
 
 | dataset | LAYA v0 | piso sementes (determinístico) | agente gpt-oss (v5) | ADE | FFORMA |
