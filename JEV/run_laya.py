@@ -214,7 +214,10 @@ def run_dataset(
             )
             attempt = loop.final_attempt
             if attempt is None:
-                raise RuntimeError("no strategy was selected")
+                raise RuntimeError(
+                    "no strategy was selected "
+                    f"(loop trace: {[e.get('action') for e in loop.trace]})"
+                )
             final_origin = attempt.origin
             gate_scores = None
             if gate:

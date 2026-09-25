@@ -402,8 +402,9 @@ def build_staged_questions(
     moves = {
         "combine": "test a combination over a group of models",
         "single": "test one model alone",
-        "accept": "accept the current best strategy",
     }
+    if state.attempts:
+        moves["accept"] = "accept the current best strategy"
     if no_seeds:
         moves["build"] = "build a new group of models first (stable/top-k/pruned)"
     return {
