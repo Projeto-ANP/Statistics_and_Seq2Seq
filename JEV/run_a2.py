@@ -93,6 +93,10 @@ def run_dataset(
     out_dir = os.path.join(results_dir, experiment)
     os.makedirs(out_dir, exist_ok=True)
     csv_path = os.path.join(out_dir, f"{dataset}.csv")
+    # run novo = CSV novo (escrita incremental por série abaixo; nada de
+    # misturar com um run anterior do mesmo version)
+    if os.path.exists(csv_path):
+        os.remove(csv_path)
 
     combinator = LLMRole(model=combinator_model, temperature=0.2, seed=7)
     combinator.reasoning = reasoning
@@ -357,8 +361,12 @@ def run_dataset(
                         "gate_turns": gate_turns,
                         "final_gate": {"scores": scored, "inputs": final_gate_inputs},
                     }, fh, ensure_ascii=False, indent=2, default=str)
-            except Exception:
-                pass
+            except Exception as exc:
+                # NUNCA silencioso: se o artifact não sair, o log diz por quê
+                print(
+                    f"[{idx:>4}] WARNING: artifact falhou: {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
 
             rows.append({
                 "dataset_index": str(idx), "horizon": ing.horizon, "regressor": experiment,
@@ -382,6 +390,12 @@ def run_dataset(
             if floor:
                 floor_rows.append(floor)
             ok += 1
+            # escrita INCREMENTAL: a linha vai pro CSV assim que a série fecha
+            # (run de 2-3 h não perde nada se morrer no meio)
+            pd.DataFrame([rows[-1]]).reindex(columns=COLS).to_csv(
+                csv_path, sep=";", mode="a", header=not os.path.exists(csv_path),
+                index=False,
+            )
             print(
                 f"[{idx:>4}] RESULTADO    {final_spec['combine']:<14} origin={final_origin:<14} "
                 f"| TEST smape={metrics['smape']:.4f} | FLOOR smape={floor['smape'] if floor else float('nan'):.4f}"
@@ -408,9 +422,10 @@ def run_dataset(
                 "ablation_config": f"a2_{version}_{combinator_model.replace(':','-')}",
             })
             print(f"[{idx:>4}] FAILED: {type(exc).__name__}: {exc}")
-
-    frame = pd.DataFrame(rows).reindex(columns=COLS)
-    frame.to_csv(csv_path, sep=";", index=False)
+            pd.DataFrame([rows[-1]]).reindex(columns=COLS).to_csv(
+                csv_path, sep=";", mode="a", header=not os.path.exists(csv_path),
+                index=False,
+            )
 
     elapsed = time.perf_counter() - started
     summary = _summarise(per_series)
