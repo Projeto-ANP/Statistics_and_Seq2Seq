@@ -23,12 +23,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
+import sys
 import time
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "JEV"))
+os.chdir(_ROOT)
 
 LETTERS = "abcdefghij"
 
