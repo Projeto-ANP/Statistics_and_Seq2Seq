@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(_ROOT, "JEV"))
 os.chdir(_ROOT)
 
 import pandas as pd  # noqa: E402
+import numpy as np  # noqa: E402
 
 from run_tsf_orchestrator import DEFAULT_MODELS  # noqa: E402
 from orchestrator_react import ingest as I  # noqa: E402
