@@ -132,6 +132,7 @@ def evaluate(client: Any, records: List[Dict[str, Any]]) -> Dict[str, Any]:
     lats: List[float] = []
     errors: List[str] = []
     confident_taken = confident_wrong = 0
+    decisions: List[Dict[str, Any]] = []  # por decisão (para ranqueamento/auditoria)
 
     for i, rec in enumerate(records):
         questions = {
@@ -153,6 +154,7 @@ def evaluate(client: Any, records: List[Dict[str, Any]]) -> Dict[str, Any]:
             errors.append(f"record {i}: {type(exc).__name__}: {exc}")
             continue
         answers = out.get("answers") or {}
+        rec_p: Dict[str, float] = {}
         for w in WINDOWS:
             ans = answers.get(f"transfer_{w}")
             p = _p_yes(ans)
@@ -162,6 +164,14 @@ def evaluate(client: Any, records: List[Dict[str, Any]]) -> Dict[str, Any]:
                 continue
             probs.append(p)
             labels.append(label)
+            rec_p[w] = p
+            decisions.append({
+                "dataset": rec.get("dataset"), "series": rec.get("series"),
+                "spec": json.dumps(rec.get("spec"), sort_keys=True, default=str),
+                "window": w, "p": round(p, 4), "label": label,
+                "label_val": rec.get("label_val"),
+                "universe_size": rec.get("universe_size"),
+            })
             c = _conf(ans)
             if c is not None:
                 confs.append(c)
@@ -175,17 +185,55 @@ def evaluate(client: Any, records: List[Dict[str, Any]]) -> Dict[str, Any]:
     acc = sum(1 for p, lab in zip(probs, labels) if (p >= 0.5) == bool(lab)) / n
     brier = sum((p - lab) ** 2 for p, lab in zip(probs, labels)) / n
     ce = ece(probs, labels)
-    mean_conf = sum(confs) / len(confs) if confs else float("nan")
+    base_rate = sum(labels) / n
+    always_no_acc = 1.0 - base_rate
+    always_yes_acc = base_rate
+    # Brier dos baselines constantes (P = taxa-base fixa)
+    const_brier = sum((base_rate - lab) ** 2 for lab in labels) / n
+    # ── ranqueamento: o argmax de P escolhe o vencedor do universo? ─────────
+    groups: Dict[Any, Dict[str, Any]] = {}
+    for d in decisions:
+        key = (d["dataset"], d["series"])
+        g = groups.setdefault(key, {"records": {}, "label_val": {}, "universe_size": 0})
+        spec = d["spec"]
+        g["records"].setdefault(spec, []).append(d["p"])
+        g["label_val"][spec] = int(d["label_val"] or 0)
+        g["universe_size"] = max(g["universe_size"], int(d["universe_size"] or 1))
+    argmax_hit = top3_hit = 0
+    n_groups = 0
+    mean_size = 0.0
+    for key, g in groups.items():
+        if not g["records"]:
+            continue
+        n_groups += 1
+        mean_size += g["universe_size"]
+        ranked = sorted(g["records"].items(), key=lambda kv: -sum(kv[1]) / len(kv[1]))
+        winner_specs = [s for s, lv in g["label_val"].items() if lv == 1]
+        if not winner_specs:
+            continue
+        argmax_hit += (1 if ranked[0][0] in winner_specs else 0)
+        top3_hit += (1 if any(s in winner_specs for s, _ in ranked[:3]) else 0)
+    mean_size = mean_size / n_groups if n_groups else 1.0
+    mean_conf = sum(confs) / len(confs) if confs else None
     lats_sorted = sorted(lats)
     p50 = lats_sorted[len(lats_sorted) // 2] if lats_sorted else float("nan")
     p95 = lats_sorted[min(int(len(lats_sorted) * 0.95), len(lats_sorted) - 1)] if lats_sorted else float("nan")
     return {
         "n_decisions": n,
         "n_requests": len(lats),
+        "base_rate": round(base_rate, 4),
         "accuracy": round(acc, 4),
+        "always_no_accuracy": round(always_no_acc, 4),
+        "always_yes_accuracy": round(always_yes_acc, 4),
         "brier": round(brier, 4),
+        "brier_constant_baseline": round(const_brier, 4),
         "ece": round(ce, 4),
-        "mean_confidence": round(mean_conf, 4),
+        "n_groups": n_groups,
+        "mean_universe_size": round(mean_size, 1),
+        "random_argmax_hit": round(1.0 / mean_size, 4),
+        "argmax_picks_winner": round(argmax_hit / n_groups, 4) if n_groups else None,
+        "top3_contains_winner": round(top3_hit / n_groups, 4) if n_groups else None,
+        "mean_confidence": round(mean_conf, 4) if confs else None,
         "confident_taken": confident_taken,
         "confident_wrong": confident_wrong,
         "confident_error_rate": round(confident_wrong / confident_taken, 4)
@@ -194,6 +242,7 @@ def evaluate(client: Any, records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "latency_p95_s": round(p95, 4),
         "errors": errors[:5],
         "n_errors": len(errors),
+        "decisions": decisions,
     }
 
 
@@ -214,10 +263,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             line = line.strip()
             if line:
                 records.append(json.loads(line))
+    # ── amostra por UNIVERSO COMPLETO (dataset, série): o ranqueamento
+    #    (argmax escolhe o vencedor?) exige todos os candidatos do grupo ──────
+    groups: Dict[Any, List[Dict[str, Any]]] = {}
+    for r in records:
+        groups.setdefault((r.get("dataset"), r.get("series")), []).append(r)
+    keys = sorted(groups)
     random.seed(args.seed)
-    if args.limit and len(records) > args.limit:
-        records = random.sample(records, args.limit)
-    print(f"[phase0] {len(records)} registros amostrados de {args.data}", flush=True)
+    random.shuffle(keys)
+    chosen: List[Dict[str, Any]] = []
+    for k in keys:
+        if args.limit and len(chosen) + len(groups[k]) > args.limit and chosen:
+            break
+        chosen.extend(groups[k])
+    records = chosen
+    print(f"[phase0] {len(records)} registros em {len(set((r.get('dataset'), r.get('series')) for r in records))} universos completos de {args.data}",
+          flush=True)
 
     clients: List[Any] = []
     if args.laya:
