@@ -1,7 +1,9 @@
 # Propostas D1–D3 — LAYA dentro do ReAct
 
-Três desenhos, três arquivos independentes, mesma seleção final (gate LAYA
-zero-shot por janela, argmax P) para comparar SÓ a estrutura do loop.
+Três desenhos, três arquivos independentes, mesma seleção final (argmin —
+melhor score de validação do histórico, padrão v5) para comparar SÓ a
+estrutura do loop. O gate LAYA zero-shot por janela roda como DADO de
+análise (gravado nos CSVs/artifacts), não como juiz.
 Nenhum prompt/gate menciona piso/baseline — as sementes são apenas candidatos
 no histórico.
 

@@ -11,7 +11,7 @@ Estrutura por turno:
      (o agente lê por que foi barrado e repropõe no turno seguinte).
   3. O gate (LAY A zero-shot por janela) reavalia o histórico e devolve o
      veredito do turno seguinte (como no A2).
-  4. FINAL: argmax P do gate sobre o histórico completo.
+  4. FINAL: argmin (melhor score de validação). Gate fica como dado.
 
 O verificador NÃO vê accept (a decisão terminal é da seleção final) e se
 desliga após 3 rejeições totais (não pode queimar o orçamento do loop).
@@ -160,6 +160,7 @@ def run_dataset(
             gate_turns: List[Dict[str, Any]] = []
             last_verdict: Dict[str, Any] = {}
             n_rejections = {"value": 0}
+            verify_log: List[Dict[str, Any]] = []
 
             seed_leader = state.best_attempt()
             print(
@@ -204,24 +205,39 @@ def run_dataset(
                     f"\nPROPOSED ACTION: {action} "
                     f"{json.dumps(args, sort_keys=True, default=str)}"
                 )
+                question = {
+                    "verify": {
+                        "type": "noul",
+                        "instructions": (
+                            "Will executing this proposed action plausibly help "
+                            "find a strategy better than the current best? "
+                            "Answer no if the action is incoherent with the "
+                            "state, clearly unpromising, or repeats an idea "
+                            "already tried."
+                        ),
+                    },
+                }
+                t_v = time.perf_counter()
                 try:
-                    out = gate_agent.predict(stext, {
-                        "verify": {
-                            "type": "noul",
-                            "instructions": (
-                                "Will executing this proposed action plausibly help "
-                                "find a strategy better than the current best? "
-                                "Answer no if the action is incoherent with the "
-                                "state, clearly unpromising, or repeats an idea "
-                                "already tried."
-                            ),
-                        },
-                    })
+                    out = gate_agent.predict(stext, question)
                     score = float(out["answers"]["verify"].get("noul", 0.5))
                 except Exception as exc:
                     print(f"[{idx:>4}]     verifier erro ({type(exc).__name__}) → permite",
                           flush=True)
+                    verify_log.append({
+                        "iteration": entry["iteration"], "action": action,
+                        "args": args, "state_text": stext, "question": question,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
                     return None
+                verify_log.append({
+                    "iteration": entry["iteration"], "action": action,
+                    "args": args, "state_text": stext, "question": question,
+                    "answer": dict(out.get("answers") or {}),
+                    "score": round(score, 4),
+                    "verdict": "allow" if score >= VERIFY_THRESHOLD else "reject",
+                    "verify_s": round(time.perf_counter() - t_v, 3),
+                })
                 if score >= VERIFY_THRESHOLD:
                     return None
                 n_rejections["value"] += 1
@@ -233,32 +249,41 @@ def run_dataset(
                 on_step=_on_step, pre_action_check=_verify,
             )
             react_results.append(rr.summary())
+            rr_full = {
+                "summary": rr.summary(),
+                "prompts": rr.prompts,          # system+user+veredito de CADA turno
+                "trajectory": rr.trajectory,    # pensamento/ação/obs por turno
+                "step_details": rr.step_details,  # resposta crua + meta Ollama
+                "errors": rr.errors,
+                "rejections": rr.rejections,
+                "rejection_details": rr.rejection_details,
+            }
             print(
                 f"[{idx:>4}] loop: iters={rr.iterations_used} stop={rr.stop_reason} "
                 f"| rejeições do verificador={rr.rejections} | histórico={len(state.attempts)}",
                 flush=True,
             )
 
-            # ── final: argmax P do gate zero-shot por janela ──────────────────
-            final_origin = "gate"
+            # ── final: argmin (seleção de referência); gate vira dado ────────
+            # O gate zero-shot como juiz final foi medido e perde feio (v2/v3 e
+            # D1 v1: escolheu dba→2.0). O final agora é o MELHOR score de
+            # validação do histórico; os scores do gate ficam gravados.
+            final_origin = "argmin"
             scored, final_gate_inputs = gate_pass(state, series_card, pool_card)
             best_g = max(scored, key=lambda s: s["p_mean"])
             argmin_g = min(scored, key=lambda s: s["score_val"])
-            final_spec = best_g["spec"]
-            if best_g["origin"] == "baseline":
-                final_origin = "gate(baseline)"
+            final_spec = argmin_g["spec"]
             forecast, _ = state.apply_to_test(final_spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
 
             print(
-                f"[{idx:>4}] ESCOLHA DO GATE: {best_g['id']} {best_g['strategy'][:38]} "
-                f"(P={best_g['p_mean']}, windows {best_g['p_windows']}, "
-                f"origin={best_g['origin']})", flush=True,
+                f"[{idx:>4}] FINAL (argmin): {argmin_g['id']} {argmin_g['strategy'][:38]} "
+                f"(score {argmin_g['score_val']:.4f})", flush=True,
             )
             print(
-                f"[{idx:>4}]   argmin seria : {argmin_g['id']} "
-                f"{argmin_g['strategy'][:38]} (score {argmin_g['score_val']:.4f})"
+                f"[{idx:>4}]   gate diria  : {best_g['id']} {best_g['strategy'][:38]} "
+                f"(P={best_g['p_mean']}, windows {best_g['p_windows']}, origin={best_g['origin']})"
                 f"{'  <- gate discorda do argmin' if argmin_g['id'] != best_g['id'] else ''}",
                 flush=True,
             )
@@ -279,9 +304,24 @@ def run_dataset(
                                    "checkpoint": "multilingual"},
                         "seed_leader": seed_leader.brief(include_rationale=False),
                         "floor": floor,
-                        "loop": react_results,
+                        "loop": rr_full,
+                        "attempt_history": [
+                            {
+                                "id": a.attempt_id, "spec": a.spec, "origin": a.origin,
+                                "iteration": a.iteration, "rationale": a.rationale,
+                                "score": round(float(a.score), 6),
+                                "aggregate": {k: (round(v, 6) if isinstance(v, float) else v)
+                                              for k, v in (a.aggregate or {}).items()},
+                                "per_window": a.per_window,
+                                "per_window_scores": [round(float(v), 6)
+                                                     for v in a.per_window_scores],
+                                "n_models": a.n_models,
+                            }
+                            for a in state.attempts
+                        ],
                         "verifier": {"rejections": rr.rejections,
-                                     "details": rr.rejection_details},
+                                     "details": rr.rejection_details,
+                                     "checks": verify_log},
                         "final": {"spec": final_spec, "origin": final_origin,
                                   "gate_choice": {"id": best_g["id"],
                                                   "p_mean": best_g["p_mean"],

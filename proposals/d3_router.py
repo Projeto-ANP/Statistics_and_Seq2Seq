@@ -12,7 +12,7 @@ Estrutura por turno:
   2b. EXPLORAÇÃO: o gpt-oss propõe a ação (ReAct padrão, com o veredito do
       gate no prompt) e ela executa.
   3. O gate (LAY A zero-shot por janela) reavalia o histórico por turno.
-  4. FINAL: argmax P do gate sobre o histórico completo.
+  4. FINAL: argmin (melhor score de validação). Gate fica como dado.
 
 Custo: rotina = 1 passada do LAYA (sem LLM); exploração = 1 chamada do gpt-oss.
 Sem prompt-crutch: nenhum prompt menciona piso/baseline.
@@ -68,6 +68,7 @@ from run_laya import (  # noqa: E402
 )
 
 from d1_plan_verify import (  # noqa: E402
+    STAGNATION_STOP,
     build_shortlist,
     execute_with_glue,
     _pick_entry,
@@ -113,7 +114,8 @@ def _gptoss_turn(
     step = parse_agent_step(raw)
     rec: Dict[str, Any] = {
         "branch": "exploration", "iteration": iteration,
-        "raw": raw[:2000], "llm_call_s": round(llm_s, 4),
+        "system_prompt": system, "user_prompt": user,
+        "raw": raw, "llm_call_s": round(llm_s, 4),
         "thought": (step.thought or "")[:400],
     }
     if not step.ok:
@@ -140,6 +142,7 @@ def _gptoss_turn(
         args["iteration"] = iteration
     ok, obs = call_tool(state, step.action, args, withheld=withheld)
     rec["outcome"] = "ok" if ok else f"tool error: {str(obs.get('detail',''))[:120]}"
+    rec["observation"] = obs if isinstance(obs, dict) else {"value": str(obs)}
     if ok and "already_tested" in obs and obs.get("already_tested"):
         rec["outcome"] = "already tested"
     return rec
@@ -161,15 +164,37 @@ def run_d3_loop(
     gate_pass: Any,
 ) -> Dict[str, Any]:
     """O roteador decide o turno: rotina (LAY A escolhe da shortlist) ou
-    exploração (gpt-oss propõe)."""
+    exploração (gpt-oss propõe). Paradas estruturais (sem prompt-crutch):
+    shortlist exaurida → aceita; 3 turnos de proposta sem novo líder → aceita."""
     scratchpad: List[Dict[str, Any]] = []
     turns: List[Dict[str, Any]] = []
+    executed: set = set()
     stop_reason = "iteration_budget_exhausted"
+    best_prev = state.best_attempt()
+    best_seen = float(best_prev.score) if best_prev is not None else float("inf")
+    best_id = best_prev.attempt_id if best_prev is not None else None
+    stale = 0
     system = PR.build_system_prompt(
         include_history_rules=config.show_attempt_history,
         withheld_tools=withheld, prompt_format=config.prompt_format,
         reorder_weight_tools=config.reorder_weight_tools,
     )
+
+    def _after_execution(action: str, kind: Optional[str]) -> None:
+        nonlocal best_seen, best_id, stale
+        is_proposal = kind in ("weight", "combine", "select", "prune") or (
+            kind is None and action.startswith(("weights_", "combine_", "select_", "prune_", "evaluate_"))
+        )
+        if not is_proposal:
+            return
+        now_best = state.best_attempt()
+        if (now_best is not None and now_best.attempt_id != best_id
+                and float(now_best.score) < best_seen - 1e-12):
+            best_seen = float(now_best.score)
+            best_id = now_best.attempt_id
+            stale = 0
+        else:
+            stale += 1
 
     for turn in range(1, max_iterations + 1):
         verdict = gate_pass()  # veredito fresco do gate para o turno
@@ -177,37 +202,51 @@ def run_d3_loop(
             series_card, pool_card, state, budget=6000,
             scratchpad=scratchpad, dataset_card=dataset_card,
         )
+        router_question = {
+            "routine": {
+                "type": "noul",
+                "instructions": (
+                    "Given the validation landscape and the history, is the "
+                    "best next action already evident from the state (a "
+                    "routine decision), or does it need fresh exploration?"
+                ),
+            },
+        }
         try:
-            out = gate_agent.predict(stext, {
-                "routine": {
-                    "type": "noul",
-                    "instructions": (
-                        "Given the validation landscape and the history, is the "
-                        "best next action already evident from the state (a "
-                        "routine decision), or does it need fresh exploration?"
-                    ),
-                },
-            })
+            out = gate_agent.predict(stext, router_question)
             routine_score = float(out["answers"]["routine"].get("noul", 0.5))
+            router_answer = dict(out.get("answers") or {})
         except Exception as exc:
             print(f"      roteador erro ({type(exc).__name__}) → exploração")
             routine_score = 0.0
+            router_answer = {"error": f"{type(exc).__name__}: {exc}"}
         routine = routine_score >= ROUTINE_THRESHOLD
 
         if routine:
-            shortlist = build_shortlist(state, series_card, pool_card, withheld)
+            shortlist = build_shortlist(state, series_card, pool_card, withheld,
+                                        executed=executed)
+            if not any(e["kind"] in ("weight", "combine", "select", "prune")
+                       for e in shortlist):
+                turns.append({"branch": "routine", "iteration": turn,
+                              "outcome": "shortlist exhausted → accept"})
+                stop_reason = "shortlist_exhausted"
+                break
             try:
-                out2 = gate_agent.predict(stext, {
+                call_question = {
                     "call": {
                         "type": "choice",
                         "instructions": "Which concrete tool call from this shortlist should be executed now?",
                         "criteria": {e["label"]: e["desc"] for e in shortlist},
                     },
-                })
+                }
+                out2 = gate_agent.predict(stext, call_question)
                 choice = str(out2["answers"]["call"].get("choice", ""))
+                call_answer = dict(out2.get("answers") or {})
             except Exception as exc:
                 print(f"      roteador erro ({type(exc).__name__}) → accept")
                 choice = ""
+                call_question = {"call": {"error": f"{type(exc).__name__}: {exc}"}}
+                call_answer = {}
             entry = _pick_entry(shortlist, choice)
             if entry is None:
                 entry = next((e for e in shortlist if e["action"] == "accept"), None)
@@ -215,6 +254,11 @@ def run_d3_loop(
                 "branch": "routine", "iteration": turn,
                 "routine_score": round(routine_score, 3),
                 "chosen": entry["label"] if entry else None,
+                "state_text": stext,
+                "router_question": router_question,
+                "router_answer": router_answer,
+                "call_question": call_question,
+                "call_answer": call_answer,
             }
             if entry is None or entry["action"] == "accept":
                 rec["outcome"] = "accepted"
@@ -224,7 +268,11 @@ def run_d3_loop(
             ok, obs = execute_with_glue(
                 state, entry["action"], entry["args"], turn, withheld,
             )
+            executed.add(f"{entry['action']}|{json.dumps(entry['args'], sort_keys=True, default=str)}")
             rec["outcome"] = "ok" if ok else f"tool error: {str(obs.get('detail',''))[:120]}"
+            rec["observation"] = obs if isinstance(obs, dict) else {"value": str(obs)}
+            if ok:
+                _after_execution(entry["action"], entry["kind"])
             scratchpad.append({
                 "iteration": turn, "branch": "routine",
                 "action": entry["label"],
@@ -232,6 +280,9 @@ def run_d3_loop(
                 "observation_summary": rec["outcome"],
             })
             turns.append(rec)
+            if stale >= STAGNATION_STOP:
+                stop_reason = "stagnation"
+                break
             continue
 
         rec = _gptoss_turn(
@@ -241,6 +292,12 @@ def run_d3_loop(
             config=config, withheld=withheld,
         )
         rec["branch"] = "exploration"
+        rec["state_text"] = stext
+        rec["router_question"] = router_question
+        rec["router_answer"] = router_answer
+        rec["routine_score"] = round(routine_score, 3)
+        if rec.get("outcome") == "ok":
+            _after_execution(rec.get("action", ""), None)
         scratchpad.append({
             "iteration": turn, "branch": "exploration",
             "action": rec.get("action", "?"),
@@ -250,6 +307,9 @@ def run_d3_loop(
         turns.append(rec)
         if rec.get("outcome") == "accepted":
             stop_reason = "agent_accepted"
+            break
+        if stale >= STAGNATION_STOP:
+            stop_reason = "stagnation"
             break
 
     return {
@@ -383,28 +443,26 @@ def run_dataset(
                     flush=True,
                 )
 
-            # ── final: argmax P do gate zero-shot por janela ──────────────────
+            # ── final: argmin (seleção de referência); gate vira dado ────────
             scored, final_gate_inputs = run_gate_pass_windows(
                 state, gate_agent, series_card, pool_card,
             )
             best_g = max(scored, key=lambda s: s["p_mean"])
             argmin_g = min(scored, key=lambda s: s["score_val"])
-            final_spec = best_g["spec"]
-            final_origin = "gate"
-            if best_g["origin"] == "baseline":
-                final_origin = "gate(baseline)"
+            final_spec = argmin_g["spec"]
+            final_origin = "argmin"
             forecast, _ = state.apply_to_test(final_spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
 
             print(
-                f"[{idx:>4}] ESCOLHA DO GATE: {best_g['id']} {best_g['strategy'][:38]} "
-                f"(P={best_g['p_mean']}, windows {best_g['p_windows']}, "
-                f"origin={best_g['origin']})", flush=True,
+                f"[{idx:>4}] FINAL (argmin): {argmin_g['id']} "
+                f"{argmin_g['strategy'][:38]} (score {argmin_g['score_val']:.4f})",
+                flush=True,
             )
             print(
-                f"[{idx:>4}]   argmin seria : {argmin_g['id']} "
-                f"{argmin_g['strategy'][:38]} (score {argmin_g['score_val']:.4f})"
+                f"[{idx:>4}]   gate diria  : {best_g['id']} {best_g['strategy'][:38]} "
+                f"(P={best_g['p_mean']}, windows {best_g['p_windows']}, origin={best_g['origin']})"
                 f"{'  <- gate discorda do argmin' if argmin_g['id'] != best_g['id'] else ''}",
                 flush=True,
             )
@@ -424,6 +482,20 @@ def run_dataset(
                         "seed_leader": seed_leader.brief(include_rationale=False),
                         "floor": floor,
                         "loop": loop,
+                        "attempt_history": [
+                            {
+                                "id": a.attempt_id, "spec": a.spec, "origin": a.origin,
+                                "iteration": a.iteration, "rationale": a.rationale,
+                                "score": round(float(a.score), 6),
+                                "aggregate": {k: (round(v, 6) if isinstance(v, float) else v)
+                                              for k, v in (a.aggregate or {}).items()},
+                                "per_window": a.per_window,
+                                "per_window_scores": [round(float(v), 6)
+                                                     for v in a.per_window_scores],
+                                "n_models": a.n_models,
+                            }
+                            for a in state.attempts
+                        ],
                         "final": {"spec": final_spec, "origin": final_origin,
                                   "gate_choice": {"id": best_g["id"],
                                                   "p_mean": best_g["p_mean"],

@@ -18,7 +18,8 @@ passada de 3 perguntas por turno) e a ESTRUTURA do turno:
   4. FEEDBACK (Agent-as-a-Router, C-A-F): o resultado verificado da ação
      (score aninhado = recompensa determinística, RLVR) entra no contexto do
      turno seguinte via scratchpad.
-  5. FINAL: gate zero-shot por janela sobre o histórico completo.
+  5. FINAL: argmin (melhor score de validação do histórico). O gate fica
+     gravado como dado de análise, não decide.
 
 Sem prompt-crutch: nada aqui menciona piso/baseline; as sementes são apenas
 mais candidatos no histórico.
@@ -73,6 +74,7 @@ COLS: List[str] = CORE_COLUMNS + [
 
 FULL_POOL = "pool1"
 MAX_REJECTIONS = 2  # verificação negativa consecutiva → aceita o líder
+STAGNATION_STOP = 3  # propostas sem novo líder → aceita
 
 # ─────────────────────────── RETRIEVER (tool retrieval determinístico) ───────
 
@@ -84,7 +86,12 @@ def _leader_pool(state: Any) -> str:
     return FULL_POOL
 
 
-def _weight_method_used(state: Any, method: str, pool: str) -> bool:
+def _fp(action: str, args: Dict[str, Any]) -> str:
+    return f"{action}|{json.dumps(args, sort_keys=True, default=str)}"
+
+
+def _weight_method_used(state: Any, tool: str, pool: str) -> bool:
+    method = tool[len("weights_"):]  # nome interno: inverse_error, error_trend, ...
     used = {a.spec.get("weights") for a in state.attempts
             if a.spec.get("combine") == "weighted"}
     for handle, recipe in state.weights.items():
@@ -98,13 +105,16 @@ def build_shortlist(
     series_card: Dict[str, Any],
     pool_card: Dict[str, Any],
     withheld: Dict[str, str],
+    executed: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
     """Monta a shortlist de chamadas CONCRETAS de ferramenta (tool retrieval).
 
     Cada entrada é uma Action + Action Input prontos para executar — o espaço
     de decisão do classificador é pequeno e concreto (literatura de tool
     retrieval: mostrar poucas ferramentas relevantes, não o catálogo inteiro).
+    Entradas já executadas (fingerprint) e pesos já avaliados saem da lista.
     """
+    executed = executed or set()
     pool = _leader_pool(state)
     entries: List[Tuple[str, str, str, Dict[str, Any]]] = []  # (action, kind, desc, args)
 
@@ -150,12 +160,18 @@ def build_shortlist(
     ):
         if combine in withheld:
             continue
+        spec = {"combine": combine.replace("combine_", ""), "pool": pool}
+        norm = state.normalize_spec(spec)
+        if any(state.normalize_spec(a.spec) == norm for a in state.attempts):
+            continue  # já existe como semente/tentativa — avaliar de novo é desperdício
         entries.append((combine, "combine", f"{desc} over {pool}", {"pool": pool}))
     entries.append(("accept", "accept",
                     "accept the current best strategy and stop exploring", {}))
 
     shortlist: List[Dict[str, Any]] = []
     for i, (action, kind, desc, args) in enumerate(entries):
+        if _fp(action, args) in executed:
+            continue  # já foi executado neste loop — não repetir
         shortlist.append({
             "id": f"e{i}",
             "action": action,
@@ -232,19 +248,30 @@ def run_d1_loop(
 ) -> Dict[str, Any]:
     """Um turno = 1 passada do LAYA (plano: move+call+verificação) → execução.
 
-    Devolve o diário completo do loop (turns, respostas, execuções, aceite).
+    Paradas estruturais (sem prompt-crutch): (1) shortlist exaurida → aceita;
+    (2) 3 turnos de proposta sem melhorar o melhor → aceita; (3) verificação
+    negativa 2× seguida → aceita. Devolve o diário completo do loop.
     """
     scratchpad: List[Dict[str, Any]] = []
     turns: List[Dict[str, Any]] = []
+    executed: set = set()
     no_gain_streak = 0
+    stale = 0
     stop_reason = "iteration_budget_exhausted"
-    best_seen = float("inf")
     best_prev = state.best_attempt()
-    if best_prev is not None:
-        best_seen = float(best_prev.score)
+    best_seen = float(best_prev.score) if best_prev is not None else float("inf")
+    best_id = best_prev.attempt_id if best_prev is not None else None
 
     for turn in range(1, max_iterations + 1):
-        shortlist = build_shortlist(state, series_card, pool_card, withheld)
+        shortlist = build_shortlist(state, series_card, pool_card, withheld,
+                                    executed=executed)
+        # (1) nada de proposta sobrando → aceita o líder
+        if not any(e["kind"] in ("weight", "combine", "select", "prune")
+                   for e in shortlist):
+            turns.append({"turn": turn, "move": "accept", "chosen": "accept",
+                          "outcome": "shortlist exhausted → accept"})
+            stop_reason = "shortlist_exhausted"
+            break
         stext = build_state_text(
             series_card, pool_card, state, budget=7000,
             scratchpad=scratchpad, dataset_card=dataset_card,
@@ -293,6 +320,15 @@ def run_d1_loop(
             entry = next((e for e in shortlist if e["action"] == "accept"), None)
             rec["fallback"] = "unrecognized choice → accept"
         rec["chosen"] = entry["label"] if entry else None
+        # ── telemetria integral do turno: o que o LAYA recebeu e respondeu ──
+        rec["state_text"] = stext
+        rec["question"] = question
+        rec["answers"] = answers
+        rec["shortlist"] = [
+            {"id": e["id"], "label": e["label"], "kind": e["kind"],
+             "args": e["args"], "desc": e["desc"]}
+            for e in shortlist
+        ]
 
         if entry is None or entry["action"] == "accept" or move.strip() == "accept":
             stop_reason = "agent_accepted"
@@ -318,7 +354,10 @@ def run_d1_loop(
         ok, obs = execute_with_glue(
             state, entry["action"], entry["args"], turn, withheld,
         )
+        executed.add(_fp(entry["action"], entry["args"]))
         rec["outcome"] = "ok" if ok else f"tool error: {obs.get('detail','')[:120]}"
+        rec["observation"] = obs if isinstance(obs, dict) else {"value": str(obs)}
+        rec["best_after"] = _best_brief(state)
         summary = ""
         if ok:
             summary = _obs_summary(state, obs)
@@ -328,11 +367,19 @@ def run_d1_loop(
         })
         turns.append(rec)
 
-        now_best = state.best_attempt()
-        if now_best is not None and float(now_best.score) < best_seen - 1e-12:
-            best_seen = float(now_best.score)
-        if ok and entry["action"] == "evaluate_strategy":
-            pass  # melhoria é verificada pelo score; sem early-stop extra
+        # ── (2) estagnação: 3 propostas sem novo líder → aceita ─────────────
+        if entry["kind"] in ("weight", "combine", "select", "prune") and ok:
+            now_best = state.best_attempt()
+            if (now_best is not None and now_best.attempt_id != best_id
+                    and float(now_best.score) < best_seen - 1e-12):
+                best_seen = float(now_best.score)
+                best_id = now_best.attempt_id
+                stale = 0
+            else:
+                stale += 1
+            if stale >= STAGNATION_STOP:
+                stop_reason = "stagnation"
+                break
 
     return {
         "turns": turns,
@@ -340,6 +387,18 @@ def run_d1_loop(
         "stop_reason": stop_reason,
         "iterations_used": len(turns),
         "best_score": round(best_seen, 6),
+    }
+
+
+def _best_brief(state: Any) -> Optional[Dict[str, Any]]:
+    b = state.best_attempt()
+    if b is None:
+        return None
+    brief = b.brief(include_rationale=False)
+    return {
+        "id": b.attempt_id, "strategy": brief.get("strategy"),
+        "score": round(float(b.score), 6),
+        "origin": b.origin, "n_models": b.n_models,
     }
 
 
@@ -453,28 +512,30 @@ def run_dataset(
                     f"[{t.get('outcome','?')[:60]}]", flush=True,
                 )
 
-            # ── final: argmax P do gate zero-shot por janela ──────────────────
+            # ── final: argmin (seleção de referência); gate vira dado ────────
+            # O gate zero-shot como juiz final foi medido e perde feio (v2/v3,
+            # e aqui escolheu dba→2.0). O final agora é o MELHOR score de
+            # validação do histórico (princípio 5); os scores do gate ficam
+            # gravados para análise (description + artifact).
             scored, gate_inputs = run_gate_pass_windows(
                 state, gate_agent, series_card, pool_card,
             )
             best_g = max(scored, key=lambda s: s["p_mean"])
             argmin_g = min(scored, key=lambda s: s["score_val"])
-            final_spec = best_g["spec"]
-            final_origin = "gate"
-            if best_g["origin"] == "baseline":
-                final_origin = "gate(baseline)"
+            final_spec = argmin_g["spec"]
+            final_origin = "argmin"
             forecast, _ = state.apply_to_test(final_spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
 
             print(
-                f"[{idx:>4}] ESCOLHA DO GATE: {best_g['id']} "
-                f"{best_g['strategy'][:38]} (P={best_g['p_mean']}, "
-                f"windows {best_g['p_windows']}, origin={best_g['origin']})", flush=True,
+                f"[{idx:>4}] FINAL (argmin): {argmin_g['id']} "
+                f"{argmin_g['strategy'][:38]} (score {argmin_g['score_val']:.4f})",
+                flush=True,
             )
             print(
-                f"[{idx:>4}]   argmin seria : {argmin_g['id']} "
-                f"{argmin_g['strategy'][:38]} (score {argmin_g['score_val']:.4f})"
+                f"[{idx:>4}]   gate diria  : {best_g['id']} {best_g['strategy'][:38]} "
+                f"(P={best_g['p_mean']}, windows {best_g['p_windows']}, origin={best_g['origin']})"
                 f"{'  <- gate discorda do argmin' if argmin_g['id'] != best_g['id'] else ''}",
                 flush=True,
             )
@@ -492,6 +553,20 @@ def run_dataset(
                         "seed_leader": seed_leader.brief(include_rationale=False),
                         "floor": floor,
                         "loop": loop,
+                        "attempt_history": [
+                            {
+                                "id": a.attempt_id, "spec": a.spec, "origin": a.origin,
+                                "iteration": a.iteration, "rationale": a.rationale,
+                                "score": round(float(a.score), 6),
+                                "aggregate": {k: (round(v, 6) if isinstance(v, float) else v)
+                                              for k, v in (a.aggregate or {}).items()},
+                                "per_window": a.per_window,
+                                "per_window_scores": [round(float(v), 6)
+                                                     for v in a.per_window_scores],
+                                "n_models": a.n_models,
+                            }
+                            for a in state.attempts
+                        ],
                         "final": {"spec": final_spec, "origin": final_origin,
                                   "gate_choice": {"id": best_g["id"],
                                                   "p_mean": best_g["p_mean"],
@@ -499,6 +574,7 @@ def run_dataset(
                                   "argmin_choice": {"id": argmin_g["id"],
                                                     "score_val": argmin_g["score_val"]}},
                         "gate_scores": scored,
+                        "gate_inputs": gate_inputs,
                         "metrics": {k: metrics[k] for k in ("smape", "rmse", "pocid", "mape")},
                         "timing": {"serie_total_s": round(time.perf_counter() - t_series_start, 3)},
                     }, fh, ensure_ascii=False, indent=2, default=str)
