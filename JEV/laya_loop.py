@@ -1398,26 +1398,32 @@ def run_gate_pass_windows(
         seen.add(key)
         stext = build_state_text(series_card, pool_card, state, budget=budget)
         stext += "\nCANDIDATE STRATEGY: " + json.dumps(a.spec, sort_keys=True, default=str)
-        questions = []
-        pw = []
-        for w in range(3):
-            q = {
-                "transfer": {
-                    "type": "noul",
-                    "instructions": (
-                        f"Will this candidate strategy be the winner of validation "
-                        f"window {w + 1} of 3, scored leave-one-out (everything else "
-                        f"fitted on the other two windows)? Answer yes only if you "
-                        f"expect it to win that window."
-                    ),
-                }
+        # 3 janelas em UMA passada (o kev e o LAYA respondem multi-pergunta):
+        # 1 request por candidato em vez de 3 — o gate fica ~3x mais rápido
+        questions = {
+            f"transfer_w{w}": {
+                "type": "noul",
+                "instructions": (
+                    f"Will this candidate strategy be the winner of validation "
+                    f"window {w + 1} of 3, scored leave-one-out (everything else "
+                    f"fitted on the other two windows)? Answer yes only if you "
+                    f"expect it to win that window."
+                ),
             }
-            questions.append(q)
-            try:
-                out = agent.predict(stext, q)
-                pw.append(float(out["answers"]["transfer"].get("noul", 0.5)))
-            except Exception:
-                pw.append(0.5)
+            for w in range(3)
+        }
+        pw = []
+        try:
+            out = agent.predict(stext, questions)
+            answers = dict(out.get("answers") or {})
+            for w in range(3):
+                ans = answers.get(f"transfer_w{w}")
+                if isinstance(ans, dict) and isinstance(ans.get("noul"), (int, float)):
+                    pw.append(float(ans["noul"]))
+                else:
+                    pw.append(0.5)
+        except Exception:
+            pw = [0.5, 0.5, 0.5]
         scored.append({
             "id": a.attempt_id,
             "spec": a.spec,
