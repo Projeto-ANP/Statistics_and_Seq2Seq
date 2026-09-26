@@ -4,9 +4,10 @@ Objetivo: escolher com NÚMERO o substituto do LAYA zero-shot nos papéis de
 gate/verificador do ReAct. Tudo abaixo roda SÓ no servidor
 (`lucas.castro@anp4-cisia`, conda env `agno` ativo).
 
-## 1. Baixar e subir os candidatos
+> Eikos foi abandonado (instalação com vLLM deu muito erro). Candidatos agora:
+> **kev** (Apache-2.0, família Jev-like) vs **LAY A multilingual** (referência).
 
-### 1a. kev (Apache-2.0, família Jev-like treinável)
+## 1. Baixar e subir o kev
 
 ```bash
 pip install uv            # se `uv` não existir
@@ -23,24 +24,7 @@ curl -s localhost:8009/v1/systemone -H 'content-type: application/json' -d '{
 ```
 
 Opcional (velocidade): `kev-0.8b` na porta 8010 — `--run jaredpalmer/kev-0.8b --port 8010`.
-
-### 1b. Eikos-4B (MIT, calibrado, Qwen3.5-4B)
-
-```bash
-huggingface-cli download caiovicentino1/Eikos-4B --local-dir ~/models/Eikos-4B
-git clone https://github.com/caiovicentino/eikos.git
-cd eikos
-pip install -U vllm          # requer vLLM >= 0.30 (leitura de logits por letra)
-bash serve_vllm.sh ~/models/Eikos-4B 8001
-nohup python serve.py --model ~/models/Eikos-4B --vllm-url http://127.0.0.1:8001 --port 8000 \
-  > ~/Statistics_and_Seq2Seq/logs/eikos_serve.log 2>&1 &
-cd ~/Statistics_and_Seq2Seq
-```
-
-Se `vllm` falhar na instalação do servidor, alternar para o caminho PyTorch
-do repo do eikos (`python local_demo.py` usa MPS — no servidor usar o
-`serve.py` sem vllm se o repo suportar; senão me avise e eu escrevo um
-adapter transformers direto com o readout de logits das letras).
+Se o kev-4B for pesado demais para a sua GPU ao lado do Ollama, o 0.8B resolve.
 
 ### 1c. JevBench (benchmark citável, 534 decisões congeladas)
 
@@ -57,7 +41,7 @@ pip install -e .
 ```bash
 cd ~/Statistics_and_Seq2Seq
 python3 JEV/eval_systemone.py --laya \
-  --endpoints kev4b=http://127.0.0.1:8009 eikos4b=http://127.0.0.1:8000 \
+  --endpoints kev4b=http://127.0.0.1:8009 \
   --limit 600 --out JEV/phase0_results.json
 ```
 
@@ -74,11 +58,6 @@ python -m jevbench.cli run \
   --adapter typesafe --endpoint http://127.0.0.1:8009 --model kev-latest --key-env "" \
   --results ~/Statistics_and_Seq2Seq/JEV/phase0_jevbench_kev4b.jsonl \
   --raw-dir /tmp/raw_kev --cap-usd 0
-python -m jevbench.cli run \
-  --tasks datasets/public/easy.jsonl,datasets/public/hard.jsonl,datasets/public/original.jsonl \
-  --adapter typesafe --endpoint http://127.0.0.1:8000 --model eikos4b --key-env "" \
-  --results ~/Statistics_and_Seq2Seq/JEV/phase0_jevbench_eikos4b.jsonl \
-  --raw-dir /tmp/raw_eikos --cap-usd 0
 # referência atual: LAYA local
 python -m jevbench.cli run \
   --tasks datasets/public/easy.jsonl,datasets/public/hard.jsonl,datasets/public/original.jsonl \
@@ -87,7 +66,6 @@ python -m jevbench.cli run \
   --raw-dir /tmp/raw_laya --cap-usd 0
 # resumos
 python -m jevbench.cli summarize --tasks datasets/public/easy.jsonl,datasets/public/hard.jsonl,datasets/public/original.jsonl --results ~/Statistics_and_Seq2Seq/JEV/phase0_jevbench_kev4b.jsonl
-python -m jevbench.cli summarize --tasks datasets/public/easy.jsonl,datasets/public/hard.jsonl,datasets/public/original.jsonl --results ~/Statistics_and_Seq2Seq/JEV/phase0_jevbench_eikos4b.jsonl
 python -m jevbench.cli summarize --tasks datasets/public/easy.jsonl,datasets/public/hard.jsonl,datasets/public/original.jsonl --results ~/Statistics_and_Seq2Seq/JEV/phase0_jevbench_laya.jsonl
 ```
 
