@@ -103,6 +103,11 @@ class ReactResult:
     #: Catalog entries this run could not support, mapped to the reason. Recorded
     #: so a row states which action space produced it.
     withheld_tools: Dict[str, str] = field(default_factory=dict)
+    #: Pre-execution verifier rejections (Think Twice, Act Once). When the
+    #: verifier is enabled, a rejected action consumes its iteration and the
+    #: rejection becomes the observation of that turn.
+    rejections: int = 0
+    rejection_details: List[Dict[str, Any]] = field(default_factory=list)
     #: Per-turn record that would bloat the CSV (full raw response, full thought,
     #: Ollama token counters, think-block size); written to the artifacts only.
     step_details: List[Dict[str, Any]] = field(default_factory=list)
@@ -153,6 +158,9 @@ def run_react_loop(
     diagnosis: Optional[Dict[str, Any]] = None,
     gate_verdict: Optional[Any] = None,  # dict fixo OU callable avaliado a cada turno
     on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
+    pre_action_check: Optional[
+        Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]
+    ] = None,
 ) -> ReactResult:
     """Runs the decision loop and returns the winning attempt plus the full trace.
 
@@ -167,6 +175,11 @@ def run_react_loop(
         on_step: called with `(dataset_index, trajectory_entry)` after every turn,
             so a long run can show what the agent is doing instead of only what it
             concluded.
+        pre_action_check: optional verifier, called with the parsed turn entry
+            (action/action_args/thought) BEFORE a tool call executes. Returning
+            `None` executes normally; returning `{"rejected": "<reason>"}` skips
+            execution and feeds the rejection back as the turn's observation
+            (Think Twice, Act Once — the iteration is consumed either way).
     """
     config = config or state.config
     started = time.perf_counter()
@@ -369,6 +382,32 @@ def run_react_loop(
         if step.action == "evaluate_strategy":
             args.setdefault("rationale", step.thought or "")
             args["iteration"] = iteration
+
+        if pre_action_check is not None:
+            # Verificador de etapa (Think Twice, Act Once): decide SE a ação
+            # executa. Não verifica accept — a decisão terminal é da seleção
+            # final, não do turno.
+            reject = pre_action_check({
+                "iteration": iteration,
+                "action": step.action,
+                "action_args": args,
+                "thought": step.thought,
+            })
+            if reject and reject.get("rejected"):
+                reason = str(reject["rejected"])
+                entry["observation_summary"] = f"VERIFIER REJECTED: {reason}"
+                result.rejections += 1
+                result.rejection_details.append({
+                    "iteration": iteration, "action": step.action,
+                    "action_args": args, "reason": reason,
+                })
+                result.trajectory.append(entry)
+                scratchpad.append(entry)
+                last_observation = {
+                    "error": "verifier_rejected", "detail": reason,
+                }
+                _emit(on_step, state, entry)
+                continue
 
         t_tool = time.perf_counter()
         ok, observation = call_tool(state, step.action, args, withheld=withheld)
