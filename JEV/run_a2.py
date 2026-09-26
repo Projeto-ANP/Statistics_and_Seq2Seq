@@ -71,6 +71,7 @@ def run_dataset(
     early_stop_patience: int = 4,
     dataset_card: bool = True,
     consensus: bool = False,
+    stable_select: bool = False,
     indices: Optional[List[int]] = None,
     source_dir: str = DEFAULT_SOURCE_DIR,
     results_dir: str = DEFAULT_RESULTS_DIR,
@@ -275,6 +276,22 @@ def run_dataset(
                     best_g = chosen
                     final_origin = "gate+consensus"
             final_spec = best_g["spec"]
+            if stable_select:
+                # seleção ESTÁVEL (stability selection sobre as 3 janelas):
+                # escolhe pelo MELHOR score MEDIANO por janela, desempatando
+                # pela média — em vez do argmin agregado, que medimos ser
+                # anti-preditivo quando o topo é indistinguível (MCS)
+                attempt_by_id = {a.attempt_id: a for a in state.attempts}
+                def _stable_key(s):
+                    a = attempt_by_id.get(s["id"])
+                    pw = [float(v) for v in (a.per_window_scores or [])] if a else []
+                    med = float(np.median(pw)) if pw else float(s["score_val"])
+                    mean = float(np.mean(pw)) if pw else float(s["score_val"])
+                    return (med, mean)
+                best_st = min(scored, key=_stable_key)
+                if best_st["id"] != best_g["id"]:
+                    final_origin = "stable_select"
+                best_g = best_st
             if best_g["origin"] == "baseline" and final_origin == "gate":
                 final_origin = "gate(baseline)"
             if final_spec is None:
@@ -384,7 +401,7 @@ def run_dataset(
                 "react_stop_reason": react_results[-1].get("stop_reason") if react_results else "",
                 "seed_floor_smape": floor["smape"] if floor else None,
                 "seed_floor_rmse": floor["rmse"] if floor else None,
-                "ablation_config": f"a2_{version}_{combinator_model.replace(':','-')}_i{max_iterations}p{early_stop_patience}{'_consensus' if consensus else ''}",
+                "ablation_config": f"a2_{version}_{combinator_model.replace(':','-')}_i{max_iterations}p{early_stop_patience}{'_consensus' if consensus else ''}{'_stable' if stable_select else ''}",
             })
             per_series.append(metrics)
             if floor:
@@ -467,6 +484,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--consensus", action="store_true",
                    help="final = entre os top-3 por P do gate, o mais próximo "
                         "do CONSENSO das previsões de teste (entradas, sem atual)")
+    p.add_argument("--stable-select", action="store_true",
+                   help="final = melhor score MEDIANO por janela (stability "
+                        "selection, MCS) — sem argmin, sem gate, sem prompt-crutch")
     p.add_argument("--no-dataset-card", action="store_true")
     p.add_argument("--indices", nargs="+", type=int, default=None)
     p.add_argument("--source-dir", default=DEFAULT_SOURCE_DIR)
@@ -491,6 +511,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 max_iterations=args.max_iterations, early_stop_patience=args.patience,
                 dataset_card=not args.no_dataset_card,
                 consensus=args.consensus,
+                stable_select=args.stable_select,
                 indices=args.indices,
                 source_dir=args.source_dir, results_dir=args.results_dir,
             )
