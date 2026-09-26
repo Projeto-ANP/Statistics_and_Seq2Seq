@@ -67,6 +67,8 @@ def run_dataset(
     gate_checkpoint: Optional[str] = None,
     gate_mode: str = "logistic",
     gate_data: str = "JEV/data/gate_dataset.jsonl",
+    gate_url: str = "http://127.0.0.1:8009",
+    argmin_final: bool = False,
     max_iterations: int = 12,
     early_stop_patience: int = 4,
     dataset_card: bool = True,
@@ -132,6 +134,16 @@ def run_dataset(
                                  for k, v in feats.items()},
                 })
             return scored, inputs
+    elif gate_mode == "kev":
+        # kev (Jev-class, Apache-2.0) — drop-in no lugar do LAYA zero-shot:
+        # mesma API de pergunta, mas discrimina de verdade (Fase 0: argmax
+        # melhora o teste vs argmin, enquanto o LAYA zero-shot piora)
+        from kev_gate import KevClient
+
+        kev_client = KevClient(gate_url)
+
+        def gate_pass(state, series_card, pool_card):
+            return run_gate_pass_windows(state, kev_client, series_card, pool_card)
     else:
         def gate_pass(state, series_card, pool_card):
             return run_gate_pass_windows(state, gate_agent, series_card, pool_card)
@@ -155,7 +167,8 @@ def run_dataset(
     gate_label = (
         f"logístico por-janela (LOO, {gate_data})"
         if gate_mode == "logistic"
-        else (gate_checkpoint or "LAY A ZERO-SHOT (smoke — não é o resultado real)")
+        else (f"kev (Jev-class) via {gate_url}" if gate_mode == "kev"
+              else (gate_checkpoint or "LAY A ZERO-SHOT (smoke — não é o resultado real)"))
     )
     print(f"gate         : {gate_label}")
     print(f"meta pre-pass: {time.perf_counter() - t_meta_start:.1f}s (dataset card LOO)")
@@ -294,10 +307,14 @@ def run_dataset(
                 best_g = best_st
             if best_g["origin"] == "baseline" and final_origin == "gate":
                 final_origin = "gate(baseline)"
+            argmin_g = min(scored, key=lambda s: s["score_val"])
+            if argmin_final:
+                # braço de comparação: mesma exploração, final = argmin
+                final_spec = argmin_g["spec"]
+                final_origin = "argmin"
             if final_spec is None:
                 final_spec = state.best_attempt().spec
                 final_origin = "argmin"
-            argmin_g = min(scored, key=lambda s: s["score_val"])
             forecast, _ = state.apply_to_test(final_spec)
             metrics = compute_metrics(forecast, ing.test_values)
             floor = _seed_floor_metrics(state, ing.test_values)
@@ -475,10 +492,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--combinator", default="gpt-oss:20b")
     p.add_argument("--reasoning", default="low")
     p.add_argument("--gate-checkpoint", default=None)
-    p.add_argument("--gate-mode", choices=["logistic", "laya"], default="logistic",
+    p.add_argument("--gate-mode", choices=["logistic", "laya", "kev"], default="logistic",
                    help="logistic = gate logístico por-janela (default, sem GPU); "
-                        "laya = checkpoint fine-tuned")
+                        "laya = checkpoint fine-tuned; "
+                        "kev = kev Jev-class via HTTP (--gate-url)")
     p.add_argument("--gate-data", default="JEV/data/gate_dataset.jsonl")
+    p.add_argument("--gate-url", default="http://127.0.0.1:8009",
+                   help="URL do servidor kev (/v1/systemone) quando --gate-mode kev")
+    p.add_argument("--argmin-final", action="store_true",
+                   help="final = argmin (braço de comparação; exploração idêntica)")
     p.add_argument("--max-iterations", type=int, default=12)
     p.add_argument("--patience", type=int, default=4)
     p.add_argument("--consensus", action="store_true",
@@ -508,6 +530,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 gate_checkpoint=args.gate_checkpoint,
                 gate_mode=args.gate_mode,
                 gate_data=args.gate_data,
+                gate_url=args.gate_url,
+                argmin_final=args.argmin_final,
                 max_iterations=args.max_iterations, early_stop_patience=args.patience,
                 dataset_card=not args.no_dataset_card,
                 consensus=args.consensus,
