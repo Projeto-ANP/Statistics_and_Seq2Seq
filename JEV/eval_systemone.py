@@ -214,10 +214,7 @@ def evaluate(client: Any, records: List[Dict[str, Any]]) -> Dict[str, Any]:
         argmax_hit += (1 if ranked[0][0] in winner_specs else 0)
         top3_hit += (1 if any(s in winner_specs for s, _ in ranked[:3]) else 0)
     mean_size = mean_size / n_groups if n_groups else 1.0
-<<<<<<< HEAD
-=======
     mean_conf = sum(confs) / len(confs) if confs else None
->>>>>>> b46f8c78812b28c02bac04555ae2b6b25786b21e
     lats_sorted = sorted(lats)
     p50 = lats_sorted[len(lats_sorted) // 2] if lats_sorted else float("nan")
     p95 = lats_sorted[min(int(len(lats_sorted) * 0.95), len(lats_sorted) - 1)] if lats_sorted else float("nan")
