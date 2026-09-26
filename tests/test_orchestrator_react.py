@@ -761,8 +761,8 @@ def test_list_attempts_hides_rationale_when_ablation_disables_it():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_catalog_holds_24_tools():
-    assert len(R.TOOLS) == 24
+def test_catalog_holds_25_tools():
+    assert len(R.TOOLS) == 25
     for name in ("series_profile", "select_top_k", "weights_ols", "weights_error_trend",
                  "weights_pooled_meta_model", "combine_dba", "evaluate_strategy"):
         assert name in R.TOOLS

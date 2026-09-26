@@ -772,6 +772,57 @@ def evaluate_strategy(
     }
 
 
+def test_forecast_agreement(
+    state: ReactState, corr_threshold: float = 0.9
+) -> Dict[str, Any]:
+    """Estrutura de concordância das PREVISÕES de teste do pool (entradas).
+
+    Consenso = mediana das previsões por horizonte; dispersão = desvio médio
+    entre horizontes; por modelo: previsão + distância ao consenso (absoluta e
+    relativa à dispersão); clusters = modelos cujas previsões de teste são
+    correlacionadas acima do limiar. O valor REAL do teste nunca é lido.
+    """
+    preds = state.test_preds  # (M, H) — entradas, não saídas
+    consensus = np.median(preds, axis=0)
+    # dispersão ROBUSTA: MAD das previsões em torno do consenso — um único
+    # modelo com previsão explodindo não pode dominar o desvio padrão e zerar
+    # todas as distâncias relativas
+    mad = np.median(np.abs(preds - consensus[None, :]))
+    disp = float(mad)
+    per_model = []
+    for j, name in enumerate(state.model_names):
+        fc = preds[j]
+        dist = float(np.mean(np.abs(fc - consensus)))
+        rel = dist / (disp + 1e-9) if disp > 0 else 0.0
+        per_model.append({
+            "model": name,
+            "forecast": [round(float(v), 3) for v in fc],
+            "dist_to_consensus": round(dist, 4),
+            "rel_dist": round(rel, 3),
+        })
+    C = np.corrcoef(preds)
+    clusters: List[List[str]] = []
+    used = set()
+    for j in range(state.n_models):
+        if j in used:
+            continue
+        grp = [i for i in range(state.n_models)
+               if i not in used and float(C[j, i]) >= corr_threshold]
+        if len(grp) >= 2:
+            clusters.append([state.model_names[i] for i in grp])
+            used.update(grp)
+    return {
+        "consensus": [round(float(v), 3) for v in consensus],
+        "dispersion": round(disp, 4),
+        "per_model": sorted(per_model, key=lambda r: r["dist_to_consensus"]),
+        "clusters": clusters,
+        "note": (
+            "test-window FORECASTS of the pool (inputs only) — the actual test "
+            "values are never read"
+        ),
+    }
+
+
 def sanity_check(state: ReactState, reference: Any) -> Dict[str, Any]:
     """Compares the strategy's test forecast against historical bounds.
 

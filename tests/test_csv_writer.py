@@ -309,7 +309,8 @@ def test_agent_run_is_fully_traceable_from_the_csv(tmp_path, fake_repo):
     trajectory = json.loads(row["react_trajectory_json"])
     assert [t["action"] for t in trajectory] == ["select_top_k", "evaluate_strategy", "accept"]
     assert row["react_iterations_used"] == 3
-    assert row["accept_confidence"] == 0.8
+    # confiança é do classificador; o número que o agente mandou é descartado
+    assert row["accept_confidence"] != row["accept_confidence"]  # NaN
     assert "lean pool" in row["justificativa_final"]
     assert row["best_strategy_method"] == "mean"
     assert json.loads(row["selected_base_models"]) == ["good", "mediocre"]

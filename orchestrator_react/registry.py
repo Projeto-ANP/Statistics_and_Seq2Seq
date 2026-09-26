@@ -26,6 +26,7 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "ranking_stability": T.ranking_stability,
     "error_correlation": T.error_correlation,
     "dm_test": T.dm_test,
+    "test_forecast_agreement": T.test_forecast_agreement,
     # 3.4.2 pool selection
     "select_top_k": T.select_top_k,
     "select_stable": T.select_stable,

@@ -124,8 +124,12 @@ def test_out_of_range_hyperparameters_are_clamped_or_refused():
     assert w.sum() == pytest.approx(1.0) and np.all(w >= 0)
 
 
-def test_the_agent_authors_only_text_and_confidence():
-    """Every number in the CSV is computed, except the confidence it declares."""
+def test_the_agent_authors_only_text():
+    """Every number in the CSV is computed; the agent authors only TEXT.
+
+    A confiança é papel do classificador — mesmo que o agente mande 0.9 no
+    accept, o número é descartado (None).
+    """
     s, series, pool = prepared()
     llm = ScriptedLLM([
         step("evaluate_strategy", {"strategy": {"combine": "median", "pool": FULL_POOL}},
@@ -140,15 +144,15 @@ def test_the_agent_authors_only_text_and_confidence():
     assert attempt.aggregate["RMSE"] > 0.01
     recomputed, _ = s.backtest(attempt.spec)
     assert np.isfinite(recomputed).all()
-    # the only numeric field the agent authors:
-    assert r.accept_confidence == 0.9
+    # o agente não autora NENHUM número:
+    assert r.accept_confidence is None
 
 
-def test_confidence_is_clamped_to_a_probability():
+def test_agent_confidence_is_discarded_even_when_out_of_range():
     s, series, pool = prepared()
     llm = ScriptedLLM([step("accept", {"attempt_id": "a1", "confidence": 42.0})])
     r = run_react_loop(s, llm, series, pool, s.config)
-    assert 0.0 <= r.accept_confidence <= 1.0
+    assert r.accept_confidence is None
 
 
 def test_prose_injection_cannot_forge_a_tool_result():

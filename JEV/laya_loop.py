@@ -1382,14 +1382,15 @@ def run_gate_pass_windows(
     series_card: Dict[str, Any],
     pool_card: Dict[str, Any],
     budget: int = 8000,
-) -> List[Dict[str, Any]]:
+):
     """A2: o gate pontua cada candidato POR JANELA (LOO), 3 perguntas noul.
 
-    O veredito janela-a-janela é o que o LLM lê na rodada seguinte ("o gate
-    acha que isso é frágil na janela recente").
+    Devolve (scored, inputs) — `inputs` guarda o material EXATO enviado ao gate
+    por candidato (estado + perguntas), para mapear/calibrar as escolhas.
     """
     seen = set()
     scored: List[Dict[str, Any]] = []
+    inputs: List[Dict[str, Any]] = []
     for a in state.ranked_attempts():
         key = _spec_key(a.spec)
         if key in seen:
@@ -1397,6 +1398,7 @@ def run_gate_pass_windows(
         seen.add(key)
         stext = build_state_text(series_card, pool_card, state, budget=budget)
         stext += "\nCANDIDATE STRATEGY: " + json.dumps(a.spec, sort_keys=True, default=str)
+        questions = []
         pw = []
         for w in range(3):
             q = {
@@ -1410,6 +1412,7 @@ def run_gate_pass_windows(
                     ),
                 }
             }
+            questions.append(q)
             try:
                 out = agent.predict(stext, q)
                 pw.append(float(out["answers"]["transfer"].get("noul", 0.5)))
@@ -1424,7 +1427,13 @@ def run_gate_pass_windows(
             "p_mean": round(float(np.mean(pw)), 3),
             "origin": a.origin,
         })
-    return scored
+        inputs.append({
+            "id": a.attempt_id,
+            "strategy": a.brief(include_rationale=False)["strategy"],
+            "state_text": stext,
+            "questions": questions,
+        })
+    return scored, inputs
 
 
 def build_verdict(scored: List[Dict[str, Any]]) -> Dict[str, Any]:

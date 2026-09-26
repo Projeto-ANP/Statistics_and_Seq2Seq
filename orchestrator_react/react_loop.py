@@ -106,6 +106,9 @@ class ReactResult:
     #: Per-turn record that would bloat the CSV (full raw response, full thought,
     #: Ollama token counters, think-block size); written to the artifacts only.
     step_details: List[Dict[str, Any]] = field(default_factory=list)
+    #: Os prompts EXATOS enviados ao LLM por turno (system + user), para análise
+    #: de prompt/calibração. Ficam fora do CSV (grandes); vão para os artifacts.
+    prompts: List[Dict[str, str]] = field(default_factory=list)
     #: LLM time of a turn that produced no trajectory entry (API failure that ended the loop).
     llm_failed_turn_s: float = 0.0
     #: Raw model output for every turn the parser could not read. Kept out of the
@@ -212,6 +215,7 @@ def run_react_loop(
             prompt_format=config.prompt_format,
             gate_verdict=gate_verdict,
         )
+        result.prompts.append({"iteration": iteration, "system": system, "user": user})
 
         # Two different things can go wrong asking for one turn, and both are
         # failed generations, not decisions — retrying costs a call; spending one
@@ -452,7 +456,11 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _read_accept(state: ReactState, step: AgentStep):
-    """Validates an `accept` action. Returns `(attempt, confidence, text, problem)`."""
+    """Validates an `accept` action. Returns `(attempt, confidence, text, problem)`.
+
+    O agente NÃO declara confiança: a confiança é papel do classificador (gate).
+    O campo vem sempre None daqui; se o modelo mandar um número, é ignorado.
+    """
     args = step.action_input or {}
     attempt_id = str(
         args.get("attempt_id") or args.get("id") or args.get("attempt") or ""
@@ -470,13 +478,9 @@ def _read_accept(state: ReactState, step: AgentStep):
             return None, None, "", f"unknown attempt_id {attempt_id!r}; known: {known}"
         attempt = match[0]
 
+    # confiança é do classificador, não do agente — qualquer número enviado é
+    # descartado (fica None na telemetria)
     confidence: Optional[float] = None
-    raw_conf = args.get("confidence", args.get("accept_confidence"))
-    if raw_conf is not None:
-        try:
-            confidence = float(np.clip(float(raw_conf), 0.0, 1.0))
-        except (TypeError, ValueError):
-            confidence = None
 
     justification = str(
         args.get("justification") or args.get("rationale") or step.thought or ""

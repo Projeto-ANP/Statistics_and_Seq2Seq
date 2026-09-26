@@ -216,7 +216,7 @@ def test_happy_path_agent_explores_then_accepts():
         step("ranking_stability", {}, "how stable is the ranking?"),
         step("select_top_k", {"k": 3}, "drop the weak models"),
         step("evaluate_strategy", {"strategy": {"combine": "mean", "pool": "pool1"}}, "test the lean pool"),
-        step("accept", {"attempt_id": "a4", "confidence": 0.8,
+        step("accept", {"attempt_id": "a4",
                         "justification": "ranking is unstable so an equal-weight lean pool is safer"},
              "good enough"),
     ])
@@ -224,7 +224,8 @@ def test_happy_path_agent_explores_then_accepts():
 
     assert r.stop_reason == "agent_accepted"
     assert r.iterations_used == 4
-    assert r.accept_confidence == 0.8
+    # confiança é do classificador, não do agente
+    assert r.accept_confidence is None
     assert "unstable" in r.justification
     assert len(r.trajectory) == 4
     assert [t["action"] for t in r.trajectory] == [
@@ -846,17 +847,17 @@ def test_seeded_pools_are_not_attributed_to_the_agent():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_self_reported_confidence_is_recorded_but_not_trusted():
-    """gpt-oss:20b answered 0.9 on all 13 accepts of a 19-series run.
+def test_agent_confidence_is_discarded():
+    """gpt-oss:20b answered 0.9 on all accepts — a constant, i.e. no information.
 
-    The field is kept because the specification asks for it and because "the model
-    always says 0.9" is itself a finding, but nothing downstream depends on it.
+    O contrato agora é: a confiança é papel do classificador (gate). Qualquer
+    número que o agente mandar no accept é DESCARTADO (fica None).
     """
     s, series, pool = prepared(ReactConfig(max_iterations=2))
     llm = ScriptedLLM([step("accept", {"attempt_id": "a1", "confidence": 0.9})])
     r = run_react_loop(s, llm, series, pool, s.config)
-    assert r.accept_confidence == 0.9
-    # the statistical verdict is computed independently of what the model claimed
+    assert r.accept_confidence is None
+    # o veredito estatístico é computado independentemente do que o modelo disse
     assert "confidence" not in json.dumps(s.selection_confidence())
 
 
@@ -1441,7 +1442,7 @@ def test_catalog_flags_default_off_and_do_not_move_the_fingerprint():
         b = ReactConfig()
         setattr(b, flag, True)
         assert a.fingerprint() != b.fingerprint()
-    assert len(R.describe_tools()) == 24
+    assert len(R.describe_tools()) == 25
 
 
 def test_reorder_weight_tools_swaps_only_the_two_entries_and_the_paragraph():
@@ -1458,14 +1459,14 @@ def test_reorder_weight_tools_swaps_only_the_two_entries_and_the_paragraph():
     assert on.index("weights_softmax_neg_error(") < on.index("weights_inverse_error(")
 
 
-def test_drop_redundant_combine_actions_leaves_twenty_and_blocks_the_calls():
+def test_drop_redundant_combine_actions_leaves_twentyone_and_blocks_the_calls():
     s, series, pool = prepared()
     cfg = ReactConfig()
     cfg.drop_redundant_combine_actions = True
     withheld = R.withheld_tools(cfg, n_windows=10)  # enough windows: weights_ols stays
     assert set(R.REDUNDANT_COMBINE_TOOLS) <= set(withheld)
     names = [t["name"] for t in R.describe_tools(withheld)]
-    assert len(names) == 20 and not set(R.REDUNDANT_COMBINE_TOOLS) & set(names)
+    assert len(names) == 21 and not set(R.REDUNDANT_COMBINE_TOOLS) & set(names)
     assert "combine_trimmed_mean" in names and "combine_dba" in names
     ok, obs = R.call_tool(s, "combine_mean", {}, withheld=withheld)
     assert not ok and obs["error"] == "unknown_tool"
