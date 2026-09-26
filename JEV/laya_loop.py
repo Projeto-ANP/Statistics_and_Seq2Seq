@@ -1444,7 +1444,9 @@ def build_verdict(scored: List[Dict[str, Any]]) -> Dict[str, Any]:
         "note": (
             "Use this to guide your next proposals: strengthen the candidates the "
             "gate ranks highest, or test variations of them; avoid repeating ideas "
-            "the gate scores low."
+            "the gate scores low. If your recent proposals were all of the SAME "
+            "kind (e.g., only weighted combinations), test a DIFFERENT kind before "
+            "accepting (e.g., a plain robust combination, pruning, or a single model)."
         ),
     }
 

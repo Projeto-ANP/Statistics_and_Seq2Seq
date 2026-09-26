@@ -18,7 +18,16 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 
 FEATURES = ["score_val", "rank", "margem_pct", "n_attempts", "tau", "n_models",
-            "origin_agent", "turn"]
+            "origin_agent", "turn", "score_consistency"]
+
+
+def _consistency_from_row(r: dict) -> float:
+    """Spread dos scores por janela (val_per_window) — a instabilidade que o
+    argmin ignora. Sem o campo, 0.0."""
+    pw = r.get("val_per_window")
+    if isinstance(pw, list) and len(pw) >= 2:
+        return float(np.std([float(v) for v in pw]))
+    return 0.0
 
 
 class LogisticGate:
@@ -49,6 +58,8 @@ class LogisticGate:
                 "n_models": r.get("n_models"),
                 "origin_agent": 1.0 if r.get("origin") == "agent" else 0.0,
                 "turn": r.get("turn", 0),
+                    "score_consistency": _consistency_from_row(r),
+                "score_consistency": _consistency_from_row(r),
             }
             if any(v is None for v in feats.values()):
                 continue
@@ -108,6 +119,8 @@ class LogisticGateW:
                     "n_models": r.get("n_models"),
                     "origin_agent": 1.0 if r.get("origin") == "agent" else 0.0,
                     "turn": r.get("turn", 0),
+                    "score_consistency": _consistency_from_row(r),
+                "score_consistency": _consistency_from_row(r),
                 }
                 if any(v is None for v in feats.values()):
                     continue
@@ -153,4 +166,8 @@ def candidate_features(state: Any, attempt: Any, pool_card: Dict[str, Any]) -> D
         "n_models": float(n_models),
         "origin_agent": 1.0 if attempt.origin == "agent" else 0.0,
         "turn": float(attempt.iteration or 0),
+        "score_consistency": (
+            float(np.std([float(v) for v in attempt.per_window_scores]))
+            if len(attempt.per_window_scores or []) >= 2 else 0.0
+        ),
     }

@@ -151,7 +151,7 @@ def run_react_loop(
     config: Optional[ReactConfig] = None,
     skip_reason: str = "",
     diagnosis: Optional[Dict[str, Any]] = None,
-    gate_verdict: Optional[Dict[str, Any]] = None,
+    gate_verdict: Optional[Any] = None,  # dict fixo OU callable avaliado a cada turno
     on_step: Optional[Callable[[Optional[int], Dict[str, Any]], None]] = None,
 ) -> ReactResult:
     """Runs the decision loop and returns the winning attempt plus the full trace.
@@ -201,6 +201,7 @@ def run_react_loop(
 
     for iteration in range(1, max_iterations + 1):
         result.iterations_used = iteration
+        verdict = gate_verdict() if callable(gate_verdict) else gate_verdict
         user = P.build_turn_prompt(
             state=state,
             series_card=series_card,
@@ -213,9 +214,10 @@ def run_react_loop(
             show_rationales=config.show_attempt_rationales,
             diagnosis=diagnosis,
             prompt_format=config.prompt_format,
-            gate_verdict=gate_verdict,
+            gate_verdict=verdict,
         )
-        result.prompts.append({"iteration": iteration, "system": system, "user": user})
+        result.prompts.append({"iteration": iteration, "system": system, "user": user,
+                               "gate_verdict": verdict})
 
         # Two different things can go wrong asking for one turn, and both are
         # failed generations, not decisions — retrying costs a call; spending one

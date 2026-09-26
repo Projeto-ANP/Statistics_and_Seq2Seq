@@ -4,7 +4,7 @@
 Por série:
   Fase 2: sementes (piso)
   Rodada r (r=1..R):
-    1. gpt-oss ReAct propõe (orçamento curto por rodada, --per-round)
+    1. gpt-oss ReAct propõe (até --max-iterations iterações, early-stop com --patience, padrão v5)
     2. o GATE (LAY A fine-tuned, alvo por janela LOO) pontua TODO o histórico
        com P por janela + P médio
     3. o LLM da rodada seguinte LÊ o bloco "GATE VERDICT" no prompt e adapta
@@ -67,8 +67,8 @@ def run_dataset(
     gate_checkpoint: Optional[str] = None,
     gate_mode: str = "logistic",
     gate_data: str = "JEV/data/gate_dataset.jsonl",
-    rounds: int = 2,
-    per_round: int = 4,
+    max_iterations: int = 12,
+    early_stop_patience: int = 4,
     dataset_card: bool = True,
     consensus: bool = False,
     indices: Optional[List[int]] = None,
@@ -146,7 +146,7 @@ def run_dataset(
             print(f"WARNING: dataset card falhou ({exc})", flush=True)
 
     print(f"dataset      : {dataset}")
-    print(f"llm          : {combinator_model} reasoning={reasoning} | rodadas={rounds} x {per_round} iters")
+    print(f"llm          : {combinator_model} reasoning={reasoning} | budget={max_iterations} iters, patience {early_stop_patience} (padrão v5)")
     gate_label = (
         f"logístico por-janela (LOO, {gate_data})"
         if gate_mode == "logistic"
@@ -193,11 +193,12 @@ def run_dataset(
                 state.strategy_prior = priors[idx]
             card = PR.build_dataset_card(state) if priors.get(idx) else None
 
-            round_cfg = ReactConfig(max_iterations=per_round)
-            verdict = None
+            round_cfg = ReactConfig(max_iterations=max_iterations,
+                                    early_stop_patience=early_stop_patience)
             react_results = []
-            rounds_info: List[Dict[str, Any]] = []
+            gate_turns: List[Dict[str, Any]] = []
             timing_acc = {"llm_s": 0.0, "gate_s": 0.0}
+            last_verdict: Dict[str, Any] = {}
 
             # ── início da série: o que a etapa determinística entregou ─────
             seed_leader = state.best_attempt()
@@ -211,48 +212,25 @@ def run_dataset(
                 args = json.dumps(entry.get("action_args") or {}, ensure_ascii=False, default=str)[:90]
                 thought = " ".join(str(entry.get("thought") or "").split())[:120]
                 print(
-                    f"[{idx:>4}]   r{r+1}.{entry['iteration']} | {entry.get('action')} {args}",
+                    f"[{idx:>4}] iter {entry['iteration']} | {entry.get('action')} {args}",
                     flush=True,
                 )
                 if thought:
                     print(f"[{idx:>4}]     think: {thought}", flush=True)
 
-            for r in range(rounds):
-                rr = run_react_loop(
-                    state=state, client=client, series_card=series_card,
-                    pool_card=pool_card, config=round_cfg, gate_verdict=verdict,
-                    on_step=_on_step,
-                )
-                react_results.append(rr.summary())
-                t_llm_r = sum(float(e.get("llm_call_s", 0.0)) for e in rr.trajectory)
-                t_tool_r = sum(float(e.get("tool_exec_s", 0.0)) for e in rr.trajectory)
+            def _gate_verdict_fn():
+                # o gate re-avalia o histórico INTEIRO a cada turno e devolve o
+                # veredito fresco para o próximo turno do agente
+                nonlocal last_verdict
                 t_gate_r0 = time.perf_counter()
                 scored, gate_inputs = gate_pass(state, series_card, pool_card)
                 t_gate_r = time.perf_counter() - t_gate_r0
-                verdict = build_verdict(scored)
-                rounds_info.append({
-                    "round": r + 1,
-                    "react": {
-                        "summary": rr.summary(),
-                        "trajectory": rr.trajectory,
-                        "step_details": rr.step_details,
-                        "prompts": rr.prompts,
-                        "errors": rr.errors,
-                    },
-                    "gate": {"scores": scored, "inputs": gate_inputs,
-                             "verdict": verdict},
-                    "timing": {"llm_s": round(t_llm_r, 3),
-                               "llm_tool_exec_s": round(t_tool_r, 3),
-                               "gate_s": round(t_gate_r, 3)},
-                })
-                timing_acc["llm_s"] += t_llm_r
+                last_verdict = build_verdict(scored)
                 timing_acc["gate_s"] += t_gate_r
-                print(
-                    f"[{idx:>4}] rodada {r+1}: +iters={rr.iterations_used} "
-                    f"stop={rr.stop_reason} | histórico={len(state.attempts)} "
-                    f"| LLM={t_llm_r:.1f}s gate={t_gate_r:.2f}s",
-                    flush=True,
-                )
+                gate_turns.append({
+                    "scores": scored, "inputs": gate_inputs,
+                    "verdict": last_verdict, "gate_s": round(t_gate_r, 3),
+                })
                 top = sorted(scored, key=lambda s: -s["p_mean"])[:4]
                 for s in top:
                     cons_s = f" cons={_cons_rel(s['spec'])}" if consensus else ""
@@ -261,6 +239,22 @@ def run_dataset(
                         f"P={s['p_windows']} mean={s['p_mean']}{cons_s} ({s['origin']})",
                         flush=True,
                     )
+                return last_verdict
+
+            rr = run_react_loop(
+                state=state, client=client, series_card=series_card,
+                pool_card=pool_card, config=round_cfg, gate_verdict=_gate_verdict_fn,
+                on_step=_on_step,
+            )
+            react_results.append(rr.summary())
+            t_llm = sum(float(e.get("llm_call_s", 0.0)) for e in rr.trajectory)
+            t_tool = sum(float(e.get("tool_exec_s", 0.0)) for e in rr.trajectory)
+            timing_acc["llm_s"] = t_llm
+            print(
+                f"[{idx:>4}] loop: iters={rr.iterations_used} stop={rr.stop_reason} "
+                f"| histórico={len(state.attempts)} | LLM={t_llm:.1f}s gate={timing_acc['gate_s']:.2f}s",
+                flush=True,
+            )
 
             # ── final: argmax P do gate (ou argmin se sem gate) ─────────────
             final_origin = "gate"
@@ -308,7 +302,7 @@ def run_dataset(
                         "dataset": dataset, "series": int(idx),
                         "config": {
                             "combinator": combinator_model, "reasoning": reasoning,
-                            "rounds": rounds, "per_round": per_round,
+                            "max_iterations": max_iterations, "early_stop_patience": early_stop_patience,
                             "gate_mode": gate_mode, "gate_data": gate_data,
                         },
                         "seed_leader": seed_leader.brief(include_rationale=False)
@@ -358,9 +352,9 @@ def run_dataset(
                             "llm_total_s": round(timing_acc["llm_s"], 3),
                             "gate_total_s": round(timing_acc["gate_s"], 3),
                             "serie_total_s": round(time.perf_counter() - t_series_start, 3),
-                            "per_round": [r_["timing"] for r_ in rounds_info],
+                            "gate_turns": gate_turns,
                         },
-                        "rounds": rounds_info,
+                        "gate_turns": gate_turns,
                         "final_gate": {"scores": scored, "inputs": final_gate_inputs},
                     }, fh, ensure_ascii=False, indent=2, default=str)
             except Exception:
@@ -373,8 +367,8 @@ def run_dataset(
                 "start_test": str(ing.start_test), "final_test": str(ing.final_test),
                 "description": json.dumps({
                     "strategy": final_spec, "origin": final_origin,
-                    "rounds": react_results,
-                    "gate_scores": scored if gate_agent is not None else None,
+                    "loop": react_results,
+                    "gate_scores": scored,
                     "dataset_card": card,
                 }, ensure_ascii=False, default=str),
                 "origin": final_origin,
@@ -382,7 +376,7 @@ def run_dataset(
                 "react_stop_reason": react_results[-1].get("stop_reason") if react_results else "",
                 "seed_floor_smape": floor["smape"] if floor else None,
                 "seed_floor_rmse": floor["rmse"] if floor else None,
-                "ablation_config": f"a2_{version}_{combinator_model.replace(':','-')}_r{rounds}x{per_round}{'_consensus' if consensus else ''}",
+                "ablation_config": f"a2_{version}_{combinator_model.replace(':','-')}_i{max_iterations}p{early_stop_patience}{'_consensus' if consensus else ''}",
             })
             per_series.append(metrics)
             if floor:
@@ -453,8 +447,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="logistic = gate logístico por-janela (default, sem GPU); "
                         "laya = checkpoint fine-tuned")
     p.add_argument("--gate-data", default="JEV/data/gate_dataset.jsonl")
-    p.add_argument("--rounds", type=int, default=2)
-    p.add_argument("--per-round", type=int, default=4)
+    p.add_argument("--max-iterations", type=int, default=12)
+    p.add_argument("--patience", type=int, default=4)
     p.add_argument("--consensus", action="store_true",
                    help="final = entre os top-3 por P do gate, o mais próximo "
                         "do CONSENSO das previsões de teste (entradas, sem atual)")
@@ -479,7 +473,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 gate_checkpoint=args.gate_checkpoint,
                 gate_mode=args.gate_mode,
                 gate_data=args.gate_data,
-                rounds=args.rounds, per_round=args.per_round,
+                max_iterations=args.max_iterations, early_stop_patience=args.patience,
                 dataset_card=not args.no_dataset_card,
                 consensus=args.consensus,
                 indices=args.indices,
