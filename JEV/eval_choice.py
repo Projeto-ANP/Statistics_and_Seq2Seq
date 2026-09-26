@@ -109,25 +109,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     keys = keys[: args.universes]
 
     # ── construir as questões ────────────────────────────────────────────────
+    # Viés de posição medido: kev-4b responde 'a' 82%, kev-0.8b 'b' 52%, LAYA
+    # 'a'+'d' — as letras viciam as escolhas (JevBench: opções invertidas
+    # derrubam 72%→21% em modelos pequenos). Correção: cada universo é
+    # perguntado em 2 ORDENS (normal + invertida); a escolha final do modelo
+    # = spec com MAIOR PROBABILIDADE MÉDIA entre as ordens (permutation
+    # averaging, TypeLLM). Só a discriminação de conteúdo sobrevive.
     questions: List[Dict[str, Any]] = []
     for key in keys:
         cands = records[key]
         cands = sorted(cands, key=lambda r: r["score_val"])[: args.n_options]
-        criteria: Dict[str, str] = {}
-        spec_by_letter: Dict[str, str] = {}
-        for i, r in enumerate(cands):
-            letter = LETTERS[i]
-            spec_by_letter[letter] = json.dumps(r["spec"], sort_keys=True)
-            criteria[letter] = spec_by_letter[letter][:120]
+        specs = [json.dumps(r["spec"], sort_keys=True) for r in cands]
+        truths = {
+            spec: {"score_val": r["score_val"], "smape_test": r["smape_test"]}
+            for r, spec in zip(cands, specs)
+        }
+        state = cands[0]["state"]
+        orders = [specs, list(reversed(specs))]
+        variants = []
+        for order in orders:
+            criteria = {LETTERS[i]: order[i][:120] for i in range(len(order))}
+            variants.append({
+                "criteria": criteria,
+                "letter_to_spec": {LETTERS[i]: order[i] for i in range(len(order))},
+            })
         questions.append({
-            "key": key,
-            "state": cands[0]["state"],
-            "criteria": criteria,
-            "spec_by_letter": spec_by_letter,
-            "truth": {letter: {
-                "score_val": next(c["score_val"] for c in cands if json.dumps(c["spec"], sort_keys=True) == spec_by_letter[letter]),
-                "smape_test": next(c["smape_test"] for c in cands if json.dumps(c["spec"], sort_keys=True) == spec_by_letter[letter]),
-            } for letter in spec_by_letter},
+            "key": key, "state": state, "variants": variants, "truths": truths,
         })
 
     clients: List[Any] = []
@@ -141,9 +148,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     val_winner_test = []   # smape_test do argmin das 4
     test_winner_test = []  # oráculo
     for q in questions:
-        truths = q["truth"]
-        val_winner_test.append(min(t["score_val"] for t in truths.values()) and
-                               min(truths.values(), key=lambda t: t["score_val"])["smape_test"])
+        truths = q["truths"]
+        val_winner_test.append(min(truths.values(), key=lambda t: t["score_val"])["smape_test"])
         test_winner_test.append(min(t["smape_test"] for t in truths.values()))
 
     results: Dict[str, Any] = {"config": {"universes": len(questions),
@@ -155,49 +161,71 @@ def main(argv: Optional[List[str]] = None) -> int:
                                },
                                "models": {}}
 
+    def _probs_from_answer(ans: Any) -> Optional[Dict[str, float]]:
+        if not isinstance(ans, dict):
+            return None
+        probs = ans.get("probabilities")
+        if isinstance(probs, dict) and probs:
+            return {str(k): float(v) for k, v in probs.items()}
+        return None
+
     for client in clients:
         print(f"[choice] avaliando {client.name} ...", flush=True)
         picks: List[str] = []
         lats: List[float] = []
         errors = 0
         for q in questions:
-            question = {
-                "best": {
-                    "type": "choice",
-                    "instructions": (
-                        "Which of these candidate strategies is the best for "
-                        "this series? Choose exactly one letter."
-                    ),
-                    "criteria": q["criteria"],
-                },
-            }
-            try:
-                out, lat = client.ask(q["state"], question)
-                lats.append(lat)
-                ans = (out.get("answers") or {}).get("best")
-                c = _chosen(ans)
-                if c not in q["truth"]:
-                    # aceitar "a)" etc.
-                    c2 = c[:1] if c else None
-                    c = c2 if c2 in q["truth"] else None
-                picks.append(c)
-            except Exception as exc:
-                print(f"  erro: {type(exc).__name__}: {exc}", flush=True)
-                errors += 1
-                picks.append(None)
+            spec_prob_sums: Dict[str, float] = {}
+            spec_counts: Dict[str, int] = {}
+            for variant in q["variants"]:
+                question = {
+                    "best": {
+                        "type": "choice",
+                        "instructions": (
+                            "Which of these candidate strategies is the best for "
+                            "this series? Choose exactly one letter."
+                        ),
+                        "criteria": variant["criteria"],
+                    },
+                }
+                try:
+                    out, lat = client.ask(q["state"], question)
+                    lats.append(lat)
+                    ans = (out.get("answers") or {}).get("best")
+                    probs = _probs_from_answer(ans)
+                    if probs:
+                        for letter, p in probs.items():
+                            spec = variant["letter_to_spec"].get(letter)
+                            if spec is not None:
+                                spec_prob_sums[spec] = spec_prob_sums.get(spec, 0.0) + p
+                    c = _chosen(ans)
+                    spec = variant["letter_to_spec"].get(c or "")
+                    if spec is not None:
+                        spec_counts[spec] = spec_counts.get(spec, 0) + 1
+                except Exception as exc:
+                    print(f"  erro: {type(exc).__name__}: {exc}", flush=True)
+                    errors += 1
+
+            if spec_prob_sums:
+                chosen_spec = max(spec_prob_sums, key=spec_prob_sums.get)
+            elif spec_counts:
+                chosen_spec = max(spec_counts, key=spec_counts.get)
+            else:
+                chosen_spec = None
+            picks.append(chosen_spec)
 
         chosen_test = []
         hit_val = hit_test = 0
         n = 0
-        for q, c in zip(questions, picks):
-            if c is None:
+        for q, spec in zip(questions, picks):
+            if spec is None:
                 continue
             n += 1
-            t = q["truth"][c]
+            t = q["truths"][spec]
             chosen_test.append(t["smape_test"])
-            if t["score_val"] <= min(x["score_val"] for x in q["truth"].values()) + 1e-9:
+            if t["score_val"] <= min(x["score_val"] for x in q["truths"].values()) + 1e-9:
                 hit_val += 1
-            if t["smape_test"] <= min(x["smape_test"] for x in q["truth"].values()) + 1e-9:
+            if t["smape_test"] <= min(x["smape_test"] for x in q["truths"].values()) + 1e-9:
                 hit_test += 1
 
         results["models"][client.name] = {
@@ -210,7 +238,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             "argmin_of_4_baseline": round(float(np.mean(val_winner_test)), 4),
             "chosen_vs_argmin": round(float(np.mean(chosen_test)) - float(np.mean(val_winner_test)), 4) if chosen_test else None,
             "latency_p50_s": round(float(np.median(lats)), 4) if lats else None,
-            "picks": picks,
         }
         print(f"[choice]   {client.name}: {results['models'][client.name]}", flush=True)
 
