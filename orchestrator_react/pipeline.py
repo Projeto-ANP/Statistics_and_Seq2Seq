@@ -511,7 +511,15 @@ def run_series(
         outcome.error = "no strategy was selected"
         return outcome
 
-    if config.final_strategy == "prior_blend":
+    if config.final_strategy == "seed_gate":
+        gated, note = _seed_gated_attempt(state, attempt, config.seed_gate_margin)
+        if gated is not attempt:
+            outcome.warnings.append(note)
+            outcome.react.final_attempt = gated
+            attempt = gated
+        forecast, debug = state.apply_to_test(attempt.spec)
+        debug["method"] = f"{debug.get('method')} (seed_gate)"
+    elif config.final_strategy == "prior_blend":
         # Same single-strategy contract as "argmin"; only the ranking key differs.
         ranked = state.ranked_attempts(blended=True)
         if ranked and ranked[0] is not attempt:
@@ -850,6 +858,41 @@ def _dumps(payload: Any) -> str:
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         return json.dumps({"error": "not serialisable"})
+
+
+def _seed_gated_attempt(
+    state: ReactState, best: Optional[Any], margin: float
+) -> tuple[Optional[Any], str]:
+    """Best seeded baseline unless an agent attempt clears it by `margin`.
+
+    `final_strategy="argmin"` applies the single best validation score of the
+    whole history. With ~10 seeds plus up to `max_iterations` agent proposals,
+    that maximum is taken over many candidates scored on only three windows, so
+    the winner's validation score is optimistically biased and the bias grows
+    with the number of proposals. This gate trades a little upside for less of
+    that bias: an agent attempt is applied only if it improves on the best seed
+    by a relative margin, which is the size of the effect 3-window noise cannot
+    reliably produce.
+    """
+    seeds = [
+        a for a in state.attempts
+        if a.origin == "baseline" and np.isfinite(a.score)
+    ]
+    if not seeds or best is None:
+        return best, ""
+    best_seed = min(seeds, key=lambda a: a.score)
+    if best.origin == "baseline" or not np.isfinite(best.score):
+        return best, ""
+    threshold = float(best_seed.score) * (1.0 - float(margin))
+    if best.score <= threshold:
+        return best, ""
+    note = (
+        f"seed_gate kept {best_seed.attempt_id} ({_strategy_name(best_seed)}) over "
+        f"{best.attempt_id} ({_strategy_name(best)}): the agent best "
+        f"score={best.score:.4f} did not beat the best seed score="
+        f"{best_seed.score:.4f} by the required margin ({float(margin):.2%})."
+    )
+    return best_seed, note
 
 
 def _strategy_name(attempt: Any) -> str:

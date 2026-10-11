@@ -156,9 +156,18 @@ class ReactConfig:
     #: (0.11539 -> 0.11879). Since no honest way to pick alpha was found (fixed,
     #: validation-selected, and stability-gated all fail — details in
     #: `blended_score`), it ships as an explicit opt-in rather than a default.
-    final_strategy: Literal["argmin", "ensemble", "prior_blend"] = "argmin"
+    #: "seed_gate" keeps the best seeded baseline unless an agent proposal beats
+    #: it on validation by a relative margin (`seed_gate_margin`). It exists to
+    #: blunt the winner's curse: the final strategy is the max over every attempt
+    #: tried, so more agent iterations also mean more chances to fit validation
+    #: noise. A margin small enough to be real (1% by default) keeps the seed
+    #: unless the agent's gain is larger than the 3-window noise usually is.
+    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate"] = "argmin"
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
+    #: Relative validation-score improvement an agent attempt must show over the
+    #: best seeded baseline to be applied under `final_strategy="seed_gate"`.
+    seed_gate_margin: float = 0.01
     final_top_m: int = 3
     final_eta: float = 5.0
     #: Seed stability-selected combinations alongside the three full-pool

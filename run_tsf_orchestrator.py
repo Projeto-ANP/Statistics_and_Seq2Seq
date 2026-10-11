@@ -174,6 +174,7 @@ def exec_dataset_orchestrator(
     max_iterations: int = 12,
     early_stop_patience: int = 4,
     final_strategy: str = "argmin",
+    seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
     seed_stable_pools: bool = True,
     pooled_meta_model: bool = True,
@@ -347,6 +348,7 @@ def exec_dataset_orchestrator(
     cfg.max_iterations = int(max_iterations)
     cfg.early_stop_patience = int(early_stop_patience)
     cfg.final_strategy = final_strategy
+    cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
     cfg.seed_stable_pools = bool(seed_stable_pools)
     cfg.pooled_meta_model = bool(pooled_meta_model)
@@ -733,9 +735,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "validation windows (default 5; --windows 3 withholds it)")
     p.add_argument("--max-iterations", type=int, default=12)
     p.add_argument("--early-stop-patience", type=int, default=4)
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble"], default="argmin",
+    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate"],
+                   default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
-                        "averages the top --final-top-m (ablation arm)")
+                        "averages the top --final-top-m (ablation arm); seed_gate "
+                        "keeps the best seeded baseline unless an agent attempt "
+                        "improves on it by --seed-gate-margin (anti winner's curse)")
+    p.add_argument("--seed-gate-margin", type=float, default=0.01,
+                   help="relative validation-score margin the agent must clear over "
+                        "the best seed for seed_gate to apply its proposal (default 0.01)")
     p.add_argument("--final-top-m", type=int, default=3)
     p.add_argument("--no-stable-seeds", action="store_true",
                    help="ablation: seed only the three full-pool baselines")
@@ -823,6 +831,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_iterations=args.max_iterations,
             early_stop_patience=args.early_stop_patience,
             final_strategy=args.final_strategy,
+            seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,
             seed_stable_pools=not args.no_stable_seeds,
             pooled_meta_model=not args.no_pooled_meta_model,

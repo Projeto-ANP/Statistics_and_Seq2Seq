@@ -141,6 +141,12 @@ class OllamaClient:
         content = (message.get("content") if hasattr(message, "get") else getattr(message, "content", "")) or ""
         thinking = (message.get("thinking") if hasattr(message, "get") else getattr(message, "thinking", "")) or ""
         meta: Dict[str, Any] = {"num_ctx": num_ctx, "thinking_chars": len(thinking), "content_chars": len(content)}
+        if thinking:
+            # Persist the reasoning text itself, not just its length: the artifacts
+            # are where a reader checks WHY the agent proposed a strategy, and
+            # `thinking_chars` alone cannot answer that. Truncated to keep the
+            # per-series JSON bounded.
+            meta["thinking_text"] = str(thinking)[:12000]
         if fell_back:
             meta["think_fallback_off"] = True
         for k in _META_KEYS:
