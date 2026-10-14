@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
@@ -103,6 +104,13 @@ class ReactResult:
     #: Catalog entries this run could not support, mapped to the reason. Recorded
     #: so a row states which action space produced it.
     withheld_tools: Dict[str, str] = field(default_factory=dict)
+    #: Scoring weights actually used to rank the history at the end of the loop.
+    #: Filled only with `config.score_preset == "auto_loo"`; the choice is made by
+    #: leave-one-window-out on validation (see `ReactState.auto_score_weights`).
+    score_weights: Dict[str, float] = field(default_factory=dict)
+    score_weights_name: str = ""
+    score_weights_held_out: Optional[float] = None
+    score_weights_skipped: str = ""
     #: Per-turn record that would bloat the CSV (full raw response, full thought,
     #: Ollama token counters, think-block size); written to the artifacts only.
     step_details: List[Dict[str, Any]] = field(default_factory=list)
@@ -110,13 +118,15 @@ class ReactResult:
     llm_failed_turn_s: float = 0.0
     #: Raw model output for every turn the parser could not read. Kept out of the
     #: CSV, which it would bloat, and written to the per-series artifacts instead —
-    #: that is where to look when a model keeps missing the output format.
+    #: that is where you look when a model keeps missing the output format and you
+    #: need to see what it actually said.
     parse_failures: List[Dict[str, Any]] = field(default_factory=list)
-    #: Raw model output for every turn the parser could not read. Kept out of the
-    #: CSV, which would bloat `react_trajectory_json`, and written to the per-series
-    #: artifacts instead — that is where you look when a model keeps missing the
-    #: output format and you need to see what it actually said.
-    parse_failures: List[Dict[str, Any]] = field(default_factory=list)
+    #: ISO timestamps of the whole decision, for the trace.
+    started_at: str = ""
+    finished_at: str = ""
+    #: Timing metrics derived from the turn records (time to first best, leader
+    #: changes, LLM/tool split). Filled by `_finalize_trace`; artifacts only.
+    derived: Dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -133,6 +143,13 @@ class ReactResult:
             "empty_responses": self.empty_responses,
             "llm_error_retries": self.llm_error_retries,
             "withheld_tools": dict(self.withheld_tools),
+            "score_weights": dict(self.score_weights),
+            "score_weights_name": self.score_weights_name,
+            "score_weights_held_out": self.score_weights_held_out,
+            "score_weights_skipped": self.score_weights_skipped,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "derived": dict(self.derived),
             "elapsed_s": round(self.elapsed_s, 2),
             "llm_call_s_total": round(
                 sum(e.get("llm_call_s", 0.0) for e in self.trajectory) + self.llm_failed_turn_s, 4),
@@ -167,6 +184,7 @@ def run_react_loop(
     config = config or state.config
     started = time.perf_counter()
     result = ReactResult(final_attempt=state.best_attempt())
+    result.started_at = _utcnow()
     result.llm_model = getattr(client, "name", "none") if client else "none"
 
     if not state.attempts:
@@ -175,10 +193,18 @@ def run_react_loop(
             "otherwise there is no floor to guarantee the result against"
         )
 
+    # With `score_preset="auto_loo"` the weights are chosen once, from the seeded
+    # history, before the loop opens: exploration, early stopping and the final
+    # ranking all then use the same score. Validation only; see
+    # `ReactState.auto_score_weights`.
+    _apply_auto_score_weights(state, config, result)
+    result.final_attempt = state.best_attempt()
+
     if client is None or skip_reason:
         result.stop_reason = skip_reason or "no_llm_client"
         result.justification = _fallback_justification(state, series_card, pool_card)
         result.elapsed_s = time.perf_counter() - started
+        _finalize_trace(state, result, started)
         result.tools = tools_called_summary(state)
         return result
 
@@ -222,6 +248,7 @@ def run_react_loop(
         #     as before this retry existed.
         # A malformed but non-empty PARSED answer is different from both: that one
         # goes back to the agent as an observation, because it can learn from it.
+        turn_started_at = _utcnow()
         raw = ""
         step = None
         llm_error: Optional[LLMError] = None
@@ -282,6 +309,15 @@ def run_react_loop(
             )
         if llm_error is not None:
             result.llm_failed_turn_s += llm_call_s
+            # A turn that died on the API still belongs in the trace: otherwise the
+            # artifacts would show a gap where the loop actually stopped.
+            result.step_details.append({
+                "iteration": iteration,
+                "action": "",
+                "llm_error": str(llm_error),
+                "llm_call_s": round(llm_call_s, 4),
+                "turn_finished_at": _utcnow(),
+            })
             break
         if step is None:
             break
@@ -297,6 +333,7 @@ def run_react_loop(
         think_text = split_think(raw)[0]
         detail: Dict[str, Any] = {
             "iteration": iteration,
+            "turn_started_at": turn_started_at,
             "action": step.action or "",
             "llm_call_s": round(llm_call_s, 4),
             "llm_calls_in_turn": llm_calls,
@@ -326,6 +363,12 @@ def run_react_loop(
             result.parse_failures.append(
                 {"iteration": iteration, "reason": step.parse_error, "raw": str(step.raw)[:4000]}
             )
+            detail.update({
+                "ok": False,
+                "parse_error": step.parse_error,
+                "observation": observation,
+                "turn_finished_at": _utcnow(),
+            })
             result.trajectory.append(entry)
             scratchpad.append(entry)
             last_observation = observation
@@ -340,6 +383,12 @@ def run_react_loop(
                 last_observation = {"error": "invalid_accept", "detail": problem}
                 state.log_tool(TERMINAL_ACTION, step.action_input, ok=False,
                                error=problem, kind="invalid_argument")
+                detail.update({
+                    "ok": False,
+                    "accept_error": problem,
+                    "observation": last_observation,
+                    "turn_finished_at": _utcnow(),
+                })
                 result.trajectory.append(entry)
                 scratchpad.append(entry)
                 _emit(on_step, state, entry)
@@ -351,6 +400,18 @@ def run_react_loop(
             entry["observation_summary"] = (
                 f"accepted {accepted.attempt_id} (confidence={confidence})"
             )
+            detail.update({
+                "ok": True,
+                "accepted_attempt_id": accepted.attempt_id,
+                "confidence": confidence,
+                "justification": justification,
+                "observation": {
+                    "accepted": accepted.attempt_id,
+                    "confidence": confidence,
+                },
+                "best_before": _attempt_ref(state.best_attempt()),
+                "turn_finished_at": _utcnow(),
+            })
             result.trajectory.append(entry)
             _emit(on_step, state, entry)
             result.stop_reason = "agent_accepted"
@@ -362,10 +423,23 @@ def run_react_loop(
             args.setdefault("rationale", step.thought or "")
             args["iteration"] = iteration
 
+        best_before = state.best_attempt()
         t_tool = time.perf_counter()
         ok, observation = call_tool(state, step.action, args, withheld=withheld)
-        entry["tool_exec_s"] = round(time.perf_counter() - t_tool, 4)
+        tool_exec_s = round(time.perf_counter() - t_tool, 4)
+        best_after = state.best_attempt()
+        entry["tool_exec_s"] = tool_exec_s
         entry["observation_summary"] = P.summarize_observation(step.action, ok, observation)
+        detail.update({
+            "ok": bool(ok),
+            "observation": observation,
+            "tool_exec_s": tool_exec_s,
+            "attempt_id": observation.get("id") if (ok and step.action == "evaluate_strategy") else None,
+            "attempt_rank": observation.get("rank") if (ok and step.action == "evaluate_strategy") else None,
+            "best_before": _attempt_ref(best_before),
+            "best_after": _attempt_ref(best_after),
+            "turn_finished_at": _utcnow(),
+        })
         result.trajectory.append(entry)
         scratchpad.append(entry)
         last_observation = observation
@@ -406,6 +480,7 @@ def run_react_loop(
         result.justification = _fallback_justification(state, series_card, pool_card)
 
     result.elapsed_s = time.perf_counter() - started
+    _finalize_trace(state, result, started)
     result.tools = tools_called_summary(state)
     return result
 
@@ -429,10 +504,105 @@ def _emit(
         pass
 
 
+def _utcnow() -> str:
+    """ISO timestamp for the trace; seconds are enough for a per-series record."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _attempt_ref(attempt: Optional[Attempt]) -> Optional[Dict[str, Any]]:
+    """Compact reference to the current leader, for the per-turn trace."""
+    if attempt is None:
+        return None
+    return {
+        "id": attempt.attempt_id,
+        "score": round(float(attempt.score), 6) if attempt.score == attempt.score else None,
+        "origin": attempt.origin,
+        "strategy": _label(attempt),
+    }
+
+
+def _finalize_trace(state: ReactState, result: "ReactResult", started: float) -> None:
+    """Close the trace with the finish timestamp and the derived timing metrics.
+
+    Everything here is computed from `result.step_details`, which only contains
+    what the loop already recorded: LLM time per turn, tool time, the leader
+    before and after each call. The test window is not involved in any of it.
+    """
+    result.finished_at = _utcnow()
+    details = result.step_details
+    llm_s = sum(float(d.get("llm_call_s") or 0.0) for d in details)
+    tool_s = sum(float(d.get("tool_exec_s") or 0.0) for d in details)
+    scoring = sum(1 for d in details if d.get("action") == "evaluate_strategy" and d.get("ok"))
+    calls = sum(1 for d in details if d.get("action"))
+
+    # Leader sequence, in turn order: when the best attempt changed and at what
+    # point of the decision (accumulated LLM + tool time).
+    leader_changes: List[Dict[str, Any]] = []
+    current_id = result.final_attempt.attempt_id if result.final_attempt else None
+    elapsed = 0.0
+    for d in details:
+        elapsed += float(d.get("llm_call_s") or 0.0) + float(d.get("tool_exec_s") or 0.0)
+        after = d.get("best_after") or {}
+        attempt_id = after.get("id")
+        if attempt_id and attempt_id != current_id:
+            current_id = attempt_id
+            leader_changes.append({
+                "iteration": d.get("iteration"),
+                "attempt_id": attempt_id,
+                "score": after.get("score"),
+                "at_s": round(elapsed, 3),
+            })
+
+    total = llm_s + tool_s
+    result.derived = {
+        "wall_clock_s": round(time.perf_counter() - started, 3),
+        "llm_s": round(llm_s, 3),
+        "tool_s": round(tool_s, 3),
+        "llm_time_share": round(llm_s / total, 4) if total > 0 else None,
+        "turns": len(details),
+        "tool_calls": calls,
+        "scoring_calls": scoring,
+        "non_scoring_calls": max(0, calls - scoring),
+        "parse_failures": len(result.parse_failures),
+        "empty_responses": result.empty_responses,
+        "llm_error_retries": result.llm_error_retries,
+        "best_changes": len(leader_changes),
+        "time_to_first_best_s": leader_changes[0]["at_s"] if leader_changes else None,
+        "time_after_last_improvement_s": (
+            round(elapsed - leader_changes[-1]["at_s"], 3) if leader_changes else None
+        ),
+        "leader_changes": leader_changes,
+        # Runner-up margin and verdict, so the trace says how defensible the pick
+        # was without anyone having to recompute it downstream.
+        "selection": state.selection_confidence(),
+    }
+
+
 def _score(attempt: Optional[Attempt]) -> float:
     if attempt is None or not np.isfinite(attempt.score):
         return float("inf")
     return float(attempt.score)
+
+
+def _apply_auto_score_weights(state: ReactState, config: ReactConfig, result: "ReactResult") -> None:
+    """Per-series choice of the scoring weights, when `score_preset == "auto_loo"`.
+
+    Called once, right after the seeds and before the loop opens: the harness
+    picks the preset favoured by the leave-one-window-out protocol on the three
+    validation windows, applies it, and every evaluation from then on is scored
+    under it. No test data is read: the decision uses `Attempt.per_window` and
+    the mean anchor only. Recorded on the result so the artifacts and the CSV can
+    state which weights were actually used.
+    """
+    if str(getattr(config, "score_preset", "")) != "auto_loo":
+        return
+    choice = state.auto_score_weights(getattr(config, "score_auto_candidates", None))
+    state.apply_score_weights(choice["weights"])
+    result.score_weights = dict(choice["weights"])
+    result.score_weights_name = str(choice.get("name", ""))
+    held_out = choice.get("held_out")
+    result.score_weights_held_out = float(held_out) if isinstance(held_out, (int, float)) else None
+    result.score_weights_skipped = str(choice.get("skipped", ""))
 
 
 def _improved(current: float, previous: float, min_gain: float) -> bool:

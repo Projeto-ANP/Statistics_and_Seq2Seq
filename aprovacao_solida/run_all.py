@@ -7,6 +7,7 @@ Gera, sem LLM, tudo o que falta para fechar a defesa:
     02 replay vencedor versus melhor semente, por run disponivel;
     05 mediana nas sementes (resultado negativo ou positivo);
     06 sensibilidade da selecao aos pesos da pontuacao;
+    07 novas combinacoes (por horizonte, Caruana, best_single) contra o piso;
     03 estatistica pareada por dataset com correcao de Holm;
     04 latencia e custo dos runs existentes.
 
@@ -98,7 +99,7 @@ def main(argv=None):
     p.add_argument("--output-dir", default="outputs/resultados/aprovacao_solida")
     p.add_argument("--log-dir", default="logs/aprovacao_solida")
     p.add_argument("--skip", nargs="*", default=[],
-                   help="etapas a pular: busca replay medianas sensibilidade stats latencia")
+                   help="etapas a pular: busca replay medianas sensibilidade combos stats latencia")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
 
@@ -190,6 +191,19 @@ def main(argv=None):
                 [py, "aprovacao_solida/06_sensibilidade_score/run_score_sensitivity.py",
                  "--run", args.run, "--datasets", *args.datasets,
                  "--out", str(out / "sensibilidade_score.csv"), *limit_args],
+                logs, args.dry_run,
+            ),
+        ))
+
+    # 07 novas combinacoes
+    if "combos" not in skip:
+        results.append((
+            "07_novas_combinacoes",
+            run_step(
+                "07_novas_combinacoes",
+                [py, "aprovacao_solida/07_novas_combinacoes/run_new_combos.py",
+                 "--datasets", *args.datasets,
+                 "--out", str(out / "novas_combinacoes.csv"), *limit_args],
                 logs, args.dry_run,
             ),
         ))

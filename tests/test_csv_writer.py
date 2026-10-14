@@ -73,7 +73,9 @@ def test_new_columns_are_all_present():
 
 
 def test_schema_has_no_duplicates():
-    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 58
+    # 58 columns from Sections 4.1/4.3/4.4 plus the 13 compact agent-telemetry
+    # columns (`AGENT_COLUMNS`).
+    assert len(W.COLS_SERIE) == len(set(W.COLS_SERIE)) == 58 + len(W.AGENT_COLUMNS)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

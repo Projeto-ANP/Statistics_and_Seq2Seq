@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from orchestrator_react import pipeline as _pipeline
 from orchestrator_react.config import LLMRole, ReactConfig
-from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter, compute_metrics
+from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter, compute_metrics, write_dataset_summary
 from orchestrator_react.data_source import DEFAULT_SOURCE_DIR, SeriesAlignmentError
 from orchestrator_react.ingest import DEFAULT_RESULTS_DIR, count_series
 from run_tsf_orchestrator import DEFAULT_MODELS, _external_summary, _summarise
@@ -194,6 +194,15 @@ def exec_dataset_baselines(
     elapsed = time.perf_counter() - started
     log("-" * 74)
     log(f"done in {elapsed:.1f}s | ok: {ok} | failed: {failed}")
+
+    # Same dataset-level rollup as the agent runner: the deterministic arm also
+    # produces a (short) decision trace per series.
+    if writer is not None and save_artifacts:
+        summary_path = write_dataset_summary(
+            outcomes, os.path.join(writer.base_dir, "agent_summary.json")
+        )
+        if summary_path:
+            log(f"agent summary: {summary_path}")
 
     summary_metrics = _summarise(per_series)
     if summary_metrics:

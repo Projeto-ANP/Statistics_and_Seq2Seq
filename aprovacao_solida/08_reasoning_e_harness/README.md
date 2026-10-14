@@ -1,4 +1,4 @@
-# 07 — Rerodar com reasoning controlado (só depois dos itens 01–06)
+# 08 — Rerodar com reasoning controlado (só depois dos itens 01–07)
 
 **Decisão que este item documenta**: vale rerodar tudo com `--reasoning low`?
 A resposta curta é **não às cegas** — faça um A/B de subconjunto primeiro; se o

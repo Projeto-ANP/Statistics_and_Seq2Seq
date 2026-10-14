@@ -18,7 +18,7 @@ import numpy as np
 
 from orchestrator_react import metrics as M
 from orchestrator_react.combiners import COMBINE_METHODS, apply_combination
-from orchestrator_react.config import ReactConfig
+from orchestrator_react.config import SCORE_PRESETS, ReactConfig
 from orchestrator_react.selection import PoolRecipe, resolve_pool_recipe
 from orchestrator_react.weighting import WeightsRecipe, resolve_recipe, summarize_weights
 
@@ -103,6 +103,41 @@ def _numerically_identical(a: Sequence[float], b: Sequence[float], tol: float = 
     return bool(np.allclose(np.asarray(a), np.asarray(b), rtol=tol, atol=tol))
 
 
+def _window_mean(rows: Sequence[Dict[str, float]], key: str, windows: Sequence[int]) -> float:
+    """Mean of one metric over a subset of window rows, ignoring non-finite values."""
+    values: List[float] = []
+    for i in windows:
+        if not (0 <= int(i) < len(rows)):
+            continue
+        try:
+            value = float(rows[int(i)].get(key))
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value):
+            values.append(value)
+    return float(np.mean(values)) if values else float("nan")
+
+
+def _composite_from_windows(
+    per_window: Sequence[Dict[str, float]],
+    anchor_windows: Sequence[Dict[str, float]],
+    windows: Sequence[int],
+    weights: Dict[str, float],
+) -> float:
+    """Composite score over a SUBSET of validation windows, from per-window metrics.
+
+    Used by the leave-one-window-out choice of the score weights. The metrics are
+    averaged window by window, which is exactly how `per_window_scores` is built
+    at evaluation time; it approximates the concatenated aggregate, but it
+    approximates it the same way for every candidate, which is all the ranking
+    needs.
+    """
+    keys = ("MAPE", "SMAPE", "RMSE", "POCID")
+    aggregate = {k: _window_mean(per_window, k, windows) for k in keys}
+    anchor = {k: _window_mean(anchor_windows, k, windows) for k in keys}
+    return float(M.composite_score(aggregate, anchor, weights))
+
+
 class ReactState:
     """Owner of the data and of the evaluation protocol.
 
@@ -175,6 +210,11 @@ class ReactState:
         self._baseline_agg: Optional[Dict[str, float]] = None
         self._baseline_windows: Optional[List[Dict[str, float]]] = None
         self._contiguous: Optional[bool] = None
+        #: Scoring weights actually in use. `None` means "use the config preset";
+        #: with `score_preset="auto_loo"` the per-series weights chosen on
+        #: validation are stored here so every evaluation made after the choice is
+        #: scored under the same criterion the final ranking uses.
+        self._active_score_weights: Optional[Dict[str, float]] = None
 
     # ── validation ───────────────────────────────────────────────────────────
 
@@ -621,6 +661,104 @@ class ReactState:
         combined, _ = self.backtest({"combine": "mean", "pool": FULL_POOL})
         self._baseline_agg, self._baseline_windows = self._score_metrics(combined)
 
+    # ── per-series choice of the scoring weights ─────────────────────────────
+
+    def auto_score_weights(
+        self, candidate_presets: Optional[Sequence[str]] = None
+    ) -> Dict[str, Any]:
+        """Choose the scoring weights per series by leave-one-window-out.
+
+        For each candidate preset, the strategy that the preset would select on
+        two validation windows is scored on the window left out, using a fixed
+        reference preset (`balanced`) so the held-out criterion does not depend
+        on the weights being compared. The preset with the best mean held-out
+        score is returned and can be applied with `apply_score_weights`.
+
+        Only validation data is read: `Attempt.per_window` and
+        `baseline_per_window()` come from the three validation windows, and the
+        test actuals are not reachable from `ReactState` at all.
+        """
+        presets = [str(p) for p in (candidate_presets or SCORE_PRESETS)]
+        reference = dict(SCORE_PRESETS["balanced"])
+        info: Dict[str, Any] = {
+            "name": "balanced",
+            "weights": reference,
+            "held_out": None,
+            "candidates": presets,
+            "skipped": "",
+        }
+        usable = [
+            a for a in self.attempts
+            if a.per_window and len(a.per_window) == self.n_windows and np.isfinite(a.score)
+        ]
+        if self.n_windows < 2 or len(usable) < 2:
+            info["skipped"] = "fewer than 2 validation windows or fewer than 2 scored attempts"
+            return info
+
+        anchor_windows = self.baseline_per_window()
+        best_name: Optional[str] = None
+        best_held = float("inf")
+        for name in presets:
+            weights = dict(SCORE_PRESETS.get(name, reference))
+            held_out: List[float] = []
+            for w in range(self.n_windows):
+                fit_windows = [i for i in range(self.n_windows) if i != w]
+                selected = min(
+                    usable,
+                    key=lambda a: _composite_from_windows(
+                        a.per_window, anchor_windows, fit_windows, weights
+                    ),
+                )
+                held_out.append(
+                    _composite_from_windows(
+                        selected.per_window, anchor_windows, [w], reference
+                    )
+                )
+            held_out = [h for h in held_out if np.isfinite(h)]
+            if not held_out:
+                continue
+            mean_held = float(np.mean(held_out))
+            if mean_held < best_held:
+                best_name, best_held = name, mean_held
+        if best_name is None:
+            info["skipped"] = "no candidate preset produced a finite held-out score"
+            return info
+        info.update(
+            {"name": best_name, "weights": dict(SCORE_PRESETS[best_name]), "held_out": best_held}
+        )
+        return info
+
+    def active_score_weights(self) -> Dict[str, float]:
+        """Weights used to score every attempt.
+
+        Normally the config preset. With `score_preset="auto_loo"` these are the
+        per-series weights chosen by leave-one-window-out on validation, applied
+        before the loop opens so exploration and final ranking share one criterion.
+        """
+        if self._active_score_weights:
+            return dict(self._active_score_weights)
+        return self.config.score_weights()
+
+    def apply_score_weights(self, weights: Dict[str, float]) -> "ReactState":
+        """Make `weights` the active scoring criterion and re-rank the history.
+
+        `Attempt.score` and `per_window_scores` are recomputed from the metrics
+        already stored on each attempt (`aggregate` and `per_window`), so this
+        cannot look at anything the original evaluation did not already see.
+        Attempts evaluated after this call are scored under the same weights in
+        `evaluate`.
+        """
+        self._active_score_weights = dict(weights)
+        anchor = self.baseline_aggregate()
+        anchor_windows = self.baseline_per_window()
+        for a in self.attempts:
+            a.score = float(M.composite_score(a.aggregate, anchor, weights))
+            a.per_window_scores = [
+                float(M.composite_score(a.per_window[i], anchor_windows[i], weights))
+                for i in range(min(len(a.per_window), len(anchor_windows)))
+            ]
+        return self
+
     # ── history ──────────────────────────────────────────────────────────────
 
     def evaluate(
@@ -653,7 +791,7 @@ class ReactState:
             return existing, False
 
         agg, per_window = self._score_metrics(combined)
-        weights = self.config.score_weights()
+        weights = self.active_score_weights()
         score = M.composite_score(agg, self.baseline_aggregate(), weights)
 
         anchor_windows = self.baseline_per_window()

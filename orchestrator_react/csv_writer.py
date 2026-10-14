@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -112,6 +113,28 @@ NEW_COLUMNS: List[str] = [
     "test_min_abs_actual",
 ]
 
+#: Compact per-series telemetry of the decision, one value per column. The full
+#: per-turn trace (observations, leader before/after, timings, attempt registry)
+#: lives in the artifacts under `agent_trace`; these columns exist so the CSV
+#: alone can answer "how long did the agent take, how did it split its time, and
+#: how often did the leader change" without opening every JSON.
+AGENT_COLUMNS: List[str] = [
+    "agent_started_at",
+    "agent_finished_at",
+    "agent_wall_clock_s",
+    "agent_llm_s",
+    "agent_tool_s",
+    "agent_llm_time_share",
+    "agent_turns",
+    "agent_scoring_calls",
+    "agent_non_scoring_calls",
+    "agent_best_changes",
+    "agent_time_to_first_best_s",
+    "agent_time_after_last_improvement_s",
+    "agent_score_weights_name",
+]
+NEW_COLUMNS = NEW_COLUMNS + AGENT_COLUMNS
+
 COLS_SERIE: List[str] = CORE_COLUMNS + KEPT_COLUMNS + NEW_COLUMNS
 
 #: Section 4.2 — must never reappear.
@@ -202,6 +225,39 @@ def zero_actual_diagnostics(actual: Sequence[float]) -> Dict[str, Any]:
     }
 
 
+def _finite(value: Any) -> Optional[float]:
+    """Float for the artifacts, `None` when not finite (JSON has no NaN)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def _agent_columns(outcome: Any) -> Dict[str, Any]:
+    """The compact telemetry columns, filled from the ReactResult and its derived block."""
+    empty = {name: None for name in AGENT_COLUMNS}
+    react = getattr(outcome, "react", None)
+    if react is None:
+        return empty
+    derived = getattr(react, "derived", None) or {}
+    return {
+        "agent_started_at": getattr(react, "started_at", "") or None,
+        "agent_finished_at": getattr(react, "finished_at", "") or None,
+        "agent_wall_clock_s": derived.get("wall_clock_s"),
+        "agent_llm_s": derived.get("llm_s"),
+        "agent_tool_s": derived.get("tool_s"),
+        "agent_llm_time_share": derived.get("llm_time_share"),
+        "agent_turns": derived.get("turns"),
+        "agent_scoring_calls": derived.get("scoring_calls"),
+        "agent_non_scoring_calls": derived.get("non_scoring_calls"),
+        "agent_best_changes": derived.get("best_changes"),
+        "agent_time_to_first_best_s": derived.get("time_to_first_best_s"),
+        "agent_time_after_last_improvement_s": derived.get("time_after_last_improvement_s"),
+        "agent_score_weights_name": getattr(react, "score_weights_name", "") or None,
+    }
+
+
 def build_row(
     outcome: Any,
     regressor: str,
@@ -238,6 +294,7 @@ def build_row(
     fields = outcome.csv_fields()
     fields["llm_artifacts_path"] = llm_artifacts_path
     row.update(fields)
+    row.update(_agent_columns(outcome))
     return row
 
 
@@ -283,6 +340,85 @@ def _cross_series_block(outcome: Any) -> Dict[str, Any]:
     return out
 
 
+def _agent_trace(outcome: Any) -> Dict[str, Any]:
+    """Full per-series record of what the agent did, for the artifacts.
+
+    Validation only. Each turn carries the full observation of the tool call, the
+    leader before and after it (id, score, origin) and the timing; the attempt
+    registry carries every strategy, its rationale, its validation aggregate and
+    its per-window metrics; the decision and stop blocks close the record. The
+    test actuals never appear here: they live in the pipeline outcome and are only
+    turned into metrics by the writer, after the decision is over.
+
+    This block is what makes the behaviour section reproducible end to end: any
+    number quoted about "why the agent chose X" can be traced back to a turn and
+    an attempt id.
+    """
+    react = getattr(outcome, "react", None)
+    state = getattr(outcome, "state", None)
+    if react is None or state is None:
+        return {}
+
+    ranking = {a.attempt_id: i + 1 for i, a in enumerate(state.ranked_attempts())}
+    attempts: List[Dict[str, Any]] = []
+    for a in state.attempts:
+        attempts.append({
+            "id": a.attempt_id,
+            "rank": ranking.get(a.attempt_id),
+            "origin": a.origin,
+            "spec": a.spec,
+            "rationale": a.rationale,
+            "iteration": a.iteration,
+            "n_models": a.n_models,
+            "score": _finite(a.score),
+            "aggregate": {k: _finite(v) for k, v in a.aggregate.items()},
+            "per_window": a.per_window,
+            "per_window_scores": [_finite(v) for v in a.per_window_scores],
+            "agent_converged": bool(a.agent_converged),
+            "agent_rationale": a.agent_rationale,
+        })
+
+    final = react.final_attempt
+    config = getattr(outcome, "config", None)
+    return {
+        "meta": {
+            "dataset": outcome.dataset,
+            "dataset_index": outcome.dataset_index,
+            "horizon": outcome.horizon,
+            "n_windows": state.n_windows,
+            "n_models": state.n_models,
+            "score_preset": getattr(config, "score_preset", None),
+            "ablation_config": config.fingerprint() if config is not None else None,
+        },
+        "turns": list(react.step_details),
+        "attempts": attempts,
+        "decision": {
+            "final_attempt_id": final.attempt_id if final else None,
+            "final_spec": final.spec if final else None,
+            "agent_accepted_id": react.agent_accepted_id,
+            "accept_confidence": react.accept_confidence,
+            "overridden": react.overridden,
+            "justification": react.justification,
+            "score_weights_name": react.score_weights_name,
+            "score_weights": dict(react.score_weights),
+            "score_weights_held_out": react.score_weights_held_out,
+            "score_weights_skipped": react.score_weights_skipped,
+            "selection_confidence": state.selection_confidence(),
+        },
+        "stop": {
+            "stop_reason": react.stop_reason,
+            "iterations_used": react.iterations_used,
+            "early_stopped": react.early_stopped,
+            "elapsed_s": react.elapsed_s,
+            "empty_responses": react.empty_responses,
+            "llm_error_retries": react.llm_error_retries,
+            "withheld_tools": dict(react.withheld_tools),
+            "llm_model": react.llm_model,
+        },
+        "derived": dict(react.derived),
+    }
+
+
 def artifacts_payload(outcome: Any) -> Dict[str, Any]:
     """Full per-series audit trail, written next to the CSV.
 
@@ -323,6 +459,9 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
             # instead of redone per series.
             "tools": outcome.react.tools if outcome.react else {},
         },
+        # The complete decision record of the series, turn by turn. Everything in
+        # it is validation-only; see `_agent_trace`.
+        "agent_trace": _agent_trace(outcome),
         "predict_debug": outcome.predict_debug,
         "sanity": outcome.sanity,
         "report_text": outcome.report_text,
@@ -405,3 +544,84 @@ class ResultWriter:
         frame.to_csv(self.csv_path, sep=";", mode="a", header=False, index=False)
         self.rows_written += 1
         return artifacts_path
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# dataset-level trace
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def dataset_summary(outcomes: Sequence[Any]) -> Dict[str, Any]:
+    """Aggregate the per-series traces of one dataset run, for the artifacts.
+
+    Counts cover every outcome, including the failed ones; the means cover the
+    series that produced a trace. Nothing here reads a test value: the summary is
+    about the DECISION (how long it took, how it was split, how the leader moved,
+    why it stopped), not about accuracy, which the per-series CSV already carries.
+    """
+    n_series = len(outcomes)
+    n_ok = sum(1 for o in outcomes if getattr(o, "success", False))
+    stop_reasons: Counter = Counter()
+    verdicts: Counter = Counter()
+    origins: Counter = Counter()
+    score_weights: Counter = Counter()
+    tools_called: Counter = Counter()
+    overridden = 0
+    derived_values: Dict[str, List[float]] = {}
+
+    for o in outcomes:
+        react = getattr(o, "react", None)
+        if react is None:
+            continue
+        stop_reasons[str(react.stop_reason or "unknown")] += 1
+        origins[str(react.final_attempt.origin) if react.final_attempt else "none"] += 1
+        score_weights[str(react.score_weights_name or "config_preset")] += 1
+        if react.overridden:
+            overridden += 1
+        for entry in (react.tools or {}).get("tools_called", []) or []:
+            if entry.get("ok"):
+                tools_called[str(entry.get("tool"))] += 1
+
+        derived = getattr(react, "derived", None) or {}
+        verdict = (derived.get("selection") or {}).get("verdict")
+        if verdict:
+            verdicts[str(verdict)] += 1
+        for key in (
+            "wall_clock_s", "llm_s", "tool_s", "llm_time_share", "turns",
+            "scoring_calls", "non_scoring_calls", "best_changes",
+            "time_to_first_best_s", "time_after_last_improvement_s",
+        ):
+            value = derived.get(key)
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                derived_values.setdefault(key, []).append(float(value))
+
+    means = {
+        key: round(float(np.mean(values)), 4)
+        for key, values in derived_values.items()
+        if values
+    }
+    return {
+        "n_series": n_series,
+        "n_ok": n_ok,
+        "n_failed": n_series - n_ok,
+        "stop_reasons": dict(stop_reasons),
+        "selection_verdicts": dict(verdicts),
+        "final_origin": dict(origins),
+        "overridden_accepted": overridden,
+        "score_weights_used": dict(score_weights),
+        "tool_calls_ok": dict(tools_called.most_common()),
+        "total_wall_hours": round(sum(derived_values.get("wall_clock_s", [])) / 3600.0, 3),
+        "mean_derived": means,
+    }
+
+
+def write_dataset_summary(outcomes: Sequence[Any], path: str) -> str:
+    """Write `dataset_summary` next to the CSV. Never raises into the run."""
+    payload = dataset_summary(outcomes)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        return ""
+    return path

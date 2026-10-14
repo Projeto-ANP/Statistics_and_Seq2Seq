@@ -29,12 +29,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from orchestrator_react.weighting import per_model_error
+from orchestrator_react.weighting import forward_selection_counts, per_model_error
 
 
 #: Recipes that can be re-fit on a subset of windows. Anything else (an explicit
 #: list of models the agent named) is constant across folds by definition.
-REFITTABLE_METHODS = ("top_k", "stable", "prune_redundant")
+REFITTABLE_METHODS = ("top_k", "stable", "prune_redundant", "forward")
 
 
 def top_k_indices(
@@ -141,6 +141,26 @@ def prune_redundant_indices(
     return np.asarray(kept or base, dtype=int)
 
 
+def forward_indices(
+    y_true: np.ndarray,
+    y_preds: np.ndarray,
+    max_steps: int = 20,
+    metric: str = "rmse",
+) -> np.ndarray:
+    """Caruana forward selection over models, returned as a pool membership.
+
+    The greedy choice itself lives in `weighting.forward_selection_counts`; the
+    subset is the models it picked at least once, ordered by how often they were
+    picked (ties keep the original model order).
+    """
+    counts = forward_selection_counts(y_true, y_preds, max_steps=max_steps, metric=metric)
+    order = np.argsort(-counts, kind="stable")
+    chosen = [int(j) for j in order if counts[j] > 0]
+    if not chosen:
+        return np.arange(y_preds.shape[1], dtype=int)
+    return np.asarray(chosen, dtype=int)
+
+
 @dataclass
 class PoolRecipe:
     """Reproducible description of how a pool was chosen.
@@ -192,6 +212,12 @@ def resolve_pool_recipe(
         return prune_redundant_indices(
             y_true, y_preds, base,
             corr_threshold=float(p.get("corr_threshold", 0.95)),
+            metric=str(p.get("metric", "rmse")),
+        )
+    if method == "forward":
+        return forward_indices(
+            y_true, y_preds,
+            max_steps=int(p.get("max_steps", 20)),
             metric=str(p.get("metric", "rmse")),
         )
     return np.asarray(recipe.resolved, dtype=int)

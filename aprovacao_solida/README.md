@@ -43,11 +43,12 @@ em `logs/aprovacao_solida/`. Para um teste rápido antes do run completo, use
 | 04 | `04_latencia_custo/` | Custo/latência por chamada, reasoning, tokens | não | ~1 min |
 | 05 | `05_sementes_medianas/` | "A mediana ganha em tudo": adicionar mediana às pools estáveis melhora o piso? | não | ~10–30 min |
 | 06 | `06_sensibilidade_score/` | A escolha dos pesos (0,3, 0,3, 0,2, 0,2) dirige os resultados? | não | minutos |
-| 07 | `07_reasoning_e_harness/` | Como (e se) rerodar com `--reasoning low`, mais iterações e `seed_gate` | sim | horas |
+| 07 | `07_novas_combinacoes/` | As novas combinações (por horizonte, Caruana, best_single) melhoram o piso? Aprovadas, entram no catálogo | não | ~30 min |
+| 08 | `08_reasoning_e_harness/` | Como (e se) rerodar com `--reasoning low`, mais iterações e `seed_gate` | sim | horas |
 
 No servidor, toda a bateria determinística roda em um único comando:
 `python3 aprovacao_solida/run_all.py` (Seção "Execução única no servidor").
-A rerodada com LLM, item 07, só depois, e só se os itens anteriores pedirem.
+A rerodada com LLM, item 08, só depois, e só se os itens anteriores pedirem.
 
 ## Respostas diretas às suas dúvidas
 

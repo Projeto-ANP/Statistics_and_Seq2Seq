@@ -73,7 +73,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from orchestrator_react import pipeline as _pipeline
 from orchestrator_react.config import LLMRole, ReactConfig
-from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter, compute_metrics
+from orchestrator_react.csv_writer import COLS_SERIE, ResultWriter, compute_metrics, write_dataset_summary
 from orchestrator_react.data_source import DEFAULT_SOURCE_DIR, SeriesAlignmentError
 from orchestrator_react.ingest import DEFAULT_RESULTS_DIR, count_series
 from orchestrator_react.llm import build_client, check_client
@@ -187,6 +187,7 @@ def exec_dataset_orchestrator(
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
+    score_auto_candidates: Optional[Sequence[str]] = None,
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
@@ -360,6 +361,7 @@ def exec_dataset_orchestrator(
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
+    cfg.score_auto_candidates = list(score_auto_candidates) if score_auto_candidates else None
     cfg.show_attempt_history = bool(show_attempt_history)
     cfg.prompt_format = prompt_format
     cfg.reorder_weight_tools = bool(reorder_weight_tools)
@@ -621,6 +623,16 @@ def exec_dataset_orchestrator(
     log("-" * 74)
     log(f"done in {elapsed:.1f}s | ok: {ok} | failed: {failed}")
 
+    # The per-series traces are written by the writer; this is the dataset-level
+    # rollup of the same records (how long the decisions took, how the time was
+    # split, why they stopped), written next to the CSV.
+    if writer is not None and save_artifacts:
+        summary_path = write_dataset_summary(
+            outcomes, os.path.join(writer.base_dir, "agent_summary.json")
+        )
+        if summary_path:
+            log(f"agent summary: {summary_path}")
+
     summary_metrics = _summarise(per_series)
     if summary_metrics:
         log("")
@@ -783,7 +795,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "hurts NN5 at any value >0 (see ARQUITETURA.md)")
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
-    p.add_argument("--score-preset", default="balanced")
+    p.add_argument("--score-preset", default="balanced",
+                   help="composite-score preset used to rank strategies (any key of "
+                        "orchestrator_react.config.SCORE_PRESETS), or 'auto_loo': the "
+                        "harness then chooses the preset per series by "
+                        "leave-one-window-out on VALIDATION only")
+    p.add_argument("--score-auto-candidates", nargs="+", default=None,
+                   help="presets the automatic choice may pick from (default: all)")
     p.add_argument("--no-history", action="store_true", help="ablation 4: hide the attempt history")
     p.add_argument("--calibration-gate", action="store_true")
 
@@ -848,6 +866,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,
+            score_auto_candidates=args.score_auto_candidates,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,
             reorder_weight_tools=args.reorder_weight_tools,

@@ -27,6 +27,9 @@ WEIGHT_METHODS = (
     "ols",
     "feature_based",
     "pooled_meta_model",
+    "best_per_horizon",
+    "topk_mean_per_horizon",
+    "forward_selection",
 )
 ERROR_METRICS = ("rmse", "mae", "smape")
 
@@ -304,6 +307,115 @@ def _pointwise_error_grid(
     raise ValueError(f"unknown error metric: {metric!r} (valid: {ERROR_METRICS})")
 
 
+def _point_error(truth: np.ndarray, pred: np.ndarray, metric: str) -> float:
+    """Pointwise error of one flattened forecast vector (used by forward selection)."""
+    if metric == "mae":
+        return float(np.nanmean(np.abs(pred - truth)))
+    if metric == "smape":
+        denom = np.abs(pred) + np.abs(truth)
+        denom = np.where(denom == 0, np.nan, denom)
+        return float(np.nanmean(2.0 * np.abs(pred - truth) / denom))
+    return float(np.sqrt(np.nanmean((pred - truth) ** 2)))
+
+
+def forward_selection_counts(
+    y_true: np.ndarray,
+    y_pool: np.ndarray,
+    max_steps: int = 20,
+    metric: str = "rmse",
+) -> np.ndarray:
+    """Caruana's greedy ensemble selection with replacement, as selection counts.
+
+    Starts from the empty ensemble and, at each step, adds the pool model that
+    most reduces the error of the running average over the given windows. The
+    counts divided by their total are the classical Caruana weights; the models
+    with non-zero counts are the selected subset. Stops when no addition improves
+    the error or when `max_steps` is reached.
+    """
+    truth = np.asarray(y_true, dtype=float).reshape(-1)
+    pool = np.asarray(y_pool, dtype=float)
+    preds = pool.transpose(1, 0, 2).reshape(pool.shape[1], -1)
+    n_pool = preds.shape[0]
+    counts = np.zeros(n_pool, dtype=float)
+    running = np.zeros(preds.shape[1], dtype=float)
+    total = 0
+    best = float("inf")
+    for _ in range(max(1, int(max_steps))):
+        errors = [
+            _point_error(truth, (running + preds[j]) / (total + 1), metric)
+            for j in range(n_pool)
+        ]
+        j = int(np.argmin(errors))
+        if not np.isfinite(errors[j]) or (total > 0 and errors[j] >= best - 1e-12):
+            break
+        running = running + preds[j]
+        total += 1
+        counts[j] += 1.0
+        best = errors[j]
+    if counts.sum() <= 0:
+        return np.ones(n_pool, dtype=float)
+    return counts
+
+
+def weights_forward_selection(
+    y_true: np.ndarray,
+    y_pool: np.ndarray,
+    max_steps: int = 20,
+    metric: str = "rmse",
+) -> np.ndarray:
+    """Caruana weights: selection counts normalised to the simplex."""
+    counts = forward_selection_counts(y_true, y_pool, max_steps=max_steps, metric=metric)
+    total = counts.sum()
+    return counts / total if total > 0 else _uniform(counts.size)
+
+
+def weights_best_per_horizon(
+    y_true: np.ndarray,
+    y_pool: np.ndarray,
+    metric: str = "rmse",
+) -> np.ndarray:
+    """One-hot per horizon: the pool model with the lowest error at each step.
+
+    Mirrors the old orchestrator's `best_per_horizon`, which the ReAct catalog
+    dropped. Returns `(n_pool, horizon)`.
+    """
+    err = per_model_error(y_true, y_pool, metric=metric, per_horizon=True)
+    n_pool, horizon = err.shape
+    weights = np.zeros((n_pool, horizon), dtype=float)
+    for h in range(horizon):
+        column = np.where(np.isfinite(err[:, h]), err[:, h], np.inf)
+        if not np.any(np.isfinite(column)):
+            weights[:, h] = _uniform(n_pool)
+            continue
+        weights[int(np.argmin(column)), h] = 1.0
+    return weights
+
+
+def weights_topk_mean_per_horizon(
+    y_true: np.ndarray,
+    y_pool: np.ndarray,
+    k: int = 3,
+    metric: str = "rmse",
+) -> np.ndarray:
+    """Equal weights on the k lowest-error models at each horizon.
+
+    Returns `(n_pool, horizon)`, so it composes with `combine_weighted` exactly
+    like any other per-horizon recipe.
+    """
+    err = per_model_error(y_true, y_pool, metric=metric, per_horizon=True)
+    n_pool, horizon = err.shape
+    k = int(np.clip(int(k), 1, n_pool))
+    weights = np.zeros((n_pool, horizon), dtype=float)
+    for h in range(horizon):
+        column = np.where(np.isfinite(err[:, h]), err[:, h], np.inf)
+        if not np.any(np.isfinite(column)):
+            weights[:, h] = _uniform(n_pool)
+            continue
+        keep = np.argsort(column)[:k]
+        weights[keep, h] = 1.0 / keep.size
+    return weights
+
+
 def weights_ols(
     y_true: np.ndarray,
     y_pool: np.ndarray,
@@ -571,6 +683,25 @@ def resolve_recipe(
             eta=float(p.get("eta", 1.0)),
             damping=p.get("damping", None),
         )
+
+    if method == "best_per_horizon":
+        return weights_best_per_horizon(
+            y_true, y_pool, metric=p.get("metric", "rmse")
+        ), {"mode": "best_per_horizon"}
+
+    if method == "topk_mean_per_horizon":
+        return weights_topk_mean_per_horizon(
+            y_true, y_pool,
+            k=int(p.get("k", 3)),
+            metric=p.get("metric", "rmse"),
+        ), {"mode": "topk_mean_per_horizon"}
+
+    if method == "forward_selection":
+        return weights_forward_selection(
+            y_true, y_pool,
+            max_steps=int(p.get("max_steps", 20)),
+            metric=p.get("metric", "rmse"),
+        ), {"mode": "forward_selection"}
 
     if method == "ols":
         w = weights_ols(

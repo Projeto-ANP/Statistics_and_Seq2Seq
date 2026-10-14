@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 
 # Composite-score weights (lower is better). Kept compatible with the historical
@@ -234,7 +234,16 @@ class ReactConfig:
     #: worth it — `weights_pooled_meta_model` is withheld for every series, the
     #: same way `weights_ols` is withheld under too few validation windows.
     pooled_meta_model_min_series: int = 20
+    #: Composite-score weights used to rank candidate strategies. Any key of
+    #: `SCORE_PRESETS`, or `"auto_loo"`: the harness then chooses, per series, the
+    #: preset that a leave-one-window-out protocol on VALIDATION favours (see
+    #: `ReactState.auto_score_weights`). `"auto_loo"` never reads the test window;
+    #: the test actuals are not even reachable from the state the harness ranks.
+    #:
+    #: `score_auto_candidates` narrows the candidate presets for the automatic
+    #: choice; `None` means all of them.
     score_preset: str = "balanced"
+    score_auto_candidates: Optional[List[str]] = None
     n_validation_windows: int = 3
     seasonal_period: Optional[int] = None  # None => inferred from the frequency
     mape_zero: Literal["skip", "epsilon"] = "skip"

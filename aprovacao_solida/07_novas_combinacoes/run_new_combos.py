@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Testa as novas combinacoes offline, antes de entrarem no catalogo do agente.
+
+Candidatas, todas deterministicas e so com validacao:
+
+    best_per_horizon        pesos one-hot por passo do horizonte
+    topk_mean_per_horizon   media dos k melhores por passo
+    forward_selection       pesos de Caruana (selecao gulosa com reposicao)
+    forward_mean            subconjunto de Caruana combinado por media
+    best_single_validation  melhor modelo individual escolhido na validacao
+
+Cada candidata e comparada com o piso (melhor das sementes): score de validacao
+(para ver se ela seria selecionada) e metricas de TESTE (para confirmar). Nada
+aqui altera o catalogo, o prompt ou as sementes; as receitas novas vivem em
+`orchestrator_react/weighting.py` e `selection.py` e so entram no catalogo se
+passarem neste teste.
+
+Uso:
+
+    conda activate agno
+    cd ~/Statistics_and_Seq2Seq
+    nohup python3 aprovacao_solida/07_novas_combinacoes/run_new_combos.py \\
+        > logs/new_combos.log 2>&1 &
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+
+import numpy as np
+import pandas as pd
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PARENT = os.path.dirname(_HERE)
+for _p in (_PARENT, os.path.dirname(_PARENT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from _common import DATASETS, DEFAULT_RESULTS_DIR, detect_drop, load_context, v5_config  # noqa: E402
+
+from orchestrator_react import ingest as ingest_mod  # noqa: E402
+from orchestrator_react import pipeline as pipeline_mod  # noqa: E402
+from orchestrator_react import pool as pool_mod  # noqa: E402
+from orchestrator_react.csv_writer import compute_metrics  # noqa: E402
+from orchestrator_react.data_source import DEFAULT_SOURCE_DIR  # noqa: E402
+from orchestrator_react.selection import PoolRecipe, forward_indices  # noqa: E402
+from orchestrator_react.state import FULL_POOL  # noqa: E402
+from orchestrator_react.weighting import per_model_error, WeightsRecipe  # noqa: E402
+from run_tsf_orchestrator import DEFAULT_MODELS  # noqa: E402
+
+
+def _label(spec):
+    bits = [str(spec.get("combine"))]
+    if spec.get("pool") and spec["pool"] != FULL_POOL:
+        bits.append(str(spec["pool"]))
+    if spec.get("weights"):
+        bits.append(str(spec["weights"]))
+    if spec.get("model"):
+        bits.append(str(spec["model"]))
+    return "_".join(bits)
+
+
+def build_candidates(state):
+    """Avalia cada nova combinacao no state e devolve [(nome, attempt, spec)]."""
+    out = []
+
+    recipes = {
+        "best_per_horizon": WeightsRecipe(
+            method="best_per_horizon", pool_handle=FULL_POOL, per_horizon=True,
+            params={"metric": "rmse"},
+        ),
+        "topk_mean_per_horizon_k3": WeightsRecipe(
+            method="topk_mean_per_horizon", pool_handle=FULL_POOL, per_horizon=True,
+            params={"k": 3, "metric": "rmse"},
+        ),
+        "forward_selection": WeightsRecipe(
+            method="forward_selection", pool_handle=FULL_POOL,
+            params={"max_steps": 20, "metric": "rmse"},
+        ),
+    }
+    for name, recipe in recipes.items():
+        handle = state.register_weights(recipe)
+        attempt, _ = state.evaluate(
+            {"combine": "weighted", "pool": FULL_POOL, "weights": handle},
+            rationale=f"nova combinacao: {name}", origin="baseline",
+        )
+        out.append((name, attempt))
+
+    indices = forward_indices(state.y_true, state.y_preds, max_steps=20, metric="rmse")
+    pool_handle = state.register_pool(
+        indices, origin="forward",
+        recipe=PoolRecipe(method="forward", params={"max_steps": 20, "metric": "rmse"}),
+    )
+    attempt, _ = state.evaluate(
+        {"combine": "mean", "pool": pool_handle},
+        rationale="nova combinacao: forward_mean (Caruana)", origin="baseline",
+    )
+    out.append(("forward_mean", attempt))
+
+    err = per_model_error(state.y_true, state.y_preds, metric="rmse")
+    best_model = state.model_names[int(np.nanargmin(err))]
+    attempt, _ = state.evaluate(
+        {"combine": "best_single", "model": best_model},
+        rationale="nova combinacao: best_single por validacao", origin="baseline",
+    )
+    out.append(("best_single_validation", attempt))
+
+    return out
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Novas combinacoes, teste offline.")
+    p.add_argument("--datasets", nargs="+", default=DATASETS)
+    p.add_argument("--models", nargs="+", default=None)
+    p.add_argument("--source-dir", default=DEFAULT_SOURCE_DIR)
+    p.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR)
+    p.add_argument("--indices", nargs="+", type=int, default=None)
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--no-pooled-meta-model", action="store_true")
+    p.add_argument("--no-source", action="store_true")
+    p.add_argument("--score-preset", default="balanced")
+    p.add_argument("--out", default="outputs/resultados/aprovacao_solida/novas_combinacoes.csv")
+    p.add_argument("--quiet", action="store_true")
+    args = p.parse_args(argv)
+
+    models = list(args.models) if args.models else list(DEFAULT_MODELS)
+    cfg = v5_config(no_pooled=args.no_pooled_meta_model, name="new_combos")
+    cfg.score_preset = args.score_preset
+    all_rows = []
+
+    for dataset in args.datasets:
+        frames, n_series, source = load_context(
+            models, dataset, args.results_dir, args.source_dir, use_source=not args.no_source
+        )
+        if args.indices is not None:
+            todo = list(args.indices)
+        elif args.limit:
+            todo = list(range(min(int(args.limit), n_series)))
+        else:
+            todo = list(range(n_series))
+        drop = detect_drop(models, dataset, todo[0], cfg, args.results_dir, frames) if todo else []
+        meta_models = {}
+        if cfg.pooled_meta_model:
+            meta_models = pipeline_mod._build_pooled_meta_models(
+                models, dataset, todo, config=cfg, source=source,
+                results_dir=args.results_dir, frames=frames, drop_models=drop,
+            )
+
+        rows = []
+        for idx in todo:
+            try:
+                ingested = ingest_mod.load_series(
+                    models=models, dataset=dataset, dataset_index=int(idx), source=source,
+                    config=cfg, results_dir=args.results_dir, frames=frames, drop_models=drop,
+                )
+                state = ingested.state
+                state.pooled_meta_model = meta_models.get(int(idx))
+                pool_mod.run_phase2(state, cfg)
+                if args.score_preset == "auto_loo":
+                    state.apply_score_weights(state.auto_score_weights()["weights"])
+
+                seeds = [a for a in state.attempts if a.origin == "baseline"]
+                floor = min(seeds, key=lambda a: a.score)
+                candidates = build_candidates(state)
+
+                fc, _ = state.apply_to_test(floor.spec)
+                floor_m = compute_metrics(fc, ingested.test_values)
+                rows.append({
+                    "dataset": dataset, "dataset_index": int(idx), "method": "floor",
+                    "val_score": float(floor.score), "beats_floor_validation": 0,
+                    "smape": floor_m["smape"], "pocid": floor_m["pocid"], "rmse": floor_m["rmse"],
+                    "spec": json.dumps(floor.spec, ensure_ascii=False, default=str),
+                })
+
+                cand_preview = []
+                for name, attempt in candidates:
+                    fc, _ = state.apply_to_test(attempt.spec)
+                    m = compute_metrics(fc, ingested.test_values)
+                    rows.append({
+                        "dataset": dataset, "dataset_index": int(idx), "method": name,
+                        "val_score": float(attempt.score),
+                        "beats_floor_validation": int(attempt.score < floor.score),
+                        "smape": m["smape"], "pocid": m["pocid"], "rmse": m["rmse"],
+                        "spec": json.dumps(attempt.spec, ensure_ascii=False, default=str),
+                    })
+                    cand_preview.append(f"{name}={m['smape']:.4f}")
+                if not args.quiet:
+                    print(
+                        f"[{dataset} {idx:>4}] floor={floor_m['smape']:.4f} | "
+                        + " ".join(cand_preview),
+                        flush=True,
+                    )
+            except Exception as exc:
+                print(f"[{dataset} {idx}] FALHOU: {type(exc).__name__}: {exc}", flush=True)
+
+        if rows:
+            all_rows.extend(rows)
+            sub = pd.DataFrame(rows)
+            print(f"\n=== {dataset}: n={sub['dataset_index'].nunique()} series ===")
+            floor = sub[sub.method == "floor"].set_index("dataset_index")["smape"]
+            floor_mean = float(floor.mean())
+            for name in sub.method.unique():
+                if name == "floor":
+                    continue
+                s = sub[sub.method == name].set_index("dataset_index")
+                wins = int((s["smape"] < floor.reindex(s.index) - 1e-6).sum())
+                losses = int((s["smape"] > floor.reindex(s.index) + 1e-6).sum())
+                print(
+                    f"  {name:<26} smape={s.smape.mean():.4f} (floor {floor_mean:.4f}) "
+                    f"pocid={s.pocid.mean():.1f} | melhor que floor no teste em "
+                    f"{wins}, pior em {losses} | selecionada na validacao em "
+                    f"{int(s.beats_floor_validation.sum())}/{len(s)}"
+                )
+
+    if all_rows:
+        os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        pd.DataFrame(all_rows).to_csv(args.out, sep=";", index=False)
+        print(f"\nsalvo em: {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
