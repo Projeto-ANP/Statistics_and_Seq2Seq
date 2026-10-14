@@ -63,7 +63,6 @@ _SYSTEM_TAGS = (
     # Tags used by the v2 prompt (`build_system_prompt_v2`).
     ("WHAT YOU RECEIVE", "context"),
     ("PROCEDURE", "procedure"),
-    ("WHEN TO USE", "tool_choice"),
     ("WORKED EXAMPLES", "examples"),
     ("WHEN TO STOP", "stopping"),
 )
@@ -79,8 +78,8 @@ def _system_as_xml(lines: List[str], merge_first_two: bool = True) -> str:
 
     Wording is untouched: only the delimiters change, so the `text` and `xml`
     variants are an A/B on structure alone. `merge_first_two` joins the first
-    two blocks into the `role` tag; the v1 prompt needs it (the role statement
-    spans two paragraphs), the v2 prompt does not.
+    two blocks into the `role` tag, for prompts whose role statement spans two
+    paragraphs.
     """
     blocks: List[List[str]] = [[]]
     for line in lines:
@@ -239,17 +238,14 @@ def build_system_prompt_v2(
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
 ) -> str:
-    """Restructured system prompt: procedure, grouped catalog, worked examples.
+    """Structured system prompt: procedure, grouped catalog, worked examples.
 
-    Same closed action space and same three-line output contract as v1; what
-    changes is the organisation. Two measured problems motivate it. First, the
-    v1 prompt is a long list of prose rules, and local models are known to need
-    explicit structure rather than dense instructions. Second, its single worked
-    sequence anchors the agent on `select_stable -> weights_* -> weighted`,
-    which matches the observed over-use of weighting (591 of 756
-    `evaluate_strategy` calls on the ANP run), so this version shows two
-    examples of different KINDS of strategy and states an explicit stop rule
-    that reads the LEADER DIAGNOSTICS block.
+    Keeps the closed action space and the three-line output contract. The
+    organisation is deliberate: a short four-step procedure, the catalog grouped
+    by phase with each entry's trigger in its own description, two worked
+    examples of different KINDS of strategy (robust and selective), and an
+    explicit stop rule that reads the LEADER DIAGNOSTICS block. Local models
+    follow explicit structure and concrete examples better than dense prose.
     """
     tools = describe_tools(withheld_tools, reorder_weight_tools)
     groups: Dict[str, List[str]] = {
@@ -281,25 +277,10 @@ def build_system_prompt_v2(
             catalog.append(f"{label}:")
             catalog.extend(groups[key])
 
-    # One line per tool saying WHEN to reach for it. Only the entries actually
-    # advertised are shown, so the guidance always matches the action space the
-    # agent sees (`catalog_v2`/`extra_actions` change what is listed).
-    guidance = (
-        ("select_stable", "ranking is unstable across windows; consistency beats raw error"),
-        ("select_top_k", "one or two models are clearly ahead of the rest"),
-        ("prune_redundant", "several models carry correlated error and the pool is redundant"),
-        ("select_forward", "no single model dominates and the errors look complementary"),
-        ("weights_inverse_error", "models differ clearly in error and weights are not near-uniform"),
-        ("weights_error_trend", "some models improve while others degrade at similar average error"),
-        ("weights_ols", "there are at least five windows and fitted simplex weights are warranted"),
-        ("weights_meta_model", "scope='dataset' uses the other series; scope='series' uses this one's windows"),
-        ("weights_best_per_horizon", "the best model changes along the horizon; pick one per step"),
-        ("weights_topk_per_horizon", "a few models are good but not the same ones at every step"),
-        ("weights_forward", "the pool has no dominant model; greedy selection finds the useful subset"),
-    )
-    advertised = {tool["name"] for tool in tools}
-    guidance_lines = [f"  {name}: {text}" for name, text in guidance if name in advertised]
-
+    # The catalog lines themselves say WHEN to use each tool: every advertised
+    # tool's first docstring line starts with "Use when ...". That keeps a single
+    # source of truth for the trigger (Anthropic's tool-writing guidance) instead
+    # of a separate block duplicating the descriptions.
     lines: List[str] = [
         "You are a forecast COMBINATION AGENT.",
         "",
@@ -329,11 +310,6 @@ def build_system_prompt_v2(
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
         *catalog,
         f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
-        *(
-            ["", "WHEN TO USE WHICH TOOL:", *guidance_lines]
-            if guidance_lines
-            else []
-        ),
         "",
         "OUTPUT FORMAT - exactly three lines, nothing else:",
         "Thought: <one or two sentences on what you want to learn or test next>",
@@ -442,9 +418,8 @@ def build_turn_prompt(
     `prompt_format="xml"` wraps each section in a tag and changes nothing else.
 
     `leader` is the deterministic leader diagnostics block (leader, margin to
-    the runner-up, statistical verdict). It is only passed by the v2 prompt:
-    the agent's self-declared confidence on the accept was a constant, so the
-    harness tells it how separated the leader actually is instead of asking.
+    the runner-up, statistical verdict), computed by the harness from the
+    attempt history on validation only.
     """
     _check_format(prompt_format)
     xml = prompt_format == "xml"

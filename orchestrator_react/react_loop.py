@@ -522,13 +522,11 @@ def _utcnow() -> str:
 
 
 def _leader_diagnostics(state: ReactState) -> Dict[str, Any]:
-    """Deterministic answer to "how safe is stopping now?", for the v2 prompt.
+    """Deterministic answer to "how safe is stopping now?".
 
     Reuses `state.selection_confidence()`: it compares the leader against the
     first genuinely different runner-up (numerical twins are skipped) with the
     paired bootstrap and Diebold-Mariano. Everything in it is validation-only.
-    The agent's own accept confidence turned out to be a constant, so this is
-    what it reads instead before deciding to stop.
     """
     best = state.best_attempt()
     if best is None:

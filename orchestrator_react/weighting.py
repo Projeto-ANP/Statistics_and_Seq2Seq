@@ -376,8 +376,8 @@ def weights_best_per_horizon(
 ) -> np.ndarray:
     """One-hot per horizon: the pool model with the lowest error at each step.
 
-    Mirrors the old orchestrator's `best_per_horizon`, which the ReAct catalog
-    dropped. Returns `(n_pool, horizon)`.
+    Returns `(n_pool, horizon)`, so it composes with `combine_weighted` like any
+    other per-horizon recipe and is re-fit per backtest fold.
     """
     err = per_model_error(y_true, y_pool, metric=metric, per_horizon=True)
     n_pool, horizon = err.shape

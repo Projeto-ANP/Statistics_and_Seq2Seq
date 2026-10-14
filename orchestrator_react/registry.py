@@ -63,13 +63,13 @@ REDUNDANT_COMBINE_TOOLS = ("combine_mean", "combine_median", "combine_weighted",
 #: `weights_softmax_neg_error` listed first when `config.reorder_weight_tools` is on.
 _SOFTMAX, _INVERSE = "weights_softmax_neg_error", "weights_inverse_error"
 
-#: Entries hidden when `config.catalog_v2` is on. Evidence: in the 680 series of
-#: the v5 runs, 14 of the 24 catalog entries were never called. The six
-#: diagnostics already reach the agent through the cards; `weights_softmax_neg_error`
-#: duplicates `weights_inverse_error`; `weights_feature_based` and
-#: `weights_pooled_meta_model` became `weights_meta_model`; the `combine_*` tools
-#: only rebuild what `evaluate_strategy` already scores; and `sanity_check` /
-#: `list_attempts` duplicate information the turn already carries.
+#: Entries hidden when `config.catalog_v2` is on, because they either duplicate
+#: another entry or carry nothing the turn does not already provide. The six
+#: diagnostics reach the agent through the cards; `weights_softmax_neg_error`
+#: duplicates `weights_inverse_error`; the two split meta-model tools became
+#: `weights_meta_model`; the `combine_*` tools only rebuild what
+#: `evaluate_strategy` already scores; and `sanity_check` / `list_attempts`
+#: repeat information the turn already carries.
 CATALOG_V2_WITHHELD: tuple = (
     "series_profile", "stl_summary", "error_summary", "ranking_stability",
     "error_correlation", "dm_test",
@@ -79,8 +79,10 @@ CATALOG_V2_WITHHELD: tuple = (
     "sanity_check", "list_attempts",
 )
 
-#: Recipes tested offline in `aprovacao_solida/07_novas_combinacoes`, hidden until
-#: the battery confirms which of them improve the floor (`config.extra_actions`).
+#: Per-horizon and forward-selection weighting recipes. Exposed by default
+#: (`config.extra_actions=False` hides them for the ten-action ablation): an
+#: extra action can only add candidates, and the applied strategy is always the
+#: best-scoring one of the history, so the seeded floor still protects the result.
 EXTRA_ACTIONS: tuple = (
     "weights_best_per_horizon",
     "weights_topk_per_horizon",
@@ -134,8 +136,8 @@ def withheld_tools(config: Any, n_windows: int, state: Optional[Any] = None) -> 
         for name in CATALOG_V2_WITHHELD:
             if name in TOOLS:
                 out[name] = (
-                    "catalog v2: already in the turn context, replaced by a "
-                    "merged tool, or never called in the 680-series v5 runs"
+                    "catalog v2: already in the turn context, or replaced by a "
+                    "merged tool"
                 )
         if not getattr(config, "extra_actions", False):
             for name in EXTRA_ACTIONS:

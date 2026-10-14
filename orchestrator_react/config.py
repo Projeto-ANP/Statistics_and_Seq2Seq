@@ -101,23 +101,29 @@ class ReactConfig:
     #: reproduces the published behaviour and the old prompt stays available for
     #: the A/B. What they change:
     #:
-    #: `catalog_v2` hides the entries the v5 runs never called (the six
-    #: diagnostics, already present in the turn context), the duplicated
-    #: `weights_softmax_neg_error`, the two split meta-model tools (replaced by
-    #: `weights_meta_model`) and the four `combine_*` sugar tools, and adds
-    #: `select_forward` (Caruana). The closed catalog keeps 10 entries.
+    #: `catalog_v2` hides the diagnostics already present in the turn context,
+    #: the duplicated `weights_softmax_neg_error`, the two split meta-model tools
+    #: (replaced by `weights_meta_model`), the `combine_*` sugar tools that only
+    #: rebuild what `evaluate_strategy` scores, and the two reporting tools whose
+    #: content the turn already carries. It also adds `select_forward` (Caruana).
+    #: The closed catalog keeps 10 entries.
     #:
     #: `extra_actions` additionally exposes the recipes tested offline in
     #: `aprovacao_solida/07_novas_combinacoes`: `weights_best_per_horizon`,
-    #: `weights_topk_per_horizon` and `weights_forward`.
-    #: RESEARCH: tool selection degrades as the catalog grows and overlapping
-    #: tools make it worse; the v5 traces show 14 of 24 actions never called.
+    #: `weights_topk_per_horizon` and `weights_forward`. On by default: an extra
+    #: action can only add candidates, and the applied strategy is always the
+    #: best-scoring one of the history, so the seed floor still protects the
+    #: result. The CLI switch is `--no-extra-actions`, which restores the
+    #: ten-action catalog for the ablation.
+    #: RESEARCH: tool selection degrades as the catalog grows, and overlapping
+    #: or ambiguous tools make it worse; fewer, well-described actions are
+    #: easier for local models to choose from.
     catalog_v2: bool = False
     #: Use the restructured system/turn prompt: role, four-step procedure,
     #: catalog grouped by phase, two worked examples with different kinds of
     #: strategy, and an explicit stop rule that reads the leader diagnostics.
     prompt_v2: bool = False
-    extra_actions: bool = False
+    extra_actions: bool = True
     #: Catalog experiments. Each is independent and OFF by default, so a default
     #: config reproduces the published behaviour; they exist to be turned on one at
     #: a time. See `RESUMO_*.md` under outputs/resultados/ablacao.

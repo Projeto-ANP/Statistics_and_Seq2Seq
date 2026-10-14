@@ -195,7 +195,7 @@ def exec_dataset_orchestrator(
     reduced_seeding: bool = False,
     catalog_v2: bool = False,
     prompt_v2: bool = False,
-    extra_actions: bool = False,
+    extra_actions: bool = True,
     calibration_gate: bool = False,
     indices: Optional[Sequence[int]] = None,
     limit: Optional[int] = None,
@@ -795,9 +795,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-v2", action="store_true",
                    help="v2 prompt: procedure, grouped catalog, two worked examples and "
                         "the LEADER DIAGNOSTICS block in every turn")
-    p.add_argument("--extra-actions", action="store_true",
-                   help="also expose the offline-tested recipes (weights_best_per_horizon, "
-                        "weights_topk_per_horizon, weights_forward)")
+    p.add_argument("--no-extra-actions", dest="extra_actions", action="store_false",
+                   default=True,
+                   help="ablation: hide the per-horizon and forward-selection recipes, "
+                        "restoring the ten-action catalog (they are ON by default: an "
+                        "extra action only adds candidates and the applied strategy is "
+                        "always the best of the history)")
     p.add_argument("--reasoning", default=None,
                    metavar="LEVEL",
                    help="gpt-oss reasoning: low|medium|high, or off. Unset = the "

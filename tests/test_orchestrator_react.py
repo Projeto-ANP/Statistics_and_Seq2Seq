@@ -771,8 +771,12 @@ def test_catalog_holds_the_v2_action_space():
         assert name in R.TOOLS
     cfg = ReactConfig()
     cfg.catalog_v2 = True
+    cfg.extra_actions = False  # + accept = the ten-action catalog
     # Three windows: weights_ols is withheld by the window gate.
     assert len(R.tool_names(R.withheld_tools(cfg, 3))) == 8
+    # Default keeps the per-horizon and forward-selection recipes on.
+    cfg.extra_actions = True
+    assert len(R.tool_names(R.withheld_tools(cfg, 3))) == 8 + len(R.EXTRA_ACTIONS)
 
 
 def test_describe_tools_for_the_prompt():

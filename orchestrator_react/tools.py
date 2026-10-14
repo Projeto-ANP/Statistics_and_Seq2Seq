@@ -343,7 +343,7 @@ def select_top_k(
     metric: str = "rmse",
     windows: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
-    """Pool with the k lowest-error models on the given windows."""
+    """Use when one or two models are clearly ahead: pool with the k lowest-error models."""
     k = int(k)
     if k < 1:
         raise ValueError("k must be >= 1")
@@ -371,7 +371,7 @@ def select_top_k(
 
 
 def select_stable(state: ReactState, k: int, metric: str = "rmse") -> Dict[str, Any]:
-    """Pool with the k most consistent models across windows.
+    """Use when the ranking is unstable across windows: pool with the k most consistent models.
 
     Criterion: lowest mean rank penalised by rank variability (`mean + std`). A
     model that is 1st in one window and 20th in another loses to one that is 4th in
@@ -410,7 +410,7 @@ def prune_redundant(
     corr_threshold: float = 0.95,
     metric: str = "rmse",
 ) -> Dict[str, Any]:
-    """Drops redundant models, keeping the lowest-error one in each group."""
+    """Use when several models carry correlated error: drop the redundant ones, keeping the best of each group."""
     idx = state.get_pool(pool)
     if len(idx) < 2:
         raise ValueError(f"pool {pool!r} has fewer than 2 models")
@@ -458,12 +458,12 @@ def select_forward(
     max_steps: int = 20,
     metric: str = "rmse",
 ) -> Dict[str, Any]:
-    """Pool chosen by Caruana's greedy forward selection with replacement.
+    """Use when no single model dominates and errors look complementary: Caruana greedy forward selection.
 
     Starts from the empty ensemble and adds, at each step, the model that most
     reduces the error of the running mean; the subset is the models picked at
-    least once. This is the classical ensemble-selection rule that the fixed
-    `select_top_k`/`select_stable` shortcuts only approximate.
+    least once. Re-fit per backtest fold like every other pool recipe, so the
+    scored window never takes part in choosing the models scored on it.
     """
     chosen = forward_indices(state.y_true, state.y_preds, max_steps=int(max_steps), metric=str(metric))
     existed = set(state.pools)
@@ -532,7 +532,7 @@ def weights_inverse_error(
     shrinkage: float = 0.0,
     per_horizon: bool = False,
 ) -> Dict[str, Any]:
-    """w proportional to 1/error, optionally shrunk toward uniform weights."""
+    """Use when models differ clearly in error: weights proportional to 1/error, optionally shrunk to uniform."""
     return _register(
         state, "inverse_error", pool, windows, per_horizon,
         metric=str(metric), shrinkage=float(np.clip(shrinkage, 0.0, 0.9)),
@@ -562,9 +562,9 @@ def weights_error_trend(
     eta: float = 1.0,
     damping: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """w from where each model's error is HEADING, not its average. Uses the
-    pointwise error grid, so it reads n_windows*horizon numbers per model instead
-    of one. `damping=None` trusts the trend only as far as it is consistent."""
+    """Use when some models improve while others degrade: weights from where the
+    error is heading, read from the pointwise error grid, not from the average.
+    `damping=None` trusts the trend only as far as it is consistent."""
     return _register(
         state, "error_trend", pool, windows, False,
         metric=str(metric),
@@ -581,7 +581,7 @@ def weights_ols(
     nonneg: bool = True,
     per_horizon: bool = False,
 ) -> Dict[str, Any]:
-    """Least-squares weights, projected onto the simplex by default."""
+    """Use with at least five windows: least-squares weights, projected onto the simplex by default."""
     return _register(
         state, "ols", pool, windows, per_horizon,
         l2=float(np.clip(l2, 0.0, 1000.0)), nonneg=bool(nonneg),
@@ -650,14 +650,12 @@ def weights_meta_model(
     metric: str = "smape",
     eta: float = 1.0,
 ) -> Dict[str, Any]:
-    """One entry point for the two meta-model recipes, selected by `scope`.
+    """Use for cross-series knowledge (scope='dataset') or a per-series fit (scope='series').
 
-    `scope="dataset"` uses the pooled meta-model trained across the other series
-    of the run (the FFORMA-style recipe); `scope="series"` fits a meta-model on
-    this series' own windows only, falling back to softmax(-error) when there is
-    not enough data. The two used to be separate catalog entries, but only the
-    pooled one is ever reachable in practice, and telling them apart was on the
-    reader, not on the tool.
+    `scope="dataset"` uses the meta-model trained across the other series of the
+    run, in the spirit of FFORMA. `scope="series"` fits a meta-model on this
+    series' own windows, falling back to softmax(-error) when there are not
+    enough samples. Both return a weights handle over the given pool.
     """
     scope = str(scope).strip().lower()
     if scope in ("dataset", "pooled", "pooled_meta_model"):
@@ -679,11 +677,12 @@ def weights_best_per_horizon(
     pool: str = FULL_POOL,
     metric: str = "rmse",
 ) -> Dict[str, Any]:
-    """Per-horizon one-hot weights: the pool model with the lowest error at each step.
+    """Use when the best model changes along the horizon: one-hot weights per step.
 
-    This is the old orchestrator's `best_per_horizon`, which the ReAct catalog
-    dropped; it is recomputed per backtest fold under the anti-leakage protocol,
-    like every other recipe.
+    For each step of the horizon, the weight goes to the pool model with the
+    lowest validation error at that step. Re-fit per backtest fold like every
+    other recipe, so the scored window never takes part in choosing the weights
+    applied to it.
     """
     return _register(
         state, "best_per_horizon", pool, None, True, metric=str(metric),
@@ -696,7 +695,7 @@ def weights_topk_per_horizon(
     k: int = 3,
     metric: str = "rmse",
 ) -> Dict[str, Any]:
-    """Per-horizon weights: equal share for the k lowest-error models at each step."""
+    """Use when a few models are good but not the same ones at every step: top-k mean per step."""
     return _register(
         state, "topk_mean_per_horizon", pool, None, True,
         k=int(k), metric=str(metric),
@@ -709,7 +708,7 @@ def weights_forward(
     max_steps: int = 20,
     metric: str = "rmse",
 ) -> Dict[str, Any]:
-    """Caruana weights: selection counts of the greedy forward search, normalised."""
+    """Use when the pool has no dominant model: Caruana selection counts as weights."""
     return _register(
         state, "forward_selection", pool, None, False,
         max_steps=int(max_steps), metric=str(metric),
@@ -780,7 +779,7 @@ def evaluate_strategy(
     rationale: str = "",
     iteration: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Core loop tool: builds the strategy, backtests it, and ranks the result.
+    """The only action that scores a strategy: builds it, backtests it on validation, adds it to the history.
 
     Accepts every shape an agent naturally reaches for, because a rejected call
     costs an iteration and teaches nothing:

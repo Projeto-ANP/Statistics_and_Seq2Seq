@@ -29,9 +29,10 @@ from orchestrator_react.react_loop import run_react_loop
 from test_orchestrator_react import make_state  # noqa: E402
 
 
-def test_v2_catalog_keeps_ten_actions_including_accept():
+def test_v2_catalog_keeps_the_core_actions_and_accept():
     cfg = ReactConfig()
     cfg.catalog_v2 = True
+    cfg.extra_actions = False  # the ten-action catalog is the ablation arm
     # Three validation windows: weights_ols is withheld by the window gate.
     expected = {
         "select_top_k", "select_stable", "prune_redundant", "select_forward",
@@ -47,13 +48,15 @@ def test_v2_catalog_keeps_ten_actions_including_accept():
         assert name in withheld
 
 
-def test_extra_actions_are_opt_in():
+def test_extra_actions_are_on_by_default_and_can_be_disabled():
     cfg = ReactConfig()
     cfg.catalog_v2 = True
+    assert cfg.extra_actions  # on by default: extra candidates cannot hurt the floor
     base = set(R.tool_names(R.withheld_tools(cfg, 3)))
-    cfg.extra_actions = True
-    with_extra = set(R.tool_names(R.withheld_tools(cfg, 3)))
-    assert with_extra == base | set(R.EXTRA_ACTIONS)
+    assert set(R.EXTRA_ACTIONS) <= base
+    cfg.extra_actions = False
+    without = set(R.tool_names(R.withheld_tools(cfg, 3)))
+    assert without == base - set(R.EXTRA_ACTIONS)
 
 
 def test_weights_meta_model_merges_the_two_scopes():
@@ -102,29 +105,40 @@ def test_new_weight_actions_register_the_expected_recipes():
 def test_prompt_v2_has_the_structure_and_the_examples():
     text = P.build_system_prompt_v2(prompt_format="text")
     for marker in (
-        "PROCEDURE:", "WHEN TO USE WHICH TOOL:", "WORKED EXAMPLES", "WHEN TO STOP",
-        "Example 1", "Example 2",
+        "PROCEDURE:", "WORKED EXAMPLES", "WHEN TO STOP", "Example 1", "Example 2",
+        # The catalog line itself carries the trigger, by design.
+        "Use when the ranking is unstable",
     ):
         assert marker in text
     xml = P.build_system_prompt_v2(prompt_format="xml")
     assert "<role>" in xml and "<examples>" in xml and "<stopping>" in xml
 
 
-def test_prompt_v2_guidance_matches_the_advertised_catalog():
-    """The when-to-use block lists exactly the tools the agent can see."""
+def test_catalog_descriptions_say_when_to_use():
+    """Every advertised tool's description starts with its trigger, and the
+    catalog the prompt renders matches what `withheld_tools` allows."""
     cfg = ReactConfig()
     cfg.catalog_v2 = True
-    withheld = R.withheld_tools(cfg, 3)
-    text = P.build_system_prompt_v2(withheld_tools=withheld, prompt_format="text")
-    assert "WHEN TO USE WHICH TOOL:" in text
-    assert "select_stable: ranking is unstable" in text
-    assert "weights_best_per_horizon" not in text  # experimental, still hidden
+    text = P.build_system_prompt_v2(
+        withheld_tools=R.withheld_tools(cfg, 3), prompt_format="text"
+    )
+    assert "Use when the ranking is unstable" in text
+    assert "select_stable" in text
 
+    # Disabling the experimental recipes removes them from the catalog entirely.
+    cfg.extra_actions = False
+    text_without = P.build_system_prompt_v2(
+        withheld_tools=R.withheld_tools(cfg, 3), prompt_format="text"
+    )
+    assert "weights_best_per_horizon" not in text_without
+    assert "Use when the best model changes along the horizon" not in text_without
+
+    # Default (on): they are advertised with their trigger line.
     cfg.extra_actions = True
     text_extra = P.build_system_prompt_v2(
         withheld_tools=R.withheld_tools(cfg, 3), prompt_format="text"
     )
-    assert "weights_best_per_horizon: the best model changes along the horizon" in text_extra
+    assert "Use when the best model changes along the horizon" in text_extra
 
 
 def test_turn_prompt_carries_the_leader_block_only_when_given():
