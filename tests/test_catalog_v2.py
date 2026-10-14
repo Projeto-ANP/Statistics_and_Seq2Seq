@@ -101,10 +101,30 @@ def test_new_weight_actions_register_the_expected_recipes():
 
 def test_prompt_v2_has_the_structure_and_the_examples():
     text = P.build_system_prompt_v2(prompt_format="text")
-    for marker in ("PROCEDURE:", "WORKED EXAMPLES", "WHEN TO STOP", "Example 1", "Example 2"):
+    for marker in (
+        "PROCEDURE:", "WHEN TO USE WHICH TOOL:", "WORKED EXAMPLES", "WHEN TO STOP",
+        "Example 1", "Example 2",
+    ):
         assert marker in text
     xml = P.build_system_prompt_v2(prompt_format="xml")
     assert "<role>" in xml and "<examples>" in xml and "<stopping>" in xml
+
+
+def test_prompt_v2_guidance_matches_the_advertised_catalog():
+    """The when-to-use block lists exactly the tools the agent can see."""
+    cfg = ReactConfig()
+    cfg.catalog_v2 = True
+    withheld = R.withheld_tools(cfg, 3)
+    text = P.build_system_prompt_v2(withheld_tools=withheld, prompt_format="text")
+    assert "WHEN TO USE WHICH TOOL:" in text
+    assert "select_stable: ranking is unstable" in text
+    assert "weights_best_per_horizon" not in text  # experimental, still hidden
+
+    cfg.extra_actions = True
+    text_extra = P.build_system_prompt_v2(
+        withheld_tools=R.withheld_tools(cfg, 3), prompt_format="text"
+    )
+    assert "weights_best_per_horizon: the best model changes along the horizon" in text_extra
 
 
 def test_turn_prompt_carries_the_leader_block_only_when_given():

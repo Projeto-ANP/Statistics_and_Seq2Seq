@@ -63,6 +63,7 @@ _SYSTEM_TAGS = (
     # Tags used by the v2 prompt (`build_system_prompt_v2`).
     ("WHAT YOU RECEIVE", "context"),
     ("PROCEDURE", "procedure"),
+    ("WHEN TO USE", "tool_choice"),
     ("WORKED EXAMPLES", "examples"),
     ("WHEN TO STOP", "stopping"),
 )
@@ -280,6 +281,25 @@ def build_system_prompt_v2(
             catalog.append(f"{label}:")
             catalog.extend(groups[key])
 
+    # One line per tool saying WHEN to reach for it. Only the entries actually
+    # advertised are shown, so the guidance always matches the action space the
+    # agent sees (`catalog_v2`/`extra_actions` change what is listed).
+    guidance = (
+        ("select_stable", "ranking is unstable across windows; consistency beats raw error"),
+        ("select_top_k", "one or two models are clearly ahead of the rest"),
+        ("prune_redundant", "several models carry correlated error and the pool is redundant"),
+        ("select_forward", "no single model dominates and the errors look complementary"),
+        ("weights_inverse_error", "models differ clearly in error and weights are not near-uniform"),
+        ("weights_error_trend", "some models improve while others degrade at similar average error"),
+        ("weights_ols", "there are at least five windows and fitted simplex weights are warranted"),
+        ("weights_meta_model", "scope='dataset' uses the other series; scope='series' uses this one's windows"),
+        ("weights_best_per_horizon", "the best model changes along the horizon; pick one per step"),
+        ("weights_topk_per_horizon", "a few models are good but not the same ones at every step"),
+        ("weights_forward", "the pool has no dominant model; greedy selection finds the useful subset"),
+    )
+    advertised = {tool["name"] for tool in tools}
+    guidance_lines = [f"  {name}: {text}" for name, text in guidance if name in advertised]
+
     lines: List[str] = [
         "You are a forecast COMBINATION AGENT.",
         "",
@@ -309,6 +329,11 @@ def build_system_prompt_v2(
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
         *catalog,
         f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        *(
+            ["", "WHEN TO USE WHICH TOOL:", *guidance_lines]
+            if guidance_lines
+            else []
+        ),
         "",
         "OUTPUT FORMAT - exactly three lines, nothing else:",
         "Thought: <one or two sentences on what you want to learn or test next>",
