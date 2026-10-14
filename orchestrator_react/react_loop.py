@@ -210,11 +210,18 @@ def run_react_loop(
 
     withheld = withheld_tools(config, state.n_windows, state=state)
     result.withheld_tools = dict(withheld)
-    system = P.build_system_prompt(
-        include_history_rules=config.show_attempt_history, withheld_tools=withheld,
-        prompt_format=config.prompt_format,
-        reorder_weight_tools=config.reorder_weight_tools,
-    )
+    if getattr(config, "prompt_v2", False):
+        system = P.build_system_prompt_v2(
+            include_history_rules=config.show_attempt_history, withheld_tools=withheld,
+            prompt_format=config.prompt_format,
+            reorder_weight_tools=config.reorder_weight_tools,
+        )
+    else:
+        system = P.build_system_prompt(
+            include_history_rules=config.show_attempt_history, withheld_tools=withheld,
+            prompt_format=config.prompt_format,
+            reorder_weight_tools=config.reorder_weight_tools,
+        )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
     best_score = _score(state.best_attempt())
@@ -235,6 +242,11 @@ def run_react_loop(
             show_rationales=config.show_attempt_rationales,
             diagnosis=diagnosis,
             prompt_format=config.prompt_format,
+            leader=(
+                _leader_diagnostics(state)
+                if getattr(config, "prompt_v2", False)
+                else None
+            ),
         )
 
         # Two different things can go wrong asking for one turn, and both are
@@ -507,6 +519,33 @@ def _emit(
 def _utcnow() -> str:
     """ISO timestamp for the trace; seconds are enough for a per-series record."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _leader_diagnostics(state: ReactState) -> Dict[str, Any]:
+    """Deterministic answer to "how safe is stopping now?", for the v2 prompt.
+
+    Reuses `state.selection_confidence()`: it compares the leader against the
+    first genuinely different runner-up (numerical twins are skipped) with the
+    paired bootstrap and Diebold-Mariano. Everything in it is validation-only.
+    The agent's own accept confidence turned out to be a constant, so this is
+    what it reads instead before deciding to stop.
+    """
+    best = state.best_attempt()
+    if best is None:
+        return {}
+    confidence = state.selection_confidence()
+    return {
+        "leader_id": best.attempt_id,
+        "leader_strategy": _label(best),
+        "leader_origin": best.origin,
+        "leader_score": round(float(best.score), 4) if np.isfinite(best.score) else None,
+        "runner_up_margin": confidence.get("margin"),
+        "verdict": confidence.get("verdict"),
+        "note": (
+            "a small margin or 'indistinguishable' means the runner-up is not "
+            "statistically worse; accepting the leader is usually right"
+        ),
+    }
 
 
 def _attempt_ref(attempt: Optional[Attempt]) -> Optional[Dict[str, Any]]:

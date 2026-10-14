@@ -193,6 +193,9 @@ def exec_dataset_orchestrator(
     reorder_weight_tools: bool = False,
     drop_redundant_combine_actions: bool = False,
     reduced_seeding: bool = False,
+    catalog_v2: bool = False,
+    prompt_v2: bool = False,
+    extra_actions: bool = False,
     calibration_gate: bool = False,
     indices: Optional[Sequence[int]] = None,
     limit: Optional[int] = None,
@@ -367,6 +370,9 @@ def exec_dataset_orchestrator(
     cfg.reorder_weight_tools = bool(reorder_weight_tools)
     cfg.drop_redundant_combine_actions = bool(drop_redundant_combine_actions)
     cfg.reduced_seeding = bool(reduced_seeding)
+    cfg.catalog_v2 = bool(catalog_v2)
+    cfg.prompt_v2 = bool(prompt_v2)
+    cfg.extra_actions = bool(extra_actions)
     cfg.calibration_gate = bool(calibration_gate)
 
     cfg.combinator = _as_role(combinator_model)
@@ -782,6 +788,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="experiment: withhold combine_mean/median/weighted/best_single (24 -> 20 actions)")
     p.add_argument("--reduced-seeding", action="store_true",
                    help="experiment: do not seed plain mean/median over the full pool (10 -> 8 seeds)")
+    p.add_argument("--catalog-v2", action="store_true",
+                   help="v2 catalog: withhold the 14 entries never called in the v5 runs "
+                        "and open the merged ones (weights_meta_model, select_forward); "
+                        "the advertised catalog keeps 10 actions, accept included")
+    p.add_argument("--prompt-v2", action="store_true",
+                   help="v2 prompt: procedure, grouped catalog, two worked examples and "
+                        "the LEADER DIAGNOSTICS block in every turn")
+    p.add_argument("--extra-actions", action="store_true",
+                   help="also expose the offline-tested recipes (weights_best_per_horizon, "
+                        "weights_topk_per_horizon, weights_forward)")
     p.add_argument("--reasoning", default=None,
                    metavar="LEVEL",
                    help="gpt-oss reasoning: low|medium|high, or off. Unset = the "
@@ -872,6 +888,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             reorder_weight_tools=args.reorder_weight_tools,
             drop_redundant_combine_actions=args.drop_redundant_combine,
             reduced_seeding=args.reduced_seeding,
+            catalog_v2=args.catalog_v2,
+            prompt_v2=args.prompt_v2,
+            extra_actions=args.extra_actions,
             calibration_gate=args.calibration_gate,
             indices=args.indices,
             limit=args.limit,

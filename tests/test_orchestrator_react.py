@@ -761,11 +761,18 @@ def test_list_attempts_hides_rationale_when_ablation_disables_it():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_catalog_holds_24_tools():
-    assert len(R.TOOLS) == 24
+def test_catalog_holds_the_v2_action_space():
+    # The registry keeps the legacy entries so old runs stay reproducible; what
+    # the v2 agent sees is the withheld view, and it advertises ten actions
+    # (eight tools plus the terminal `accept`). New merged entries live alongside.
     for name in ("series_profile", "select_top_k", "weights_ols", "weights_error_trend",
-                 "weights_pooled_meta_model", "combine_dba", "evaluate_strategy"):
+                 "weights_pooled_meta_model", "combine_dba", "evaluate_strategy",
+                 "select_forward", "weights_meta_model"):
         assert name in R.TOOLS
+    cfg = ReactConfig()
+    cfg.catalog_v2 = True
+    # Three windows: weights_ols is withheld by the window gate.
+    assert len(R.tool_names(R.withheld_tools(cfg, 3))) == 8
 
 
 def test_describe_tools_for_the_prompt():

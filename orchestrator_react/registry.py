@@ -30,6 +30,7 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "select_top_k": T.select_top_k,
     "select_stable": T.select_stable,
     "prune_redundant": T.prune_redundant,
+    "select_forward": T.select_forward,
     # 3.4.3 weights
     "weights_inverse_error": T.weights_inverse_error,
     "weights_softmax_neg_error": T.weights_softmax_neg_error,
@@ -37,6 +38,10 @@ TOOLS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "weights_ols": T.weights_ols,
     "weights_feature_based": T.weights_feature_based,
     "weights_pooled_meta_model": T.weights_pooled_meta_model,
+    "weights_meta_model": T.weights_meta_model,
+    "weights_best_per_horizon": T.weights_best_per_horizon,
+    "weights_topk_per_horizon": T.weights_topk_per_horizon,
+    "weights_forward": T.weights_forward,
     # 3.4.4 combination
     "combine_mean": T.combine_mean,
     "combine_median": T.combine_median,
@@ -57,6 +62,30 @@ REDUNDANT_COMBINE_TOOLS = ("combine_mean", "combine_median", "combine_weighted",
 
 #: `weights_softmax_neg_error` listed first when `config.reorder_weight_tools` is on.
 _SOFTMAX, _INVERSE = "weights_softmax_neg_error", "weights_inverse_error"
+
+#: Entries hidden when `config.catalog_v2` is on. Evidence: in the 680 series of
+#: the v5 runs, 14 of the 24 catalog entries were never called. The six
+#: diagnostics already reach the agent through the cards; `weights_softmax_neg_error`
+#: duplicates `weights_inverse_error`; `weights_feature_based` and
+#: `weights_pooled_meta_model` became `weights_meta_model`; the `combine_*` tools
+#: only rebuild what `evaluate_strategy` already scores; and `sanity_check` /
+#: `list_attempts` duplicate information the turn already carries.
+CATALOG_V2_WITHHELD: tuple = (
+    "series_profile", "stl_summary", "error_summary", "ranking_stability",
+    "error_correlation", "dm_test",
+    "weights_softmax_neg_error", "weights_feature_based", "weights_pooled_meta_model",
+    "combine_mean", "combine_median", "combine_trimmed_mean", "combine_weighted",
+    "combine_dba", "combine_best_single",
+    "sanity_check", "list_attempts",
+)
+
+#: Recipes tested offline in `aprovacao_solida/07_novas_combinacoes`, hidden until
+#: the battery confirms which of them improve the floor (`config.extra_actions`).
+EXTRA_ACTIONS: tuple = (
+    "weights_best_per_horizon",
+    "weights_topk_per_horizon",
+    "weights_forward",
+)
 
 #: There is no terminal tool — accepting is the agent's decision, emitted as
 #: `Action: accept` and handled by the Phase 3 loop, not here.
@@ -101,6 +130,16 @@ def withheld_tools(config: Any, n_windows: int, state: Optional[Any] = None) -> 
     just cannot withhold this one entry.
     """
     out: Dict[str, str] = {}
+    if getattr(config, "catalog_v2", False):
+        for name in CATALOG_V2_WITHHELD:
+            if name in TOOLS:
+                out[name] = (
+                    "catalog v2: already in the turn context, replaced by a "
+                    "merged tool, or never called in the 680-series v5 runs"
+                )
+        if not getattr(config, "extra_actions", False):
+            for name in EXTRA_ACTIONS:
+                out[name] = "experimental recipe: enable config.extra_actions to expose it"
     if getattr(config, "drop_redundant_combine_actions", False):
         for name in REDUNDANT_COMBINE_TOOLS:
             out[name] = "redundant: evaluate_strategy builds and scores the same strategy"

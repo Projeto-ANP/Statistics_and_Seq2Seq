@@ -60,6 +60,11 @@ _SYSTEM_TAGS = (
     ("A TYPICAL SEQUENCE", "typical_sequence"),
     ("THE WEIGHT METHODS", "weight_methods"),
     ("RULES", "rules"),
+    # Tags used by the v2 prompt (`build_system_prompt_v2`).
+    ("WHAT YOU RECEIVE", "context"),
+    ("PROCEDURE", "procedure"),
+    ("WORKED EXAMPLES", "examples"),
+    ("WHEN TO STOP", "stopping"),
 )
 
 
@@ -68,11 +73,13 @@ def _check_format(prompt_format: str) -> None:
         raise ValueError(f"prompt_format must be one of {PROMPT_FORMATS}, got {prompt_format!r}")
 
 
-def _system_as_xml(lines: List[str]) -> str:
+def _system_as_xml(lines: List[str], merge_first_two: bool = True) -> str:
     """Wraps each blank-line-separated block of the system prompt in a tag.
 
     Wording is untouched: only the delimiters change, so the `text` and `xml`
-    variants are an A/B on structure alone.
+    variants are an A/B on structure alone. `merge_first_two` joins the first
+    two blocks into the `role` tag; the v1 prompt needs it (the role statement
+    spans two paragraphs), the v2 prompt does not.
     """
     blocks: List[List[str]] = [[]]
     for line in lines:
@@ -81,7 +88,8 @@ def _system_as_xml(lines: List[str]) -> str:
         else:
             blocks[-1].append(line)
     blocks = [b for b in blocks if b]
-    blocks[:2] = [blocks[0] + [""] + blocks[1]]  # the role statement spans two paragraphs
+    if merge_first_two and len(blocks) >= 2:
+        blocks[:2] = [blocks[0] + [""] + blocks[1]]  # the role statement spans two paragraphs
     out: List[str] = []
     for i, block in enumerate(blocks):
         tag = "role" if i == 0 else "section"
@@ -224,6 +232,134 @@ def build_system_prompt(
     return "\n".join(rules)
 
 
+def build_system_prompt_v2(
+    include_history_rules: bool = True,
+    withheld_tools: Optional[Dict[str, str]] = None,
+    prompt_format: str = "xml",
+    reorder_weight_tools: bool = False,
+) -> str:
+    """Restructured system prompt: procedure, grouped catalog, worked examples.
+
+    Same closed action space and same three-line output contract as v1; what
+    changes is the organisation. Two measured problems motivate it. First, the
+    v1 prompt is a long list of prose rules, and local models are known to need
+    explicit structure rather than dense instructions. Second, its single worked
+    sequence anchors the agent on `select_stable -> weights_* -> weighted`,
+    which matches the observed over-use of weighting (591 of 756
+    `evaluate_strategy` calls on the ANP run), so this version shows two
+    examples of different KINDS of strategy and states an explicit stop rule
+    that reads the LEADER DIAGNOSTICS block.
+    """
+    tools = describe_tools(withheld_tools, reorder_weight_tools)
+    groups: Dict[str, List[str]] = {
+        "diagnostics": [], "pool": [], "weights": [], "combination": [], "validation": [],
+    }
+    for tool in tools:
+        name = tool["name"]
+        if name.startswith("select_"):
+            key = "pool"
+        elif name.startswith("weights_"):
+            key = "weights"
+        elif name.startswith("combine_"):
+            key = "combination"
+        elif name in ("evaluate_strategy", "sanity_check", "list_attempts"):
+            key = "validation"
+        else:
+            key = "diagnostics"
+        groups[key].append(f"  {name}({', '.join(tool['args'])}) - {tool['description']}")
+
+    catalog: List[str] = []
+    for key, label in (
+        ("diagnostics", "DIAGNOSTICS"),
+        ("pool", "POOL SELECTION"),
+        ("weights", "WEIGHTS"),
+        ("combination", "COMBINATION"),
+        ("validation", "VALIDATION"),
+    ):
+        if groups[key]:
+            catalog.append(f"{label}:")
+            catalog.extend(groups[key])
+
+    lines: List[str] = [
+        "You are a forecast COMBINATION AGENT.",
+        "",
+        "A pool of already-trained forecasting models produced predictions for one",
+        "time series. Your job is to decide HOW TO COMBINE them for the blind test",
+        "window. You never write forecast numbers and you never write weights: you",
+        "call tools, and the tools compute. Every strategy is scored by the harness",
+        "on validation windows, and the strategy applied at the end is the",
+        "best-scoring one of the whole history, seeded baselines included, so",
+        "testing a hypothesis cannot make the final result worse.",
+        "",
+        "WHAT YOU RECEIVE EVERY TURN:",
+        "  - SERIES PROFILE: shape of the series (trend, seasonality, stationarity, outliers).",
+        "  - MODEL POOL: error table, ranking stability across windows, correlated-error groups.",
+        "  - ATTEMPT HISTORY: every strategy tested so far, best first, with its score.",
+        "  - LEADER DIAGNOSTICS: the current leader, how far the runner-up is, and whether",
+        "    that gap is statistically distinguishable.",
+        "  - HANDLES: pools and weight vectors created in this run, with concentration.",
+        "",
+        "PROCEDURE:",
+        "  1. Read the diagnostics and form ONE hypothesis about this series.",
+        "  2. Test it with evaluate_strategy, building a pool or weights handle first",
+        "     only when the hypothesis needs a subset or a fitted weighting.",
+        "  3. Read the result against the attempt history and the leader diagnostics.",
+        "  4. Either test a DIFFERENT kind of strategy, or accept the leader.",
+        "",
+        "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
+        *catalog,
+        f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        "",
+        "OUTPUT FORMAT - exactly three lines, nothing else:",
+        "Thought: <one or two sentences on what you want to learn or test next>",
+        "Action: <tool name from the list above>",
+        'Action Input: {"arg": value}',
+        "",
+        "WORKED EXAMPLES (the harness prints the observation back after each action):",
+        "  Example 1, a robust hypothesis, when the ranking is unstable:",
+        "    Thought: the ranking is unstable across windows and several models carry",
+        "      correlated error, so a robust median of the most stable subset should",
+        "      beat fitted weights that would chase three windows of noise.",
+        "    Action: select_stable",
+        '    Action Input: {"k": 7}',
+        "    Action: evaluate_strategy",
+        '    Action Input: {"combine": "median", "pool": "pool1", "rationale": "unstable ranking favours a robust median"}',
+        "  Example 2, a selective hypothesis, when one model dominates:",
+        "    Thought: the error table has one model clearly ahead of the rest, so",
+        "      combining it with weaker models would only add their error.",
+        "    Action: evaluate_strategy",
+        '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
+        "",
+        "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
+        "  - If the leader is a SEED and the verdict is 'indistinguishable', accept it.",
+        "    The runner-up is not statistically better and more turns rarely turn",
+        "    noise into a real gain.",
+        "  - If a strategy you tested leads with a 'separated' margin, accept it.",
+        "  - If your last proposals returned 'SAME forecasts' notes or near-uniform",
+        "    weights, change the POOL or the KIND of combination, not the weighting.",
+        "",
+        "RULES:",
+        "- Weight tools return a HANDLE (w1, w2, ...); pass it to evaluate_strategy",
+        "  as 'weights'. You never see the numbers, and you do not need to.",
+        "- A handle is only valid with the pool it was computed on.",
+        "- Repeating a strategy already in the history wastes an iteration.",
+        "- Never assume w1 or pool1 exists: create it in this run before you refer to it.",
+        "- When you accept, justify the choice in terms of OBSERVABLE SERIES",
+        "  CHARACTERISTICS (trend, seasonality, ranking stability, redundancy), not",
+        "  just 'it had the lowest error'.",
+    ]
+    if include_history_rules:
+        lines += [
+            "- The attempt history is ranked best to worst and is given every turn;",
+            "  when two attempts differ only slightly, look for a different KIND of",
+            "  strategy rather than tuning the winner.",
+        ]
+    _check_format(prompt_format)
+    if prompt_format == "xml":
+        return _system_as_xml(lines, merge_first_two=False)
+    return "\n".join(lines)
+
+
 def build_dataset_card(state: ReactState, top_n: int = 5) -> Optional[Dict[str, Any]]:
     """What worked on the OTHER series of this dataset, from validation only.
 
@@ -274,10 +410,16 @@ def build_turn_prompt(
     show_rationales: bool = True,
     diagnosis: Optional[Dict[str, Any]] = None,
     prompt_format: str = "text",
+    leader: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget.
 
     `prompt_format="xml"` wraps each section in a tag and changes nothing else.
+
+    `leader` is the deterministic leader diagnostics block (leader, margin to
+    the runner-up, statistical verdict). It is only passed by the v2 prompt:
+    the agent's self-declared confidence on the accept was a constant, so the
+    harness tells it how separated the leader actually is instead of asking.
     """
     _check_format(prompt_format)
     xml = prompt_format == "xml"
@@ -329,6 +471,13 @@ def build_turn_prompt(
         else:
             parts.append("  (empty)")
         close_("attempt_history")
+
+    if leader:
+        parts.append("")
+        open_("leader_diagnostics")
+        parts.append("LEADER DIAGNOSTICS (validation only):")
+        parts.append(_compact(leader, limit=600))
+        close_("leader_diagnostics")
 
     handles = _handles_summary(state)
     parts.append("")

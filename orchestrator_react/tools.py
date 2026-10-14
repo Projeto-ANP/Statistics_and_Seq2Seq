@@ -20,6 +20,7 @@ from orchestrator_react import features as F
 from orchestrator_react import meta_model as MM
 from orchestrator_react.selection import (
     PoolRecipe,
+    forward_indices,
     rank_table,
     stable_indices,
     top_k_indices,
@@ -452,6 +453,35 @@ def prune_redundant(
     }
 
 
+def select_forward(
+    state: ReactState,
+    max_steps: int = 20,
+    metric: str = "rmse",
+) -> Dict[str, Any]:
+    """Pool chosen by Caruana's greedy forward selection with replacement.
+
+    Starts from the empty ensemble and adds, at each step, the model that most
+    reduces the error of the running mean; the subset is the models picked at
+    least once. This is the classical ensemble-selection rule that the fixed
+    `select_top_k`/`select_stable` shortcuts only approximate.
+    """
+    chosen = forward_indices(state.y_true, state.y_preds, max_steps=int(max_steps), metric=str(metric))
+    existed = set(state.pools)
+    handle = state.register_pool(
+        chosen, origin="forward", metric=str(metric), max_steps=int(max_steps),
+        # Re-fittable: under nested selection each fold re-runs the greedy choice
+        # on the windows the protocol admits, so the scored window never voted.
+        recipe=PoolRecipe(method="forward", params={"max_steps": int(max_steps), "metric": str(metric)}),
+    )
+    return {
+        "pool": handle,
+        **_handle_note(handle, existed),
+        "k": int(len(chosen)),
+        "criterion": f"Caruana forward selection ({metric})",
+        "models": [state.model_names[int(j)] for j in chosen],
+    }
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 3.4.3 — Weight computation (always returns a handle, never numbers)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -611,6 +641,79 @@ def weights_pooled_meta_model(state: ReactState, pool: str = FULL_POOL, eta: flo
     out["n_train_series"] = meta.n_train_series
     out["n_models_with_a_fit"] = sum(1 for v in scores.values() if v is not None)
     return out
+
+
+def weights_meta_model(
+    state: ReactState,
+    pool: str = FULL_POOL,
+    scope: str = "dataset",
+    metric: str = "smape",
+    eta: float = 1.0,
+) -> Dict[str, Any]:
+    """One entry point for the two meta-model recipes, selected by `scope`.
+
+    `scope="dataset"` uses the pooled meta-model trained across the other series
+    of the run (the FFORMA-style recipe); `scope="series"` fits a meta-model on
+    this series' own windows only, falling back to softmax(-error) when there is
+    not enough data. The two used to be separate catalog entries, but only the
+    pooled one is ever reachable in practice, and telling them apart was on the
+    reader, not on the tool.
+    """
+    scope = str(scope).strip().lower()
+    if scope in ("dataset", "pooled", "pooled_meta_model"):
+        out = weights_pooled_meta_model(state, pool=pool, eta=float(eta))
+        out["scope"] = "dataset"
+        return out
+    if scope in ("series", "feature", "feature_based"):
+        out = weights_feature_based(state, pool=pool, metric=str(metric), eta=float(eta))
+        out["scope"] = "series"
+        return out
+    raise ValueError(
+        f"scope={scope!r} is invalid. Valid: 'dataset' (pooled across series) "
+        "or 'series' (fitted on this series' own windows)"
+    )
+
+
+def weights_best_per_horizon(
+    state: ReactState,
+    pool: str = FULL_POOL,
+    metric: str = "rmse",
+) -> Dict[str, Any]:
+    """Per-horizon one-hot weights: the pool model with the lowest error at each step.
+
+    This is the old orchestrator's `best_per_horizon`, which the ReAct catalog
+    dropped; it is recomputed per backtest fold under the anti-leakage protocol,
+    like every other recipe.
+    """
+    return _register(
+        state, "best_per_horizon", pool, None, True, metric=str(metric),
+    )
+
+
+def weights_topk_per_horizon(
+    state: ReactState,
+    pool: str = FULL_POOL,
+    k: int = 3,
+    metric: str = "rmse",
+) -> Dict[str, Any]:
+    """Per-horizon weights: equal share for the k lowest-error models at each step."""
+    return _register(
+        state, "topk_mean_per_horizon", pool, None, True,
+        k=int(k), metric=str(metric),
+    )
+
+
+def weights_forward(
+    state: ReactState,
+    pool: str = FULL_POOL,
+    max_steps: int = 20,
+    metric: str = "rmse",
+) -> Dict[str, Any]:
+    """Caruana weights: selection counts of the greedy forward search, normalised."""
+    return _register(
+        state, "forward_selection", pool, None, False,
+        max_steps=int(max_steps), metric=str(metric),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

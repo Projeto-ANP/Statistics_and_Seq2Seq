@@ -97,6 +97,27 @@ class ReactConfig:
     #: a tag) or "text" (headers such as `SERIES PROFILE:`, the format of every result
     #: before v1_gpt). Same wording either way: an A/B on structure only.
     prompt_format: str = "xml"
+    #: Catalog and prompt of the v2 run. Both default OFF, so a default config
+    #: reproduces the published behaviour and the old prompt stays available for
+    #: the A/B. What they change:
+    #:
+    #: `catalog_v2` hides the entries the v5 runs never called (the six
+    #: diagnostics, already present in the turn context), the duplicated
+    #: `weights_softmax_neg_error`, the two split meta-model tools (replaced by
+    #: `weights_meta_model`) and the four `combine_*` sugar tools, and adds
+    #: `select_forward` (Caruana). The closed catalog keeps 10 entries.
+    #:
+    #: `extra_actions` additionally exposes the recipes tested offline in
+    #: `aprovacao_solida/07_novas_combinacoes`: `weights_best_per_horizon`,
+    #: `weights_topk_per_horizon` and `weights_forward`.
+    #: RESEARCH: tool selection degrades as the catalog grows and overlapping
+    #: tools make it worse; the v5 traces show 14 of 24 actions never called.
+    catalog_v2: bool = False
+    #: Use the restructured system/turn prompt: role, four-step procedure,
+    #: catalog grouped by phase, two worked examples with different kinds of
+    #: strategy, and an explicit stop rule that reads the leader diagnostics.
+    prompt_v2: bool = False
+    extra_actions: bool = False
     #: Catalog experiments. Each is independent and OFF by default, so a default
     #: config reproduces the published behaviour; they exist to be turned on one at
     #: a time. See `RESUMO_*.md` under outputs/resultados/ablacao.
