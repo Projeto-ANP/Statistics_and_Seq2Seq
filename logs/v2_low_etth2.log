@@ -1,0 +1,233 @@
+dataset      : ETTH2
+reading from : ./timeseries/mestrado/resultados
+writing to   : ./timeseries/mestrado/resultados/orchestrator_react_v2_low
+source       : ETTH2.tsf
+models       : 19
+ablation     : v2_low-1e8d66d131
+pool mode    : full | windows: 3 | backtest: expanding
+final        : argmin | stable seeds: True | pooled: True/fforma seeded | card: True (min 20 series) | budget: 12 iters, patience 4
+protocol     : nested_selection=True | min_windows_for_ols=5 (weights_ols WITHHELD this run)
+llm          : combinator=gpt-oss:20b reasoning=low diagnostician=none reporter=none
+series       : all
+--------------------------------------------------------------------------
+llm preflight: OK ('OK')
+--------------------------------------------------------------------------
+/home/lucas.castro/.conda/envs/agno/lib/python3.11/site-packages/tslearn/bases/bases.py:15: UserWarning: h5py not installed, hdf5 features will not be supported.
+Install h5py to use hdf5 features: http://docs.h5py.org/
+  warn(h5py_msg)
+[   0]   iter 1 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0}
+[   0]     think: The current leader is a trimmed mean over pool2; a weighted combination might exploit the error differences among the 7 models and improve performance.
+[   0]     obs  : handle w1 mode=inverse_error active=7/7 conc=0.0
+[   0]   iter 2 | evaluate_strategy {"combine": "weighted", "weights": "w1", "rationale": "inverse-error weighted pool2"}
+[   0]     think: test a weighted combination using the inverse-error weights on pool2 to see if it beats the current leader.
+[   0]     obs  : ERROR invalid_argument: weights 'w1' were computed over 'pool2', but the strategy uses pool 'pool_full'
+[   0]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w1", "rationale": "inverse-error weighted pool2"}
+[   0]     think: test inverse-error weighted combination on pool2, as the series is trend-dominated and weighted combos are hinted.
+[   0]     obs  : rank 4/10 score=-0.1108 rmse=3.6957, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   0]   iter 4 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   0]     think: The current leader is a trimmed‑mean over pool2. Since the ranking is only moderate and several models share correlated errors, pruning redundant models and then applying inverse‑error weighting on...
+[   0]     obs  : pool pool4 19->9 models, dropped ['rf', 'CWT_rf', 'DWT_rf', 'FT_rf']
+[   0]   iter 5 | weights_forward {"pool": "pool2", "max_steps": 20, "metric": "rmse"}
+[   0]     think: The current leader is a trimmed‑mean over pool2, but the ranking is only moderately stable and several models are correlated. A forward‑selection weight that picks complementary models may beat the...
+[   0]     obs  : handle w2 mode=forward_selection active=1/7 conc=1.0
+[   0]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "forward selection on pool2"}
+[   0]     think: Try a forward‑selection weighted combination on pool2 to see if a single‑model selection beats the current trimmed‑mean leader.
+[   0]     obs  : rank 9/11 score=-0.1026 rmse=3.515, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   0]   iter 7 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.5}
+[   0]     think: The current leader is a trimmed‑mean on pool2, but the weighted forward‑selection (w2) already improves the per‑window errors. A moderate shrinkage of the inverse‑error weights may balance the high...
+[   0]     obs  : handle w3 mode=inverse_error active=7/7 conc=0.0
+[   0]   iter 8 | weights_meta_model {"pool": "pool2", "scope": "series", "metric": "smape", "eta": 1.0}
+[   0]     think: The current leader is a trimmed mean on pool2, but the ranking is moderate and several models are correlated. A meta‑model that learns to weight each model per horizon might capture complementary s...
+[   0]     obs  : handle w4 mode=softmax_fallback active=7/7 conc=0.0
+[   0]   iter 9 | weights_best_per_horizon {"pool": "pool2", "metric": "rmse"}
+[   0]     think: The current leader is a trimmed‑mean on pool2, but the series is trend‑dominated and the ranking is moderately stable. A weighted scheme that adapts per horizon might capture subtle changes in mode...
+[   0]     obs  : handle w5 mode=best_per_horizon active=5/7 conc=0.097
+[   0]   iter 10 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w3", "rationale": "inverse‑error weighting on pool2"}
+[   0]     think: Try inverse‑error weighted pool2 (handle w3) to see if a data‑driven weighting can beat the trimmed‑mean leader.
+[   0]     obs  : rank 5/12 score=-0.1108 rmse=3.6969, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   0]   iter 11 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w4", "rationale": "softmax meta‑model weighting"}
+[   0]     think: The current leader is a trimmed‑mean on pool2. A meta‑model weight (softmax) may capture subtle differences and improve over the simple trimmed mean, so test it.
+[   0]     obs  : rank 5/13 score=-0.1108 rmse=3.6963, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   0] trimmed_mean   score=-0.1136 origin=baseline iters=11 stop=no improvement in 4 consecutive proposals
+         TEST  smape=0.1310  rmse=5.4826  pocid=56.52  mape=0.1236
+         FORECAST [37.831, 38.008, 38.032, 37.483, 36.722, 35.531, 34.226, 33.04, 32.11, 31.556, 31.46, 31.264, 31.395, 32.029, 32.46, 33.173, 33.845, 34.359, 34.719, 35.096, 35.336, 35.566, 35.653, 35.764]
+         PROVENANCE tools=11 evaluate_calls=4 pool=7 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.007004)
+[   1]   iter 1 | weights_inverse_error {"pool": "pool1", "metric": "rmse"}
+[   1]     think: The median is robust but may underweight the top models; try inverse‑error weighting on the stable pool1 to give more influence to the best performers.
+[   1]     obs  : handle w1 mode=inverse_error active=5/5 conc=0.001
+[   1]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w1", "rationale": "use inverse‑error weights on the st...
+[   1]     think: The median currently leads with a clear margin; a weighted inverse‑error scheme on the stable pool may improve further.
+[   1]     obs  : rank 3/10 score=-0.0918 rmse=1.7944, leader is a2 (median)
+[   1]   iter 3 | select_forward {"max_steps": 20, "metric": "rmse"}
+[   1]     think: The median is best so far; try a forward‑selection based weighted combo to capture complementary strengths.
+[   1]     obs  : pool pool4 k=2 ['ONLY_CWT_rf', 'ONLY_FT_rf']
+[   1]   iter 4 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[   1]     think: The median strategy is best so far; try a Caruana forward‑selected pool with fitted weights to see if a small weighted combo can beat it.
+[   1]     obs  : handle w2 mode=forward_selection active=2/2 conc=0.0
+[   1]   iter 5 | weights_best_per_horizon {"pool": "pool1", "metric": "rmse"}
+[   1]     think: The series is trend‑dominated with high predictability; a horizon‑specific weighting may capture subtle changes in model performance across the 24‑step horizon.
+[   1]     obs  : handle w3 mode=best_per_horizon active=5/5 conc=0.167
+[   1]   iter 6 | weights_inverse_error {"pool": "pool2", "metric": "rmse"}
+[   1]     think: The current leader is median, but inverse‑error weighting on a slightly larger stable pool (pool2) may reduce error further by giving more weight to the best models while still controlling variance.
+[   1]     obs  : handle w4 mode=inverse_error active=7/7 conc=0.0
+[   1]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w4", "rationale": "inverse‑error weights on the stable...
+[   1]     think: Test a weighted combination using the full stable pool2 with inverse‑error weights (w4) to see if it beats the current median leader.
+[   1]     obs  : rank 7/11 score=-0.0886 rmse=1.8141, leader is a2 (median)
+[   1]   iter 8 | weights_forward {"pool": "pool1", "max_steps": 20, "metric": "rmse"}
+[   1]     think: The median is best so far; try a forward‑selection weighted combo on the stable pool1 to see if a small, highly correlated subset can beat it.
+[   1]     obs  : handle w5 mode=forward_selection active=2/5 conc=0.375
+[   1]   iter 9 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w5", "rationale": "forward selection on stable pool1"}
+[   1]     think: The median remains best; try a weighted combination using forward selection on the stable pool1 to see if a small subset can beat median.
+[   1]     obs  : rank 2/12 score=-0.0983 rmse=1.7209, leader is a2 (median)
+[   1]   iter 10 | prune_redundant {"pool": "pool2", "corr_threshold": 0.95, "metric": "rmse"}
+[   1]     think: The current best weighted strategy still trails the median by ~0.035. Removing highly correlated models may reduce noise and improve the inverse‑error weighting.
+[   1]     obs  : pool pool5 7->3 models, dropped ['rf', 'CWT_catboost', 'ONLY_DWT_catboost', 'ONLY_FT_catboost']
+[   1]   iter 11 | weights_inverse_error {"pool": "pool5", "metric": "rmse"}
+[   1]     think: The remaining pool5 contains the three most distinct models; inverse‑error weighting may exploit their individual strengths and reduce variance.
+[   1]     obs  : handle w6 mode=inverse_error active=3/3 conc=0.001
+[   1]   iter 12 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is the best-scoring strategy and the ma...
+[   1]     think: The leader strategy (median) is statistically separated from the runner‑up, so we accept it.
+[   1]     obs  : accepted a2 (confidence=None)
+[   1] median         score=-0.1019 origin=baseline iters=12 stop=agent_accepted
+         TEST  smape=0.1395  rmse=1.7078  pocid=60.87  mape=0.1370
+         FORECAST [10.404, 10.675, 10.642, 10.486, 10.408, 9.969, 10.147, 10.136, 10.006, 9.822, 9.782, 9.771, 9.116, 9.684, 9.643, 10.028, 10.203, 10.45, 10.532, 10.61, 10.38, 10.378, 10.183, 9.86]
+         PROVENANCE tools=11 evaluate_calls=3 pool=19 effective=1 ok=True
+[   2]   iter 1 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0}
+[   2]     think: The median is best so far, but a weighted inverse‑error scheme on the most stable pool (pool2) might reduce error further by giving more weight to the top performers.
+[   2]     obs  : handle w1 mode=inverse_error active=7/7 conc=0.001
+[   2]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w1", "rationale": "inverse-error weighting on the stab...
+[   2]     think: The current leader is median, but the error table shows a clear top model. A weighted inverse-error combination on the stable pool2 may improve over median.
+[   2]     obs  : rank 4/10 score=-0.113 rmse=2.994, leader is a2 (median)
+[   2]   iter 3 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   2]     think: The median wins, but the error table shows strong correlation groups; pruning redundant models may reduce noise and let a weighted scheme improve over median.
+[   2]     obs  : pool pool4 19->10 models, dropped ['rf', 'CWT_catboost', 'DWT_catboost', 'FT_catboost']
+[   2]   iter 4 | select_forward {"max_steps": 20, "metric": "rmse"}
+[   2]     think: The median strategy is currently best; try a forward‑selection pool on the pruned pool4 to see if a greedy combination can beat it.
+[   2]     obs  : pool pool5 k=2 ['ARIMA', 'ONLY_CWT_rf']
+[   2]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool5", "weights": "w2", "rationale": "forward‑selected two‑model weighted...
+[   2]     think: Try a Caruana forward‑selected pool (ARIMA + ONLY_CWT_rf) with weights derived from the same forward selection, hoping the two‑model combo beats the median.
+[   2]     obs  : ERROR invalid_argument: "unknown weights handle: 'w2'. Available: ['w1']"
+[   2]   iter 6 | weights_inverse_error {"pool": "pool5", "metric": "rmse", "shrinkage": 0.0}
+[   2]     think: Use the forward‑selected two‑model pool (ARIMA, ONLY_CWT_rf) with inverse‑error weighting to see if a simple weighted combo beats the median leader.
+[   2]     obs  : handle w2 mode=inverse_error active=2/2 conc=0.002
+[   2]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool5", "weights": "w2", "rationale": "inverse‑error weighting on the two ...
+[   2]     think: Try a weighted combination of the two best models (ONLY_CWT_rf and ARIMA) using inverse‑error weights; this may beat the median if the two models dominate the error distribution.
+[   2]     obs  : rank 1/11 score=-0.1208 rmse=2.3577 (best so far)
+[   2]   iter 8 | weights_best_per_horizon {"pool": "pool5", "metric": "rmse"}
+[   2]     think: Try horizon‑specific best‑model weighting on the two‑model pool to see if per‑step gains improve over the current best weighted combo.
+[   2]     obs  : handle w3 mode=best_per_horizon active=2/2 conc=0.062
+[   2]   iter 9 | evaluate_strategy {"combine": "weighted", "pool": "pool5", "weights": "w3", "rationale": "best‑per‑horizon weighting on the t...
+[   2]     think: Try a horizon‑specific weighting on the same two‑model pool to see if per‑horizon best improves over the overall inverse‑error weights.
+[   2]     obs  : rank 4/12 score=-0.1145 rmse=2.5218, leader is a11 (weighted pool=pool5 w=w2)
+[   2]   iter 10 | weights_best_per_horizon {"pool": "pool2", "metric": "rmse"}
+[   2]     think: The current leader uses inverse‑error weighting on the two best models. To see if a horizon‑specific weighting can improve, test best‑per‑horizon weights on a slightly larger stable pool (pool2) th...
+[   2]     obs  : handle w4 mode=best_per_horizon active=4/7 conc=0.299
+[   2]   iter 11 | accept {"attempt_id": "a11", "confidence": "high", "justification": "The weighted combination of the two best mode...
+[   2]     think: The current leader (a11) is clearly separated from the runner‑up, so accepting it is the safest move.
+[   2]     obs  : accepted a11 (confidence=None)
+[   2] weighted       score=-0.1208 origin=agent    iters=11 stop=agent_accepted
+         TEST  smape=0.0813  rmse=4.6595  pocid=69.57  mape=0.0774
+         FORECAST [51.197, 51.565, 50.771, 48.284, 47.221, 45.061, 44.154, 43.539, 42.139, 39.922, 37.725, 39.909, 38.064, 41.96, 42.228, 44.708, 46.25, 47.311, 46.423, 46.629, 49.342, 49.463, 48.997, 47.141]
+         PROVENANCE tools=10 evaluate_calls=3 pool=2 effective=2 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003393)
+[   3]   iter 1 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "windows": null, "shrinkage": 0.0, "per_horizon": false}
+[   3]     think: The leader uses a trimmed mean over pool2; a weighted combination based on inverse error might exploit the strong trend dominance and reduce variance across the few validation windows.
+[   3]     obs  : handle w1 mode=inverse_error active=7/7 conc=0.0
+[   3]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w1", "rationale": "use inverse-error weights on the st...
+[   3]     think: Test a weighted combination using inverse-error weights on pool2 to see if it beats the current leader trimmed_mean pool2.
+[   3]     obs  : rank 5/10 score=-0.0952 rmse=1.4622, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   3]   iter 3 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "windows": null, "shrinkage": 0.5, "per_horizon": false}
+[   3]     think: The current leader a7 uses trimmed_mean on pool2. Since the ranking is moderate and errors are correlated, a weighted combination with shrinkage toward uniform may reduce variance and improve perfo...
+[   3]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[   3]   iter 4 | weights_error_trend {"pool": "pool2", "metric": "mae", "eta": 1.0}
+[   3]     think: The series is trend‑dominated and the best baseline is a trimmed mean over the stable pool. A weighted scheme that adapts to the trend (error_trend) might reduce bias and improve over the trimmed m...
+[   3]     obs  : handle w3 mode=error_trend active=7/7 conc=0.002
+[   3]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w3", "rationale": "error‑trend weights on the stable p...
+[   3]     think: Test whether error‑trend weighted combination on pool2 outperforms the current leader trimmed‑mean pool2.
+[   3]     obs  : rank 5/11 score=-0.0952 rmse=1.4618, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   3]   iter 6 | weights_forward {"pool": "pool2", "max_steps": 20, "metric": "rmse"}
+[   3]     think: The current leader is a trimmed‑mean on pool2. A Caruana forward‑selection weighting may capture complementary strengths and beat the trimmed‑mean.
+[   3]     obs  : handle w4 mode=forward_selection active=1/7 conc=1.0
+[   3]   iter 7 | prune_redundant {"pool": "pool2", "corr_threshold": 0.95, "metric": "rmse"}
+[   3]     think: The current leader uses a trimmed mean over a stable pool; a weighted approach that accounts for correlated errors might beat it.
+[   3]     obs  : pool pool4 7->1 models, dropped ['rf', 'CWT_rf', 'CWT_catboost', 'ONLY_CWT_catboost']
+[   3]   iter 8 | evaluate_strategy {"combine": "best_single", "model": "ONLY_CWT_rf", "rationale": "single best model from pruned pool"}
+[   3]     think: The current leader is a trimmed‑mean over pool2. Since pool4 contains only the single best model (ONLY_CWT_rf), a best‑single strategy may match or beat it with less variance.
+[   3]     obs  : rank 1/12 score=-0.1173 rmse=1.3372 (best so far)
+[   3]   iter 9 | accept {"attempt_id": "a12", "confidence": "high", "justification": "ONLY_CWT_rf dominates the pool, trend‑dominat...
+[   3]     think: The current best strategy is a clear winner with a separated margin; no further improvement is likely needed.
+[   3]     obs  : accepted a12 (confidence=None)
+[   3] best_single    score=-0.1173 origin=agent    iters=9 stop=agent_accepted
+         TEST  smape=0.1144  rmse=1.5346  pocid=56.52  mape=0.1113
+         FORECAST [10.536, 10.775, 11.144, 10.542, 10.763, 10.235, 10.359, 10.151, 10.315, 10.246, 10.014, 9.91, 9.695, 10.584, 10.425, 10.622, 10.715, 10.875, 11.03, 11.308, 11.143, 11.008, 10.686, 10.055]
+         PROVENANCE tools=8 evaluate_calls=3 pool=1 effective=1 ok=True
+[   4]   iter 1 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "windows": null, "shrinkage": 0.0, "per_horizon": false}
+[   4]     think: The median of all 19 models is best so far, but the top 5 models in pool1 are very consistent and have low error; a weighted average based on inverse error may improve over the simple median.
+[   4]     obs  : handle w1 mode=inverse_error active=5/5 conc=0.0
+[   4]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "test inverse-error weighting on a m...
+[   4]     think: The median baseline is best so far; try a fitted weighting on a larger stable pool (pool2) to see if inverse-error improves over median.
+[   4]     obs  : ERROR invalid_argument: "unknown weights handle: 'w2'. Available: ['w1']"
+[   4]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w1", "rationale": "inverse‑error weighting on the most...
+[   4]     think: Try inverse‑error weighting on the stable pool1 to see if it beats the median baseline.
+[   4]     obs  : rank 7/10 score=-0.0636 rmse=1.0241, leader is a2 (median)
+[   4]   iter 4 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "windows": null, "shrinkage": 0.0, "per_horizon": false}
+[   4]     think: The median remains best, but the next best is a trimmed mean.
+[   4]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[   4]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "inverse‑error weighting on the 7 mo...
+[   4]     think: Test inverse‑error weighting on the more stable pool2 to see if it beats the median leader.
+[   4]     obs  : rank 5/11 score=-0.0664 rmse=1.033, leader is a2 (median)
+[   4]   iter 6 | weights_topk_per_horizon {"pool": "pool2", "k": 3, "metric": "rmse"}
+[   4]     think: The ranking is moderately stable but the top models differ across horizons; a per‑horizon top‑k weighting may capture that variation better than a single global weight vector.
+[   4]     obs  : handle w3 mode=topk_mean_per_horizon active=7/7 conc=0.019
+[   4]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w3", "rationale": "per‑horizon top‑3 weighting to capt...
+[   4]     think: The current leader is a median strategy with indistinguishable margin; a more flexible per‑horizon weighting might improve performance by exploiting the slight differences in model strengths across...
+[   4]     obs  : rank 10/12 score=-0.0577 rmse=1.0444, leader is a2 (median)
+[   4]   iter 8 | evaluate_strategy {"combine": "best_single", "model": "FT_rf", "rationale": "test if the top model alone outperforms the medi...
+[   4]     think: The median baseline is statistically indistinguishable from the runner‑up; a selective single‑model strategy (FT_rf) may still beat it if that model dominates the horizon.
+[   4]     obs  : rank 4/13 score=-0.0672 rmse=0.9788, leader is a2 (median)
+[   4] median         score=-0.0752 origin=baseline iters=8 stop=no improvement in 4 consecutive proposals
+         TEST  smape=0.0793  rmse=1.0306  pocid=34.78  mape=0.0811
+         FORECAST [-9.793, -9.884, -9.802, -9.696, -9.738, -9.661, -9.766, -9.812, -9.858, -9.842, -9.839, -10.048, -10.125, -10.271, -10.33, -10.321, -10.302, -10.199, -10.266, -10.151, -10.186, -10.125, -9.977, -9.923]
+         PROVENANCE tools=8 evaluate_calls=4 pool=19 effective=1 ok=True
+[   5]   iter 1 | weights_inverse_error {"pool": "pool_full", "metric": "rmse"}
+[   5]     think: The median is robust but may underweight the top performers; try inverse‑error weighting on the full pool to give more influence to the best models while still mixing others.
+[   5]     obs  : handle w1 mode=inverse_error active=17/19 conc=0.009
+[   5]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   5]     think: The error correlation shows many redundant models; pruning may reduce noise and improve weighted combination.
+[   5]     obs  : pool pool4 19->10 models, dropped ['rf', 'FT_rf', 'CWT_catboost', 'DWT_catboost']
+[   5]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w1", "rationale": "inverse‑error weighting on the redu...
+[   5]     think: The median is best so far, but a weighted inverse‑error scheme on the pruned pool might reduce variance and improve the score.
+[   5]     obs  : ERROR invalid_argument: weights 'w1' were computed over 'pool_full', but the strategy uses pool 'pool4'
+[   5]   iter 4 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is the current leader and the margin is...
+[   5]     think: The leader strategy (median) is indistinguishable from the runner‑up, so accepting it is the safest choice.
+[   5]     obs  : accepted a2 (confidence=None)
+[   5] median         score=-0.0041 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.6525  rmse=0.7116  pocid=43.48  mape=1271662993922632.2500
+         FORECAST [-1.428, -1.26, -1.125, -1.126, -1.098, -1.053, -1.148, -1.11, -1.025, -1.07, -1.116, -1.135, -1.187, -1.389, -1.459, -1.595, -1.562, -1.501, -1.484, -1.465, -1.436, -1.426, -1.403, -1.352]
+         PROVENANCE tools=3 evaluate_calls=0 pool=19 effective=1 ok=True
+[   6]   iter 1 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.0}
+[   6]     think: The median is robust but may underweight the top performers; try inverse‑error weighting on the most stable pool1 to see if it improves over median.
+[   6]     obs  : handle w1 mode=inverse_error active=5/5 conc=0.0
+[   6]   iter 2 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable ranking and corre...
+[   6]     think: The current leader (median) is indistinguishable from the runner‑up and the ranking is unstable, so a robust deterministic baseline is likely optimal.
+[   6]     obs  : accepted a2 (confidence=None)
+[   6] median         score= 0.4724 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0359  rmse=1.7847  pocid=73.91  mape=0.0355
+         FORECAST [44.734, 43.141, 41.767, 41.135, 40.803, 40.415, 39.926, 39.45, 38.98, 38.355, 37.869, 37.591, 37.968, 39.277, 41.775, 44.223, 46.713, 48.328, 49.511, 50.18, 49.815, 48.964, 47.65, 46.204]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=1 ok=True
+--------------------------------------------------------------------------
+done in 71.2s | ok: 7 | failed: 0
+agent summary: ./timeseries/mestrado/resultados/orchestrator_react_v2_low/agent_summary.json
+
+DATASET SUMMARY over 7 series (mean across series):
+  this run   smape=0.1763  rmse=2.4159  pocid=56.52  mape=181666141988947.5312  mae=2.0384
+  mean       smape=1.7197  rmse=99996379087.4691  pocid=49.69  mape=20879052073827343269888.0000  <- this run is better
+  median     smape=0.1815  rmse=2.5568  pocid=56.52  mape=181666141988947.5312  <- this run is better
+  dba        smape=1.7257  rmse=151967111938.0612  pocid=52.80  mape=20879052073826667986944.0000  <- this run is better
+  ADE        smape=0.2261  rmse=2.6531  pocid=56.52  mape=299065117726769.6250  <- this run is better
+  FFORMA     smape=0.2035  rmse=2.5436  pocid=56.52  mape=269479043127657.0625  <- this run is better
+  strategy chosen by the agent in 2/7 series
+  selection verdict: {'indistinguishable': 4, 'separated': 3}
+csv: ./timeseries/mestrado/resultados/orchestrator_react_v2_low/ETTH2.csv
+artifacts: ./timeseries/mestrado/resultados/orchestrator_react_v2_low/llm_artifacts/ETTH2
