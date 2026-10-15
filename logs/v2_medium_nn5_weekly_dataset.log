@@ -1,0 +1,1587 @@
+dataset      : NN5_WEEKLY_DATASET
+reading from : ./timeseries/mestrado/resultados
+writing to   : ./timeseries/mestrado/resultados/orchestrator_react_v2_medium
+source       : nn5_weekly_dataset.tsf
+models       : 19
+ablation     : v2_medium-40162092fb
+pool mode    : full | windows: 3 | backtest: expanding
+final        : argmin | stable seeds: True | pooled: True/fforma seeded | card: True (min 20 series) | budget: 12 iters, patience 4
+protocol     : nested_selection=True | min_windows_for_ols=5 (weights_ols WITHHELD this run)
+llm          : combinator=gpt-oss:20b reasoning=medium diagnostician=none reporter=none
+series       : all
+--------------------------------------------------------------------------
+llm preflight: OK ('OK')
+--------------------------------------------------------------------------
+/home/lucas.castro/.conda/envs/agno/lib/python3.11/site-packages/tslearn/bases/bases.py:15: UserWarning: h5py not installed, hdf5 features will not be supported.
+Install h5py to use hdf5 features: http://docs.h5py.org/
+  warn(h5py_msg)
+[   0]   iter 1 | accept {"attempt_id": "a9", "confidence": "high", "justification": "trimmed_mean on a diverse pool handles trend/s...
+[   0]     think: The leader is a robust trimmed‑mean baseline with an indistinguishable margin; given the series’ strong trend, strong seasonality, unstable ranking and high error correlation, a robust deterministi...
+[   0]     obs  : accepted a9 (confidence=None)
+[   0] trimmed_mean   score= 0.6776 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0422  rmse=14.3569  pocid=14.29  mape=0.0411
+         FORECAST [260.978, 248.293, 260.764, 262.278, 262.926, 262.086, 262.603, 261.532]
+         PROVENANCE tools=0 evaluate_calls=0 pool=9 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.005855)
+[   1]   iter 1 | select_top_k {"k": 19}
+[   1]     think: Create a full pool of all 19 models so we can prune redundant ones and try a weighted inverse‑error combination, which may beat the current trimmed‑mean leader if the redundancy is reduced.
+[   1]     obs  : pool pool_full k=19 ['ETS', 'ARIMA', 'THETA', 'NaiveMovingAverage', 'ONLY_FT_rf']
+[   1]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   1]     think: The series is noisy and ranking unstable; pruning correlated models should reduce noise and a trimmed‑mean on the pruned pool may beat the current leader.
+[   1]     obs  : pool pool4 19->14 models, dropped ['ARIMA', 'THETA', 'NaiveMovingAverage', 'ONLY_DWT_rf']
+[   1]   iter 3 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on pool1 is robust to unstable ra...
+[   1]     think: The trimmed_mean on pool1 (a5) already leads with a separated margin and is robust to the unstable ranking and correlated errors indicated in the diagnostics.
+[   1]     obs  : accepted a5 (confidence=None)
+[   1] trimmed_mean   score= 0.5579 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1090  rmse=16.3937  pocid=28.57  mape=0.1027
+         FORECAST [126.425, 125.794, 126.517, 126.956, 125.867, 126.453, 125.983, 126.224]
+         PROVENANCE tools=2 evaluate_calls=0 pool=5 effective=3 ok=True
+[   2]   iter 1 | select_top_k {"k": 19}
+[   2]     think: The high correlation among many models suggests pruning redundant ones first, then applying inverse‑error weighting on the reduced pool may yield a better weighted combination than the current trim...
+[   2]     obs  : pool pool_full k=19 ['CWT_rf', 'ONLY_CWT_catboost', 'FT_catboost', 'CWT_catboost', 'ONLY_CWT_rf']
+[   2]   iter 2 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean pool1 is a baseline with a statis...
+[   2]     think: The current leader a5 (trimmed_mean on pool1) is a baseline strategy with a separated margin from the runner‑up, so we should accept it.
+[   2]     obs  : accepted a5 (confidence=None)
+[   2] trimmed_mean   score= 0.6171 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0697  rmse=16.1184  pocid=42.86  mape=0.0702
+         FORECAST [177.785, 181.546, 182.117, 183.649, 189.528, 180.809, 177.646, 184.667]
+         PROVENANCE tools=1 evaluate_calls=0 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008791)
+[   3]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   3]     think: The current leader uses all 19 models; removing redundant, highly correlated models may reduce noise and improve a robust median combination.
+[   3]     obs  : pool pool4 19->16 models, dropped ['ARIMA', 'THETA', 'ONLY_DWT_catboost']
+[   3]   iter 2 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[   3]     think: The ranking is unstable and errors are correlated; a forward‑selection based weighting may capture complementary strengths without overfitting.
+[   3]     obs  : handle w2 mode=forward_selection active=3/16 conc=0.333
+[   3]   iter 3 | accept {"attempt_id": "a3", "confidence": "high", "justification": "leader indistinguishable, no better strategy f...
+[   3]     think: The leader dba is indistinguishable from the runner‑up; no strategy tested so far has a statistically better margin, so we should accept the current best.
+[   3]     obs  : accepted a3 (confidence=None)
+[   3] dba            score= 0.7144 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.0826  rmse=16.0588  pocid=28.57  mape=0.0857
+         FORECAST [162.369, 154.02, 160.346, 160.309, 161.43, 160.326, 160.816, 168.231]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=19 ok=True
+[   4]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   4]     think: The series is noisy and models are highly correlated; pruning redundant models may reduce noise and allow a robust median to improve over plain mean.
+[   4]     obs  : pool pool4 19->10 models, dropped ['ARIMA', 'ETS', 'THETA', 'catboost']
+[   4]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2, "rationale": "robust trimmed mean on pruned p...
+[   4]     think: The current leader is a simple mean over all models, but diagnostics warn about unstable ranking and correlated errors. A robust trimmed mean over the pruned pool4 might reduce noise and improve pe...
+[   4]     obs  : rank 1/11 score=0.7044 rmse=32.4666 (best so far)
+[   4]   iter 3 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[   4]     think: The current best is a trimmed‑mean on a pruned pool; try a Caruana‑style forward selection on the same pool to see if a data‑driven weight vector can beat it.
+[   4]     obs  : handle w2 mode=forward_selection active=4/10 conc=0.259
+[   4]   iter 4 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "forward selection weights may capture complementary ...
+[   4]     think: test forward-selection weights on pool4 to see if weighted combination beats trimmed mean.
+[   4]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[   4]   iter 5 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.2}
+[   4]     think: Test inverse‑error weighting on the pruned pool4 with a small shrinkage to avoid over‑fitting, then combine with weighted average to see if it beats the trimmed‑mean leader.
+[   4]     obs  : handle w3 mode=inverse_error active=10/10 conc=0.001
+[   4]   iter 6 | evaluate_strategy {"combine": "weighted", "weights": "w3", "rationale": "inverse‑error weighting on pool4"}
+[   4]     think: Test a simple weighted inverse‑error scheme on the pruned pool to see if it beats the trimmed‑mean baseline, then try a forward‑selection weight if that fails.
+[   4]     obs  : ERROR invalid_argument: weights 'w3' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[   4]   iter 7 | evaluate_strategy {"combine": "weighted", "weights": "w2", "pool": "pool4", "rationale": "forward‑selection weights on pool4"}
+[   4]     think: Test forward‑selection weights on the pruned pool to see if a data‑driven weighting beats the trimmed mean.
+[   4]     obs  : rank 8/12 score=0.7255 rmse=32.967, leader is a11 (trimmed_mean pool=pool4 trim=0.2)
+[   4]   iter 8 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool1", "trim_pct": 0.2, "rationale": "trimmed mean on the stable 5‑mo...
+[   4]     think: Try a trimmed‑mean on the most stable subset (pool1) to see if a tighter core of models yields a better robust average.
+[   4]     obs  : rank 5/12 score=0.709 rmse=32.6991, leader is a11 (trimmed_mean pool=pool4 trim=0.2) [already tested]
+[   4]   iter 9 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[   4]     think: Try inverse‑error weighting on the robust pool4 to see if a fitted weighting can beat the trimmed mean while staying conservative (no shrinkage).
+[   4]     obs  : handle w4 mode=inverse_error active=10/10 conc=0.001
+[   4]   iter 10 | evaluate_strategy {"combine": "weighted", "weights": "w4", "pool": "pool4", "rationale": "inverse‑error weighting on pool4"}
+[   4]     think: Test inverse‑error weighting on the same pool that gave the best trimmed mean to see if a more data‑driven weighting can beat the current leader.
+[   4]     obs  : rank 1/13 score=0.6989 rmse=31.8061 (best so far)
+[   4]   iter 11 | prune_redundant {"pool": "pool4", "corr_threshold": 0.95, "metric": "rmse"}
+[   4]     think: The current leader is a weighted inverse‑error on pool4, but several models in that pool are highly correlated. Pruning redundant models should reduce noise and may improve the weighted combination.
+[   4]     obs  : pool pool5 10->8 models, dropped ['ONLY_DWT_catboost', 'ONLY_DWT_rf']
+[   4]   iter 12 | accept {"attempt_id": "a13", "confidence": "high", "justification": "Robust inverse‑error weighting on a pruned po...
+[   4]     think: The best strategy so far is a13, an inverse‑error weighted combination on pool4, which already outperforms all other attempts and the leader diagnostics show the margin is indistinguishable.
+[   4]     obs  : accepted a13 (confidence=None)
+[   4] weighted       score= 0.6989 origin=agent    iters=12 stop=agent_accepted
+         TEST  smape=0.1016  rmse=22.5283  pocid=42.86  mape=0.0953
+         FORECAST [158.89, 157.34, 155.642, 158.272, 158.84, 160.281, 158.763, 159.976]
+         PROVENANCE tools=11 evaluate_calls=4 pool=10 effective=10 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003124)
+[   5]   iter 1 | accept {"id": "a3", "confidence": "high", "justification": "series shows strong trend/seasonality and unstable ran...
+[   5]     think: The leader (dba) is a seed and the runner‑up is indistinguishable, so the safest choice is to accept the current best strategy.
+[   5]     obs  : accepted a3 (confidence=None)
+[   5] dba            score= 0.6834 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1078  rmse=18.6496  pocid=42.86  mape=0.1182
+         FORECAST [139.744, 121.09, 127.858, 126.877, 130.083, 120.602, 126.362, 129.586]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+[   6]   iter 1 | weights_inverse_error {"pool": "pool1", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[   6]     think: Try a fitted weighting on the robust pool1 to see if inverse‑error weights beat the simple mean, while keeping the pool small to avoid over‑fitting.
+[   6]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.001
+[   6]   iter 2 | accept {"attempt_id": "a4", "confidence": "high", "justification": "The leader is a seed strategy and the runner‑u...
+[   6]     think: The leader a4 is a seed strategy with indistinguishable verdict, so we should accept it.
+[   6]     obs  : accepted a4 (confidence=None)
+[   6] mean           score= 0.4362 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1187  rmse=21.3796  pocid=14.29  mape=0.1099
+         FORECAST [131.731, 131.396, 132.757, 130.72, 136.13, 135.701, 137.241, 140.594]
+         PROVENANCE tools=1 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[   7]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   7]     think: Reduce redundancy first, then use a robust median on the pruned pool to see if removing correlated models improves performance.
+[   7]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'THETA', 'rf']
+[   7]   iter 2 | weights_inverse_error {"pool": "pool4", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[   7]     think: The mean of all 19 models is currently best, but the series has many outliers and unstable rankings; a simple inverse‑error weighting on the reduced, non‑redundant pool (pool4) might reduce the inf...
+[   7]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.001
+[   7]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w2", "rationale": "test robust inverse-error weighting...
+[   7]     think: Evaluate the inverse-error weighted combination on the pruned pool to see if it beats the current leader mean.
+[   7]     obs  : rank 3/11 score=0.7493 rmse=32.4943, leader is a1 (mean)
+[   7]   iter 4 | accept {"attempt_id": "a1", "confidence": "high", "justification": "The mean baseline is statistically indistingui...
+[   7]     think: The leader (mean) is indistinguishable from the best attempt so far; further tweaks are unlikely to beat it given the small margin and high variance of the validation windows.
+[   7]     obs  : accepted a1 (confidence=None)
+[   7] mean           score= 0.7429 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.1228  rmse=18.4162  pocid=42.86  mape=0.1297
+         FORECAST [126.769, 124.923, 132.275, 126.092, 127.078, 129.611, 132.832, 130.055]
+         PROVENANCE tools=3 evaluate_calls=1 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[   8]   iter 1 | accept {"id": "a3", "confidence": "high", "justification": "dba is the best seed strategy and indistinguishable, s...
+[   8]     think: The leader (dba) is indistinguishable from the runner‑up and is a seeded baseline; the ranking is unstable and correlated errors suggest a robust deterministic method is already optimal.
+[   8]     obs  : accepted a3 (confidence=None)
+[   8] dba            score= 0.6415 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1042  rmse=7.4097  pocid=57.14  mape=0.1132
+         FORECAST [61.272, 62.555, 61.18, 59.123, 64.048, 62.387, 62.516, 62.497]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+[   9]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   9]     think: The ranking is unstable and many models are correlated; pruning redundant groups may reduce noise and let a simple weighted inverse‑error scheme outperform the current meta‑model.
+[   9]     obs  : pool pool4 19->11 models, dropped ['ETS', 'THETA', 'DWT_rf', 'CWT_catboost']
+[   9]   iter 2 | accept {"attempt_id": "a10", "confidence": "high", "justification": "leader is a seed strategy with indistinguisha...
+[   9]     think: The leader is a baseline weighted strategy with indistinguishable margin; no further improvement likely.
+[   9]     obs  : accepted a10 (confidence=None)
+[   9] weighted       score= 0.7332 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1034  rmse=17.4396  pocid=28.57  mape=0.0994
+         FORECAST [150.123, 149.665, 149.109, 150.777, 152.789, 151.641, 150.969, 151.899]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.00217)
+[  10]   iter 1 | weights_inverse_error {"pool": "pool_full", "metric": "rmse"}
+[  10]     think: try inverse‑error weighting on the full pool to see if a simple data‑driven weighting beats the current best deterministic baseline (dba).
+[  10]     obs  : handle w2 mode=inverse_error active=19/19 conc=0.006
+[  10]   iter 2 | accept {"attempt_id": "a3", "confidence": 1.0, "justification": "dba is a robust deterministic baseline that handl...
+[  10]     think: The leader dba is indistinguishable from the runner‑up and the series has many outliers and strong trend/seasonality, so the robust DTW barycenter is appropriate.
+[  10]     obs  : accepted a3 (confidence=1.0)
+[  10] dba            score= 0.5977 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1199  rmse=21.0343  pocid=71.43  mape=0.1162
+         FORECAST [162.798, 152.093, 157.267, 157.262, 157.261, 157.384, 157.283, 163.427]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+[  11]   iter 1 | accept {"attempt_id": "a4", "confidence": "high", "justification": "mean pool1 outperforms all other tested strate...
+[  11]     think: The current leader (mean pool1) has a separated margin and is a robust baseline; no clear evidence that a more complex strategy will beat it.
+[  11]     obs  : accepted a4 (confidence=None)
+[  11] mean           score= 0.6156 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1394  rmse=16.4066  pocid=14.29  mape=0.1347
+         FORECAST [99.319, 96.92, 96.353, 97.625, 99.309, 96.636, 97.983, 97.843]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  12]   iter 1 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.2}
+[  12]     think: A weighted combination using inverse‑error weights on the stable pool2 may reduce the variance of the mean and beat the current leader.
+[  12]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  12]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "inverse-error weighting on the stab...
+[  12]     think: Test a weighted combination using inverse-error weights on pool2 to see if it can beat the current leader mean pool2, given the weighted hint and strong correlation among models.
+[  12]     obs  : rank 1/11 score=0.6325 rmse=18.2921 (best so far)
+[  12]   iter 3 | accept {"attempt_id": "a11", "confidence": "high", "justification": "Inverse-error weighting on the stable pool2 y...
+[  12]     think: The current leader a11 is a weighted inverse-error strategy on pool2 with a small but statistically separated margin. According to the stopping rule, we can accept this strategy as the best for thi...
+[  12]     obs  : accepted a11 (confidence=None)
+[  12] weighted       score= 0.6325 origin=agent    iters=3 stop=agent_accepted
+         TEST  smape=0.1185  rmse=19.5031  pocid=28.57  mape=0.1151
+         FORECAST [139.06, 137.94, 138.078, 139.975, 140.258, 139.487, 139.325, 140.522]
+         PROVENANCE tools=2 evaluate_calls=1 pool=7 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.001962)
+[  13]   iter 1 | weights_inverse_error {"pool": "pool1", "windows": null, "metric": "rmse", "shrinkage": 0.5, "per_horizon": false}
+[  13]     think: The current leader is a trimmed‑mean over pool1, but the ranking is unstable and the pool contains a correlated pair (ARIMA & FT_catboost). A weighted inverse‑error scheme with shrinkage to uniform...
+[  13]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  13]   iter 2 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "test inverse_error weighting on pool1"}
+[  13]     think: Try a weighted inverse‑error combination on the same robust pool to see if giving more weight to the low‑error models improves over the trimmed‑mean baseline.
+[  13]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool1', but the strategy uses pool 'pool_full'
+[  13]   iter 3 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on a stable pool matches the seri...
+[  13]     think: The leader (trimmed_mean on pool1) is a baseline with indistinguishable margin from the runner‑up, and the series shows unstable ranking and correlated errors, so a robust trimmed mean is appropriate.
+[  13]     obs  : accepted a5 (confidence=None)
+[  13] trimmed_mean   score= 0.6667 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.0794  rmse=12.6205  pocid=42.86  mape=0.0785
+         FORECAST [131.975, 130.62, 131.172, 130.803, 131.653, 132.124, 132.583, 132.492]
+         PROVENANCE tools=2 evaluate_calls=0 pool=5 effective=3 ok=True
+[  14]   iter 1 | accept {"attempt_id": "a10", "confidence": "high", "justification": "Weighted w1 is a baseline and the leader’s ma...
+[  14]     think: The leader is a baseline weighted strategy with indistinguishable margin; the stopping rule allows acceptance.
+[  14]     obs  : accepted a10 (confidence=None)
+[  14] weighted       score= 0.6851 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0700  rmse=10.7818  pocid=42.86  mape=0.0685
+         FORECAST [133.462, 129.968, 132.544, 133.035, 134.23, 132.263, 131.478, 132.218]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.001897)
+[  15]   iter 1 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is the best robust combination for this...
+[  15]     think: The median strategy already wins and the leader diagnostics say the runner‑up is indistinguishable; a more complex weighting is unlikely to beat a robust median on this highly noisy, trend‑heavy se...
+[  15]     obs  : accepted a2 (confidence=None)
+[  15] median         score= 0.6844 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0618  rmse=12.1874  pocid=42.86  mape=0.0595
+         FORECAST [162.312, 162.231, 163.371, 166.087, 164.422, 165.527, 164.676, 164.994]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[  16]   iter 1 | weights_topk_per_horizon {"pool": "pool_full", "k": 3, "metric": "rmse"}
+[  16]     think: The current leader is a robust median, but we can try a horizon‑wise weighted mean that may capture complementary strengths of the top models.
+[  16]     obs  : handle w2 mode=topk_mean_per_horizon active=13/19 conc=0.058
+[  16]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  16]     think: The error table shows many correlated models; pruning redundant ones may reduce noise and allow a better weighted combination to beat the robust median.
+[  16]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'catboost', 'CWT_rf']
+[  16]   iter 3 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[  16]     think: The median is robust but we can try a forward‑selection weighting on the reduced, non‑redundant pool to see if we can beat it.
+[  16]     obs  : handle w3 mode=forward_selection active=3/9 conc=0.25
+[  16]   iter 4 | evaluate_strategy {"combine": "weighted", "weights": "w3", "rationale": "test forward‑selection weights on the pruned pool"}
+[  16]     think: The current leader (median) is indistinguishable from the runner‑up; a more aggressive weighted scheme on the pruned, non‑redundant pool may improve performance.
+[  16]     obs  : ERROR invalid_argument: weights 'w3' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[  16]   iter 5 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[  16]     think: The median is currently best but only marginally better; a weighted inverse‑error scheme on the pruned, most stable pool may reduce variance and improve performance.
+[  16]     obs  : handle w4 mode=inverse_error active=9/9 conc=0.005
+[  16]   iter 6 | evaluate_strategy {"combine": "weighted", "weights": "w4", "pool": "pool4", "rationale": "inverse‑error weighting on the prun...
+[  16]     think: Test a weighted inverse‑error combination on the pruned pool4 to see if it can beat the current median leader.
+[  16]     obs  : rank 11/11 score=0.7908 rmse=46.5448, leader is a2 (median)
+[  16]   iter 7 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is the current best and statistically i...
+[  16]     think: The leader is a baseline median with indistinguishable margin; no strategy has yet improved on it.
+[  16]     obs  : accepted a2 (confidence=None)
+[  16] median         score= 0.6431 origin=baseline iters=7 stop=agent_accepted
+         TEST  smape=0.1198  rmse=20.7102  pocid=57.14  mape=0.1218
+         FORECAST [160.554, 153.581, 143.807, 140.972, 152.465, 155.068, 150.166, 144.055]
+         PROVENANCE tools=6 evaluate_calls=1 pool=19 effective=1 ok=True
+[  17]   iter 1 | accept {"attempt_id": "a4", "confidence": "high", "justification": "robust mean over the most stable 5 models, mat...
+[  17]     think: The current leader a4 is a seeded baseline (mean on pool1) and the runner‑up margin is indistinguishable, so we can safely accept it as the best strategy for this series.
+[  17]     obs  : accepted a4 (confidence=None)
+[  17] mean           score= 0.6685 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0593  rmse=11.5099  pocid=57.14  mape=0.0610
+         FORECAST [157.139, 158.424, 157.458, 154.606, 156.105, 158.564, 158.799, 158.627]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  18]   iter 1 | select_stable {"k": 7}
+[  18]     think: The ranking is unstable and several models are correlated; a robust median over the most stable subset might outperform the plain mean.
+[  18]     obs  : pool pool2 k=7 ['NaiveMovingAverage', 'ONLY_DWT_rf', 'THETA', 'CWT_catboost', 'DWT_catboost']
+[  18]   iter 2 | accept {"attempt_id": "a1", "confidence": "high", "justification": "mean strategy is the best observed and statist...
+[  18]     think: The current leader (mean) is statistically separated from the runner‑up, so we should accept it.
+[  18]     obs  : accepted a1 (confidence=None)
+[  18] mean           score= 0.7048 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0528  rmse=14.4762  pocid=28.57  mape=0.0561
+         FORECAST [175.076, 181.582, 184.129, 184.749, 185.957, 185.437, 186.73, 184.135]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  19]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  19]     think: The diagnostics warn of high error correlation and unstable ranking; pruning redundant models from the full pool should reduce noise and allow a simple inverse‑error weighting to improve over the c...
+[  19]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'CWT_rf', 'DWT_catboost', 'FT_catboost']
+[  19]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool1", "rationale": "robust median on the stable pool1"}
+[  19]     think: The leader is a mean over pool1, but a robust median over the same pool might reduce influence of any outlier model and improve performance given unstable ranking.
+[  19]     obs  : rank 10/11 score=0.7673 rmse=18.3433, leader is a4 (mean pool=pool1)
+[  19]   iter 3 | weights_forward {"pool": "pool1", "max_steps": 5, "metric": "rmse"}
+[  19]     think: Ranking is unstable and errors are highly correlated, so a Caruana‑style forward selection on the small, stable pool1 may pick the best subset and improve over the current mean‑pool1 leader.
+[  19]     obs  : handle w2 mode=forward_selection active=2/5 conc=0.375
+[  19]   iter 4 | accept {"attempt_id": "a4", "confidence": 0.9, "justification": "robust mean over the stable pool1 matches the ser...
+[  19]     think: The leader (mean pool=pool1) is a seed strategy with an indistinguishable margin; the series shows unstable ranking and correlated errors, so a robust mean over the stable pool is appropriate.
+[  19]     obs  : accepted a4 (confidence=0.9)
+[  19] mean           score= 0.7306 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.0718  rmse=11.9468  pocid=85.71  mape=0.0680
+         FORECAST [118.173, 118.652, 117.984, 117.169, 117.649, 118.252, 115.857, 116.95]
+         PROVENANCE tools=3 evaluate_calls=1 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  20]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  20]     think: Reduce redundancy by pruning highly correlated models and then combine with a robust median; this may improve over the current median baseline.
+[  20]     obs  : pool pool4 19->8 models, dropped ['ARIMA', 'THETA', 'FT_catboost', 'ONLY_CWT_rf']
+[  20]   iter 2 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[  20]     think: Create a weighted inverse‑error handle on the pruned pool to test a robust weighted mean.
+[  20]     obs  : handle w2 mode=inverse_error active=8/8 conc=0.001
+[  20]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w2", "rationale": "robust weighted combo on the reduce...
+[  20]     think: test a weighted inverse‑error combination on the pruned pool4 to see if it can beat the current median leader.
+[  20]     obs  : rank 6/11 score=0.7286 rmse=14.7114, leader is a2 (median)
+[  20]   iter 4 | evaluate_strategy {"combine": "median", "pool": "pool2", "rationale": "robust median on the most consistent subset"}
+[  20]     think: The leader is median on the full pool, but the ranking is unstable and the most consistent models are in pool2. A median over pool2 may reduce noise and improve performance.
+[  20]     obs  : rank 9/12 score=0.7402 rmse=14.9077, leader is a2 (median)
+[  20]   iter 5 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median baseline is the best deterministic stra...
+[  20]     think: The leader is a baseline median with indistinguishable margin; no further improvement is likely.
+[  20]     obs  : accepted a2 (confidence=None)
+[  20] median         score= 0.7064 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.0908  rmse=11.7390  pocid=71.43  mape=0.0914
+         FORECAST [115.676, 117.943, 122.45, 115.676, 115.991, 124.072, 115.676, 114.928]
+         PROVENANCE tools=4 evaluate_calls=2 pool=19 effective=1 ok=True
+[  21]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  21]     think: The diagnostics warn of correlated errors and unstable ranking, so pruning redundant models should reduce noise and a robust median over the pruned pool may beat the plain mean baseline.
+[  21]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'THETA', 'DWT_catboost', 'ONLY_DWT_catboost']
+[  21]   iter 2 | accept {"attempt_id": "a1", "confidence": "high", "justification": "Mean baseline is statistically indistinguishab...
+[  21]     think: The leader is a baseline mean with indistinguishable margin; no clear improvement strategy is needed.
+[  21]     obs  : accepted a1 (confidence=None)
+[  21] mean           score= 0.6952 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0713  rmse=11.1195  pocid=42.86  mape=0.0678
+         FORECAST [122.028, 122.341, 121.598, 121.27, 124.195, 122.218, 123.195, 123.69]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  22]   iter 1 | accept {"attempt_id": "a7", "confidence": "high", "justification": "trimmed_mean on pool2 is a robust combination ...
+[  22]     think: The leader is a baseline trimmed_mean on pool2 with indistinguishable margin; the series has unstable ranking and correlated errors, so a robust trimmed mean is appropriate.
+[  22]     obs  : accepted a7 (confidence=None)
+[  22] trimmed_mean   score= 0.5867 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1238  rmse=11.0990  pocid=71.43  mape=0.1181
+         FORECAST [75.461, 74.874, 74.546, 75.583, 74.859, 75.259, 74.822, 75.167]
+         PROVENANCE tools=0 evaluate_calls=0 pool=7 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.007733)
+[  23]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  23]     think: The current leader is a robust median, but we can try a weighted inverse‑error combination on a pruned pool to reduce correlated error and potentially improve performance.
+[  23]     obs  : pool pool4 19->9 models, dropped ['DWT_rf', 'ETS', 'NaiveMovingAverage', 'CWT_catboost']
+[  23]   iter 2 | weights_inverse_error {"pool": "pool4", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  23]     think: The median of all 19 models is best so far, but the top‑3 models (THETA, rf, catboost) have the lowest errors and are likely the most informative. Using inverse‑error weighting on this small, non‑r...
+[  23]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.001
+[  23]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w2", "rationale": "inverse‑error weighting on a low‑co...
+[  23]     think: The median baseline is best so far, but a weighted inverse‑error scheme on the pruned, low‑correlation pool may reduce variance and improve over the median.
+[  23]     obs  : rank 11/11 score=0.8552 rmse=74.1569, leader is a2 (median)
+[  23]   iter 4 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "w1", "rationale": "use meta‑model weights on the f...
+[  23]     think: The current best is a robust median; a weighted average using a meta‑model trained across series (w1) on the full pool may capture complementary strengths while remaining robust to the unstable ran...
+[  23]     obs  : rank 4/11 score=0.6958 rmse=64.0078, leader is a2 (median) [already tested]
+[  23]   iter 5 | weights_best_per_horizon {"pool": "pool_full", "metric": "rmse"}
+[  23]     think: The ranking is unstable and several models are correlated; a horizon‑wise best‑model weighting might capture complementary strengths and beat the robust median baseline.
+[  23]     obs  : handle w3 mode=best_per_horizon active=7/19 conc=0.109
+[  23]   iter 6 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable ranking and corre...
+[  23]     think: The current leader is a baseline median with an indistinguishable margin; given the ranking instability and correlated errors, a robust median is the safest choice.
+[  23]     obs  : accepted a2 (confidence=None)
+[  23] median         score= 0.6780 origin=baseline iters=6 stop=agent_accepted
+         TEST  smape=0.1646  rmse=40.6866  pocid=28.57  mape=0.1934
+         FORECAST [224.12, 211.404, 209.592, 219.244, 223.11, 221.465, 218.057, 223.135]
+         PROVENANCE tools=5 evaluate_calls=2 pool=19 effective=1 ok=True
+[  24]   iter 1 | weights_forward {"pool": "pool_full", "max_steps": 20, "metric": "rmse"}
+[  24]     think: Test a robust Caruana forward‑selection weighting on the full pool to see if it can beat the current leader mean‑pool1.
+[  24]     obs  : handle w2 mode=forward_selection active=5/19 conc=0.179
+[  24]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  24]     think: The current leader is a robust mean on a small stable pool. To improve, first prune redundant models from the full pool, then test a simple mean on the reduced set to see if removing highly correla...
+[  24]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'THETA', 'rf']
+[  24]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool1", "rationale": "robust median over the top 5 models"}
+[  24]     think: The leader is indistinguishable, but a robust median over the top 5 models might beat the mean pool1 by reducing the influence of any single noisy model.
+[  24]     obs  : rank 9/11 score=0.7891 rmse=25.171, leader is a4 (mean pool=pool1)
+[  24]   iter 4 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.0}
+[  24]     think: Try fitted inverse‑error weights on the stable pool1 to see if a data‑driven weighting beats the simple mean.
+[  24]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.0
+[  24]   iter 5 | accept {"attempt_id": "a4", "confidence": "high", "justification": "leader indistinguishable, best score, robust m...
+[  24]     think: The leader (mean pool=pool1) is indistinguishable from the runner‑up and has the lowest score; accepting it is the safest choice.
+[  24]     obs  : accepted a4 (confidence=None)
+[  24] mean           score= 0.6688 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.0586  rmse=11.3368  pocid=71.43  mape=0.0620
+         FORECAST [151.609, 152.549, 149.418, 147.66, 149.037, 149.453, 149.583, 150.624]
+         PROVENANCE tools=4 evaluate_calls=1 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  25]   iter 1 | accept {"attempt_id": "a10", "confidence": "high", "justification": "Weighted w1 is a meta‑model that leverages cr...
+[  25]     think: The weighted meta‑model (w1) already outperforms all baselines with a clear separated margin, and it is designed to capture trend and seasonality across the dataset, matching the series’ characteri...
+[  25]     obs  : accepted a10 (confidence=None)
+[  25] weighted       score= 0.7377 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1341  rmse=19.4268  pocid=28.57  mape=0.1336
+         FORECAST [125.639, 118.924, 115.378, 144.697, 127.406, 118.763, 119.777, 131.701]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003834)
+[  26]   iter 1 | accept {"attempt_id": "a4", "confidence": "high", "justification": "leader is separated, and the mean over the sta...
+[  26]     think: The leader a4 (mean on pool1) is already separated from the runner‑up and the series has unstable ranking and correlated errors, so a robust mean over the most stable subset should suffice.
+[  26]     obs  : accepted a4 (confidence=None)
+[  26] mean           score= 0.5939 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1354  rmse=9.6349  pocid=71.43  mape=0.1554
+         FORECAST [59.278, 58.401, 58.799, 59.81, 59.562, 59.984, 59.686, 59.826]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  27]   iter 1 | weights_inverse_error {"pool": "pool3", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  27]     think: Test whether inverse‑error weighting on the already robust pool3 improves over the current mean baseline, given the unstable ranking and correlated error groups.
+[  27]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.0
+[  27]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w2", "rationale": "inverse‑error weighting on the best...
+[  27]     think: Test a weighted inverse‑error combination on the same pool that beat the mean, to see if the weighting can improve on the leader.
+[  27]     obs  : rank 1/11 score=0.6586 rmse=11.8916 (best so far)
+[  27]   iter 3 | weights_topk_per_horizon {"pool": "pool3", "k": 3, "metric": "rmse"}
+[  27]     think: Try a horizon‑adaptive weighting that picks the best 3 models per step; this may reduce the impact of noisy windows and exploit complementary strengths.
+[  27]     obs  : handle w3 mode=topk_mean_per_horizon active=8/9 conc=0.062
+[  27]   iter 4 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w3", "rationale": "use horizon‑specific top‑k mean to ...
+[  27]     think: The current leader uses inverse‑error weights on pool3, but the ranking is unstable and errors are correlated. A horizon‑aware top‑k mean may reduce variance and improve performance.
+[  27]     obs  : rank 12/12 score=0.7489 rmse=12.617, leader is a11 (weighted pool=pool3 w=w2)
+[  27]   iter 5 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  27]     think: Correlated errors may inflate variance; pruning redundant models could improve weighted inverse‑error performance.
+[  27]     obs  : pool pool4 19->10 models, dropped ['ETS', 'THETA', 'catboost', 'CWT_rf']
+[  27]   iter 6 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "robust median on the pruned pool to reduce correlated ...
+[  27]     think: The current best uses weighted inverse‑error on pool3. To increase robustness against correlated errors and unstable ranking, try a simple median combination on the pruned pool4, which has fewer re...
+[  27]     obs  : rank 7/13 score=0.6846 rmse=12.0242, leader is a11 (weighted pool=pool3 w=w2)
+[  27]   iter 7 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  27]     think: The current leader (weighted on pool3) is close to indistinguishable; we should test whether pruning correlated models and re‑weighting improves performance.
+[  27]     obs  : handle w4 mode=inverse_error active=10/10 conc=0.002
+[  27]   iter 8 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w4", "rationale": "inverse‑error weighting on the prun...
+[  27]     think: Try inverse‑error weighting on the pruned pool (pool4) to see if reducing correlated error improves over the current leader a11.
+[  27]     obs  : rank 6/14 score=0.6757 rmse=11.8944, leader is a11 (weighted pool=pool3 w=w2)
+[  27]   iter 9 | weights_error_trend {"pool": "pool3", "metric": "mae", "eta": 1.0}
+[  27]     think: The series has a very strong upward trend and seasonality, and ranking is unstable. A weighting that adapts to error trend over horizons may capture the trend‑driven improvement of some models bett...
+[  27]     obs  : handle w5 mode=error_trend active=9/9 conc=0.003
+[  27]   iter 10 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w5", "rationale": "test error‑trend weighting on the b...
+[  27]     think: Evaluate the error‑trend weights (w5) on pool3 to see if a different weighting can beat the current leader a11.
+[  27]     obs  : rank 1/15 score=0.6582 rmse=11.8841 (best so far)
+[  27]   iter 11 | weights_forward {"pool": "pool3", "max_steps": 20, "metric": "rmse"}
+[  27]     think: Try Caruana forward‑selection weights on the best pool to see if a more adaptive weighting can beat the current error‑trend weighted leader.
+[  27]     obs  : handle w6 mode=forward_selection active=1/9 conc=1.0
+[  27]   iter 12 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w6", "rationale": "test forward selection weights"}
+[  27]     think: Evaluate the forward‑selection weights w6 on pool3 to see if it can beat the current leader a15.
+[  27]     obs  : rank 15/16 score=0.717 rmse=12.4913, leader is a15 (weighted pool=pool3 w=w5)
+[  27] weighted       score= 0.6582 origin=agent    iters=12 stop=iteration_budget_exhausted
+         TEST  smape=0.1230  rmse=17.1991  pocid=42.86  mape=0.1202
+         FORECAST [111.831, 111.657, 114.49, 116.668, 115.316, 113.984, 114.085, 113.378]
+         PROVENANCE tools=12 evaluate_calls=6 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.001496)
+[  28]   iter 1 | accept {"attempt_id": "a8", "confidence": "high", "justification": "The leader is a seed strategy with indistingui...
+[  28]     think: The current leader a8 is a seeded baseline with indistinguishable margin, so accepting it is the recommended action.
+[  28]     obs  : accepted a8 (confidence=None)
+[  28] mean           score= 0.6828 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1011  rmse=23.0454  pocid=42.86  mape=0.1058
+         FORECAST [167.739, 168.762, 168.866, 166.019, 171.402, 166.734, 166.779, 165.536]
+         PROVENANCE tools=0 evaluate_calls=0 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  29]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  29]     think: The current leader is median, but we can try a weighted combination that reduces redundancy and uses inverse-error weighting on a pruned pool to see if we beat the median.
+[  29]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'ETS', 'THETA', 'catboost']
+[  29]   iter 2 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.1}
+[  29]     think: The diagnosis recommends a weighted combination; try inverse‑error weights on the most stable 5‑model pool (pool1) to see if it beats the median baseline.
+[  29]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  29]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w2", "rationale": "inverse‑error weights on the most s...
+[  29]     think: Test the inverse‑error weighted combination on the stable pool1 to see if it can beat the current median leader.
+[  29]     obs  : rank 7/11 score=0.5681 rmse=17.8155, leader is a2 (median)
+[  29]   iter 4 | weights_meta_model {"pool": "pool_full", "scope": "dataset", "metric": "smape", "eta": 1.0}
+[  29]     think: try a dataset‑level meta‑model weight vector on the full pool to capture cross‑series patterns.
+[  29]     obs  : handle w1 mode=pooled_meta_model active=19/19 conc=0.0
+[  29]   iter 5 | weights_forward {"pool": "pool_full", "max_steps": 20, "metric": "rmse"}
+[  29]     think: Use Caruana forward‑selection weights on the full pool to see if a data‑driven weighting beats the median baseline.
+[  29]     obs  : handle w3 mode=forward_selection active=2/19 conc=0.531
+[  29]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "w3", "rationale": "forward selection picks ONLY_FT...
+[  29]     think: Test the forward‑selection weights (w3) on the full pool to see if a two‑model weighted combo beats the median baseline.
+[  29]     obs  : rank 9/12 score=0.6808 rmse=19.6835, leader is a2 (median)
+[  29]   iter 7 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[  29]     think: The median strategy is currently best, but a weighted inverse‑error combination on the pruned pool4 might reduce the influence of the remaining correlated models and improve performance.
+[  29]     obs  : handle w4 mode=inverse_error active=7/7 conc=0.023
+[  29]   iter 8 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  29]     think: Try pruning redundant models to reduce noise, then weight by inverse error on the pruned pool.
+[  29]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'ETS', 'THETA', 'catboost']
+[  29]   iter 9 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w4", "rationale": "inverse-error weighted on the prune...
+[  29]     think: Evaluate weighted combination using inverse error weights on the pruned pool4 to see if it improves over the current leader.
+[  29]     obs  : rank 9/13 score=0.6023 rmse=18.2186, leader is a2 (median)
+[  29]   iter 10 | weights_topk_per_horizon {"pool": "pool1", "k": 3, "metric": "rmse"}
+[  29]     think: The median baseline is strong, but a per‑horizon top‑k weighting on the most stable 5 models might capture subtle horizon‑specific strengths and beat the current leader.
+[  29]     obs  : handle w5 mode=topk_mean_per_horizon active=5/5 conc=0.006
+[  29]   iter 11 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w5", "rationale": "top‑k per horizon weighting on the ...
+[  29]     think: Evaluate the top‑k‑per‑horizon weighted scheme (w5) on pool1 to see if it can beat the median baseline.
+[  29]     obs  : rank 1/14 score=0.5492 rmse=17.629 (best so far)
+[  29]   iter 12 | accept {"attempt_id": "a14", "confidence": "high", "justification": "Weighted combination on pool1 with top‑k‑per‑...
+[  29]     think: The current leader a14 is statistically separated from the runner‑up, so we should accept it.
+[  29]     obs  : accepted a14 (confidence=None)
+[  29] weighted       score= 0.5492 origin=agent    iters=12 stop=agent_accepted
+         TEST  smape=0.1467  rmse=20.2357  pocid=42.86  mape=0.1720
+         FORECAST [106.76, 105.202, 114.586, 109.218, 115.59, 116.155, 115.744, 109.91]
+         PROVENANCE tools=11 evaluate_calls=4 pool=5 effective=3 ok=True
+[  30]   iter 1 | select_top_k {"k": 19}
+[  30]     think: Create a full pool of all 19 models to start a robust pruning and weighting strategy.
+[  30]     obs  : pool pool_full k=19 ['THETA', 'ARIMA', 'ETS', 'NaiveMovingAverage', 'FT_catboost']
+[  30]   iter 2 | accept {"attempt_id": "a8", "confidence": "high", "justification": "mean on pool3 already achieves the best valida...
+[  30]     think: The current leader (mean on pool3) is indistinguishable from the runner‑up, so the safest move is to accept it as the final strategy.
+[  30]     obs  : accepted a8 (confidence=None)
+[  30] mean           score= 0.6497 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0645  rmse=9.8088  pocid=42.86  mape=0.0656
+         FORECAST [125.804, 122.257, 119.658, 120.152, 122.406, 122.189, 121.683, 121.758]
+         PROVENANCE tools=1 evaluate_calls=0 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  31]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  31]     think: The series has unstable ranking and many correlated errors; pruning redundant models should reduce noise and a robust median on the pruned pool may improve over the full‑pool median.
+[  31]     obs  : pool pool4 19->10 models, dropped ['ARIMA', 'ETS', 'THETA', 'DWT_catboost']
+[  31]   iter 2 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[  31]     think: The median baseline is robust, but a forward‑selection weighted mean might capture complementary errors across the 3 windows without overfitting.
+[  31]     obs  : handle w2 mode=forward_selection active=2/10 conc=0.583
+[  31]   iter 3 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "forward‑selection weights on pool4"}
+[  31]     think: Test the forward‑selection weights (w2) on pool4 to see if a data‑driven weighting beats the robust median baseline.
+[  31]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[  31]   iter 4 | accept {"attempt_id": "a2", "confidence": "high", "justification": "Strong trend and seasonality with unstable ran...
+[  31]     think: The leader (median) is a baseline, and the diagnostics say the runner‑up is indistinguishable; the series has strong trend, seasonality, unstable ranking and correlated errors, so a robust median i...
+[  31]     obs  : accepted a2 (confidence=None)
+[  31] median         score= 0.6642 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.1713  rmse=26.0545  pocid=42.86  mape=0.1940
+         FORECAST [142.071, 146.966, 147.069, 148.299, 151.224, 151.225, 146.044, 149.536]
+         PROVENANCE tools=3 evaluate_calls=0 pool=19 effective=1 ok=True
+[  32]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  32]     think: The diagnostics warn of strong correlation among many models; pruning redundant groups may reduce noise and improve a robust median or simple weighting.
+[  32]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'THETA', 'NaiveMovingAverage', 'rf']
+[  32]   iter 2 | accept {"attempt_id": "a2", "confidence": "high", "justification": "Median is a robust baseline for this noisy, hi...
+[  32]     think: The leader (median) is a seed and the runner‑up is indistinguishable, so the robust baseline already captures the series’ unstable ranking and high seasonality.
+[  32]     obs  : accepted a2 (confidence=None)
+[  32] median         score= 0.6655 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1696  rmse=29.7170  pocid=28.57  mape=0.1585
+         FORECAST [137.801, 132.532, 135.678, 137.079, 139.459, 137.28, 137.438, 138.247]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=1 ok=True
+[  33]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  33]     think: The series shows strong trend and seasonality, with unstable model ranking and many correlated errors. Reducing redundancy should improve a weighted combination.
+[  33]     obs  : pool pool4 19->11 models, dropped ['ARIMA', 'ETS', 'THETA', 'CWT_catboost']
+[  33]   iter 2 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median baseline already statistically indistin...
+[  33]     think: The current leader (median) is a seed and the margin to the runner‑up is indistinguishable, so the safest choice is to accept it.
+[  33]     obs  : accepted a2 (confidence=None)
+[  33] median         score= 0.5972 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0941  rmse=27.6629  pocid=28.57  mape=0.0954
+         FORECAST [254.616, 253.146, 255.756, 254.675, 254.52, 254.105, 254.801, 254.811]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=1 ok=True
+[  34]   iter 1 | weights_forward {"pool": "pool1", "max_steps": 20, "metric": "rmse"}
+[  34]     think: The ranking is unstable and errors are correlated; a forward‑selection based weighting on the most stable pool (pool1) may capture complementary strengths without overfitting.
+[  34]     obs  : handle w2 mode=forward_selection active=4/5 conc=0.062
+[  34]   iter 2 | evaluate_strategy {"combine": "weighted", "weights": "w2", "pool": "pool1", "rationale": "forward‑selection weights on the st...
+[  34]     think: Try a forward‑selection weighted combination on the stable pool1 to see if it can beat the trimmed‑mean leader, given the series is noisy and ranking unstable.
+[  34]     obs  : rank 11/11 score=0.8538 rmse=19.8047, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  34]   iter 3 | weights_inverse_error {"pool": "pool1", "shrinkage": 0.5}
+[  34]     think: Try a simple inverse‑error weighting on the stable pool, but shrink it toward uniform to avoid overfitting the noisy series.
+[  34]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.0
+[  34]   iter 4 | weights_inverse_error {"pool": "pool3", "shrinkage": 0.5}
+[  34]     think: Try inverse‑error weighting on a broader pool (pool3) with shrinkage to avoid overfitting; this may beat the trimmed‑mean baseline.
+[  34]     obs  : handle w4 mode=inverse_error active=9/9 conc=0.0
+[  34]   iter 5 | evaluate_strategy {"combine": "weighted", "weights": "w4", "pool": "pool3", "rationale": "inverse‑error weighted average on t...
+[  34]     think: Test the inverse‑error weighted average on pool3 (handle w4) to see if it can beat the current leader trimmed_mean pool1.
+[  34]     obs  : rank 5/12 score=0.6394 rmse=16.9041, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  34]   iter 6 | select_top_k {"k": 19}
+[  34]     think: Create a pool containing all 19 models so we can prune redundant groups and then evaluate a weighted inverse‑error strategy on the pruned set.
+[  34]     obs  : pool pool_full k=19 ['DWT_catboost', 'ONLY_DWT_catboost', 'rf', 'NaiveMovingAverage', 'FT_rf']
+[  34]   iter 7 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  34]     think: Correlated errors likely inflate variance; pruning redundant models should give a cleaner pool for a robust trimmed‑mean.
+[  34]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'CWT_rf', 'FT_rf']
+[  34]   iter 8 | evaluate_strategy {"combine": "median", "pool": "pool3", "rationale": "robust median on larger pool"}
+[  34]     think: Test a robust median combination on the larger pool (pool3) to see if it can beat the current leader trimmed_mean pool1.
+[  34]     obs  : rank 6/13 score=0.6582 rmse=16.8568, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  34]   iter 9 | weights_forward {"pool": "pool1", "max_steps": 20, "metric": "rmse"}
+[  34]     think: Try a Caruana greedy forward‑selection weighting on the small, stable pool1 to see if a data‑driven subset beats the trimmed‑mean baseline.
+[  34]     obs  : handle w2 mode=forward_selection active=4/5 conc=0.062
+[  34]   iter 10 | weights_inverse_error {"pool": "pool1", "shrinkage": 0.5}
+[  34]     think: Compute inverse‑error weights on the small, stable pool1 and combine them – this may beat the trimmed‑mean baseline.
+[  34]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.0
+[  34]   iter 11 | evaluate_strategy {"combine": "weighted", "weights": "w2", "pool": "pool1", "rationale": "forward‑selection weights on the st...
+[  34]     think: Evaluate the forward‑selection weights (w2) on pool1, then evaluate the inverse‑error weights (w3) on pool1 to see if either beats the current leader a5.
+[  34]     obs  : rank 13/13 score=0.8538 rmse=19.8047, leader is a5 (trimmed_mean pool=pool1 trim=0.2) [already tested]
+[  34] trimmed_mean   score= 0.6274 origin=baseline iters=11 stop=no improvement in 4 consecutive proposals
+         TEST  smape=0.0927  rmse=13.8588  pocid=57.14  mape=0.0941
+         FORECAST [119.356, 124.163, 123.056, 117.856, 122.568, 123.68, 123.339, 122.217]
+         PROVENANCE tools=11 evaluate_calls=4 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008791)
+[  35]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  35]     think: The ranking is unstable and several models are highly correlated; pruning redundant models may reduce noise and allow a simple inverse‑error weighting to improve on the trimmed‑mean baseline.
+[  35]     obs  : pool pool4 19->11 models, dropped ['THETA', 'FT_rf', 'CWT_rf', 'ONLY_CWT_rf']
+[  35]   iter 2 | weights_inverse_error {"pool": "pool1", "windows": null, "metric": "rmse", "shrinkage": 0.5, "per_horizon": false}
+[  35]     think: Test a moderate weighted inverse‑error scheme on the robust pool1 to see if a data‑driven weighting can beat the trimmed‑mean baseline while avoiding over‑fitting.
+[  35]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  35]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w2", "rationale": "inverse‑error weighting on the robu...
+[  35]     think: Try a data‑driven weighted combination on the same robust pool (pool1) to see if inverse‑error weighting can beat the trimmed‑mean baseline, given the unstable ranking and correlated errors.
+[  35]     obs  : rank 3/11 score=0.6679 rmse=13.8648, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  35]   iter 4 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool1", "trim": 0.1, "rationale": "test less aggressive trimming on th...
+[  35]     think: The current leader uses a trimmed mean with 20% trimming on pool1. Reducing the trim to 10% may keep more useful models while still discarding the worst, potentially improving accuracy.
+[  35]     obs  : rank 1/11 score=0.654 rmse=14.1325 (best so far) [already tested]
+[  35]   iter 5 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim": 0.2, "rationale": "test trimmed‑mean on the larger, pr...
+[  35]     think: The current best uses a small robust pool; adding more diverse models via pool4 might improve the trimmed‑mean combination.
+[  35]     obs  : rank 5/12 score=0.6839 rmse=13.9101, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  35]   iter 6 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed‑mean on the most stable subset handles...
+[  35]     think: The leader is a baseline trimmed‑mean on pool1, and the margin to the runner‑up is indistinguishable; the series shows unstable ranking and correlated errors, so a robust trimmed mean is appropriate.
+[  35]     obs  : accepted a5 (confidence=None)
+[  35] trimmed_mean   score= 0.6540 origin=baseline iters=6 stop=agent_accepted
+         TEST  smape=0.0974  rmse=9.1676  pocid=85.71  mape=0.1046
+         FORECAST [79.57, 79.402, 78.647, 79.056, 79.411, 79.429, 79.084, 79.603]
+         PROVENANCE tools=5 evaluate_calls=3 pool=5 effective=3 ok=True
+[  36]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  36]     think: The ranking is unstable and several models are highly correlated; pruning redundant models should reduce noise and allow a robust median or weighted inverse‑error combination to improve over the cu...
+[  36]     obs  : pool pool4 19->15 models, dropped ['ETS', 'THETA', 'ONLY_CWT_rf', 'ONLY_DWT_catboost']
+[  36]   iter 2 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[  36]     think: The median baseline is robust, but a forward‑selection based weighting might capture complementary strengths of the remaining 15 models.
+[  36]     obs  : handle w2 mode=forward_selection active=1/15 conc=1.0
+[  36]   iter 3 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable rankings and corr...
+[  36]     think: The current leader (median) is statistically separated from the runner‑up, and the series shows unstable rankings and correlated errors, so a robust median is the best choice.
+[  36]     obs  : accepted a2 (confidence=None)
+[  36] median         score= 0.5368 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.2612  rmse=35.4157  pocid=57.14  mape=0.2636
+         FORECAST [89.142, 92.307, 88.336, 89.765, 89.983, 91.247, 90.586, 91.09]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=1 ok=True
+[  37]   iter 1 | accept {"attempt_id": "a3", "confidence": "high", "justification": "dba is a deterministic baseline, leader score ...
+[  37]     think: The leader dba is a seed and indistinguishable from the runner‑up, so accepting it is the safest choice.
+[  37]     obs  : accepted a3 (confidence=None)
+[  37] dba            score= 0.6398 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0559  rmse=15.3509  pocid=42.86  mape=0.0547
+         FORECAST [200.052, 193.51, 192.637, 196.179, 203.614, 196.72, 195.041, 199.168]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008059)
+[  38]   iter 1 | accept {"id": "a4", "confidence": 1.0, "justification": "Robust mean of the most stable, low‑correlation pool (ETS...
+[  38]     think: The leader a4 is a deterministic mean over a stable 5‑model pool; ranking is unstable and errors are highly correlated, so a robust mean is likely optimal. The margin to the runner‑up is indistingu...
+[  38]     obs  : accepted a4 (confidence=1.0)
+[  38] mean           score= 0.5965 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0663  rmse=10.6326  pocid=57.14  mape=0.0652
+         FORECAST [133.361, 137.254, 135.983, 130.566, 128.98, 131.692, 133.036, 134.222]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  39]   iter 1 | weights_inverse_error {"pool": "pool3", "metric": "rmse", "shrinkage": 0.0}
+[  39]     think: Try a fitted weighting that down‑weights the noisy models while still using the diverse pool3; inverse‑error weighting may improve over the robust trimmed mean.
+[  39]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.0
+[  39]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w2", "rationale": "inverse‑error weighting on the prun...
+[  39]     think: Test a fitted weighting on the already pruned pool3 to see if inverse‑error weighting can beat the robust trimmed‑mean baseline.
+[  39]     obs  : rank 2/11 score=0.704 rmse=14.7044, leader is a9 (trimmed_mean pool=pool3 trim=0.2)
+[  39]   iter 3 | accept {"attempt_id": "a9", "confidence": "high", "justification": "trimmed_mean pool=pool3 trim=0.2 already outpe...
+[  39]     think: The leader strategy (trimmed_mean on pool3) is a baseline and the runner‑up margin is indistinguishable; accepting it is the safest choice.
+[  39]     obs  : accepted a9 (confidence=None)
+[  39] trimmed_mean   score= 0.7020 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1228  rmse=18.2520  pocid=28.57  mape=0.1200
+         FORECAST [121.068, 120.915, 121.275, 122.04, 122.174, 122.838, 123.175, 122.735]
+         PROVENANCE tools=2 evaluate_calls=1 pool=9 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.000954)
+[  40]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  40]     think: The series has unstable ranking and many correlated errors; a robust combination on a pruned, less redundant pool may improve over the plain mean.
+[  40]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'ETS', 'THETA', 'FT_rf']
+[  40]   iter 2 | weights_inverse_error {"pool": "pool4", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  40]     think: Ranking is unstable and many models are correlated, so a weighted inverse‑error combination on a pruned, stable pool may beat the plain mean.
+[  40]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  40]   iter 3 | accept {"attempt_id": "a1", "confidence": "high", "justification": "mean of the full pool is the best robust strat...
+[  40]     think: The leader (mean) is indistinguishable from the runner‑up and the series shows unstable ranking and high correlation, so a simple robust mean is the safest choice.
+[  40]     obs  : accepted a1 (confidence=None)
+[  40] mean           score= 0.6571 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1226  rmse=18.5063  pocid=14.29  mape=0.1270
+         FORECAST [136.614, 133.621, 137.306, 143.984, 138.573, 136.434, 141.578, 144.649]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  41]   iter 1 | accept {"attempt_id": "a4", "confidence": "high", "justification": "robust mean on a stable pool outperforms other...
+[  41]     think: The leader (mean on pool1) is a seeded baseline and the margin to the runner‑up is indistinguishable, so accepting it is the safest choice.
+[  41]     obs  : accepted a4 (confidence=None)
+[  41] mean           score= 0.7140 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0725  rmse=11.8407  pocid=42.86  mape=0.0731
+         FORECAST [153.575, 151.309, 145.271, 147.732, 147.935, 145.588, 146.269, 147.163]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  42]   iter 1 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean pool1 is the best-scoring strateg...
+[  42]     think: The current leader a5 (trimmed_mean on pool1) has a statistically separated margin; no better strategy has been found yet, so we accept it.
+[  42]     obs  : accepted a5 (confidence=None)
+[  42] trimmed_mean   score= 0.6035 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0986  rmse=20.7030  pocid=57.14  mape=0.1059
+         FORECAST [151.25, 156.607, 155.644, 157.772, 150.764, 153.343, 155.408, 153.534]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.006828)
+[  43]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  43]     think: Reduce redundant correlated models by pruning to the best representative of each group, then weight the remaining models by inverse error to form a robust weighted average.
+[  43]     obs  : pool pool4 19->8 models, dropped ['ARIMA', 'ETS', 'THETA', 'NaiveMovingAverage']
+[  43]   iter 2 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  43]     think: The mean of the pruned pool is best so far, but a weighted inverse‑error scheme may give a small edge by giving more influence to the lower‑error models while still using the robust set of 8 models.
+[  43]     obs  : handle w2 mode=inverse_error active=8/8 conc=0.001
+[  43]   iter 3 | accept {"attempt_id": "a1", "confidence": "high", "justification": "mean baseline is robust to ranking instability...
+[  43]     think: The current leader (mean baseline) is statistically separated from the runner‑up, indicating it is already the best strategy for this series.
+[  43]     obs  : accepted a1 (confidence=None)
+[  43] mean           score= 0.6762 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.0538  rmse=10.4702  pocid=71.43  mape=0.0534
+         FORECAST [128.553, 128.168, 129.812, 129.007, 126.335, 129.106, 129.366, 130.281]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  44]   iter 1 | accept {"attempt_id": "a2", "confidence": "high", "justification": "Median is the best robust strategy for this no...
+[  44]     think: The leader (median) is indistinguishable from the runner‑up and the series is noisy with unstable rankings, so a robust median is the safest choice.
+[  44]     obs  : accepted a2 (confidence=None)
+[  44] median         score= 0.7025 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1146  rmse=20.4007  pocid=42.86  mape=0.1407
+         FORECAST [128.619, 120.043, 113.497, 112.606, 126.134, 121.227, 119.695, 118.806]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[  45]   iter 1 | weights_topk_per_horizon {"pool": "pool3", "k": 3, "metric": "rmse"}
+[  45]     think: The current leader is a trimmed mean on pool3, but ranking is unstable and errors are correlated; a horizon‑specific weighted combination might capture complementary strengths and beat the baseline.
+[  45]     obs  : handle w2 mode=topk_mean_per_horizon active=9/9 conc=0.055
+[  45]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  45]     think: The current leader is a robust trimmed‑mean on pool3, but the error table shows many correlated models. Removing redundant models may yield a cleaner pool where a simple median could outperform the...
+[  45]     obs  : pool pool4 19->11 models, dropped ['ETS', 'THETA', 'NaiveMovingAverage', 'CWT_rf']
+[  45]   iter 3 | accept {"attempt_id": "a9", "confidence": "high", "justification": "trimmed_mean pool3 is a seed baseline and stat...
+[  45]     think: The current leader a9 (trimmed_mean on pool3) is a seed strategy and its performance is indistinguishable from the runner‑up, so accepting it is the safe choice.
+[  45]     obs  : accepted a9 (confidence=None)
+[  45] trimmed_mean   score= 0.5916 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1306  rmse=18.2953  pocid=42.86  mape=0.1209
+         FORECAST [111.27, 113.274, 113.835, 113.361, 115.316, 114.288, 114.551, 113.455]
+         PROVENANCE tools=2 evaluate_calls=0 pool=9 effective=7 ok=True
+[  46]   iter 1 | weights_inverse_error {"pool": "pool3", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  46]     think: The ranking is unstable and errors are highly correlated, but the top 9 models in pool3 have the lowest errors overall. A simple inverse‑error weighting on that pool might give a more informed aver...
+[  46]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.0
+[  46]   iter 2 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "test inverse-error weighting on pool3"}
+[  46]     think: Try a weighted combination using inverse-error weights on pool3 to see if it improves over the current leader mean pool3.
+[  46]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool3', but the strategy uses pool 'pool_full'
+[  46]   iter 3 | weights_inverse_error {"pool": "pool3", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  46]     think: Ranking is unstable and errors are correlated; a robust weighted combination using inverse‑error weights on the stable pool3 may beat the current mean pool3 leader.
+[  46]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.0
+[  46]   iter 4 | accept {"attempt_id": "a8", "confidence": "high", "justification": "mean pool3 is a seed strategy, indistinguishab...
+[  46]     think: The leader is a baseline mean on pool3 and the runner‑up is statistically indistinguishable; the ranking is unstable and the mean is robust.
+[  46]     obs  : accepted a8 (confidence=None)
+[  46] mean           score= 0.6623 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.0421  rmse=15.1085  pocid=42.86  mape=0.0407
+         FORECAST [258.453, 247.536, 261.358, 261.428, 260.93, 259.684, 260.84, 260.861]
+         PROVENANCE tools=3 evaluate_calls=0 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  47]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  47]     think: The current leader uses a meta‑model weight on the full pool; pruning redundant models and then weighting by inverse error may reduce noise and improve performance.
+[  47]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'THETA', 'rf', 'DWT_rf']
+[  47]   iter 2 | weights_inverse_error {"pool": "pool4", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  47]     think: Ranking is unstable and several models are correlated; a simple inverse‑error weighting on the pruned pool might give a more robust weighted average than the pooled meta‑model.
+[  47]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.003
+[  47]   iter 3 | accept {"attempt_id": "a10", "confidence": "high", "justification": "w1 is a robust meta‑model weighting that hand...
+[  47]     think: The current leader is a seeded weighted strategy (w1) with an indistinguishable margin from the runner‑up; given the series’ mixed regime and unstable ranking, this robust baseline is likely optimal.
+[  47]     obs  : accepted a10 (confidence=None)
+[  47] weighted       score= 0.6937 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1541  rmse=29.1034  pocid=28.57  mape=0.1511
+         FORECAST [165.585, 166.261, 165.208, 164.05, 170.63, 169.772, 167.593, 166.464]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.002131)
+[  48]   iter 1 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.2}
+[  48]     think: The current leader is a robust mean over pool2; try a fitted weighting that down‑weights the higher‑error models but with shrinkage to avoid overfitting, using pool2.
+[  48]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  48]   iter 2 | accept {"attempt_id": "a6", "confidence": "high", "justification": "robust mean of pool2, indistinguishable margin...
+[  48]     think: Accept the leader a6 (mean pool2) – the margin is indistinguishable, the series is noisy with unstable rankings, and a robust mean over the most stable pool is the safest choice.
+[  48]     obs  : accepted a6 (confidence=None)
+[  48] mean           score= 0.6199 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1015  rmse=16.4064  pocid=28.57  mape=0.1039
+         FORECAST [140.118, 127.222, 114.882, 114.205, 130.206, 123.342, 117.455, 116.276]
+         PROVENANCE tools=1 evaluate_calls=0 pool=7 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  49]   iter 1 | prune_redundant {"pool": "pool3", "corr_threshold": 0.95, "metric": "rmse"}
+[  49]     think: The diagnostics warn of correlated errors; pruning the pool should reduce redundancy and improve a weighted inverse‑error combination.
+[  49]     obs  : pool pool4 9->6 models, dropped ['ARIMA', 'THETA', 'DWT_catboost']
+[  49]   iter 2 | accept {"attempt_id": "a9", "confidence": "high", "justification": "baseline trimmed_mean on pool3 already matches...
+[  49]     think: The leader a9 is a baseline trimmed_mean on pool3 and the margin to the runner‑up is indistinguishable; per the stopping rule we should accept it.
+[  49]     obs  : accepted a9 (confidence=None)
+[  49] trimmed_mean   score= 0.6347 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1144  rmse=20.0170  pocid=71.43  mape=0.1124
+         FORECAST [159.91, 158.534, 161.508, 156.62, 161.027, 160.872, 161.264, 159.892]
+         PROVENANCE tools=1 evaluate_calls=0 pool=9 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.004806)
+[  50]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  50]     think: The error correlation indicates many models are redundant; pruning them and then weighting by inverse error may reduce noise and improve performance.
+[  50]     obs  : pool pool4 19->6 models, dropped ['ARIMA', 'THETA', 'rf', 'ONLY_DWT_catboost']
+[  50]   iter 2 | accept {"attempt_id": "a3", "confidence": "high", "justification": "dba outperforms all other tested strategies wi...
+[  50]     think: The current leader dba has a statistically separated margin; no further improvement is likely needed.
+[  50]     obs  : accepted a3 (confidence=None)
+[  50] dba            score= 0.7059 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1268  rmse=20.7675  pocid=42.86  mape=0.1215
+         FORECAST [106.52, 115.297, 108.723, 104.088, 116.582, 111.251, 111.517, 108.168]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+[  51]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  51]     think: The series has unstable ranking and high error correlation; pruning redundant models and then using inverse‑error weighting on the reduced pool may give a more robust, lower‑error combination than ...
+[  51]     obs  : pool pool4 19->8 models, dropped ['ARIMA', 'ETS', 'THETA', 'DWT_rf']
+[  51]   iter 2 | select_forward {"max_steps": 20, "metric": "rmse"}
+[  51]     think: Ranking is unstable and several models are correlated; a forward‑selection based weight that picks complementary models may beat the current trimmed‑mean leader.
+[  51]     obs  : pool pool5 k=2 ['CWT_catboost', 'ONLY_CWT_rf']
+[  51]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool1", "rationale": "median on pool1 may outperform trimmed_mean"}
+[  51]     think: test a robust median on the stable pool1 to see if it can beat the trimmed‑mean baseline.
+[  51]     obs  : rank 2/11 score=0.6811 rmse=32.2562, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  51]   iter 4 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool1", "trim_pct": 0.1, "rationale": "test tighter trimming on the ro...
+[  51]     think: The leader is a trimmed mean over pool1 with trim 0.2. A smaller trim (0.1) may keep more models and reduce bias while still removing outliers, potentially improving the score.
+[  51]     obs  : rank 4/12 score=0.685 rmse=33.0149, leader is a5 (trimmed_mean pool=pool1 trim=0.2) [SAME forecasts as a4]
+[  51]   iter 5 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0}
+[  51]     think: The current leader is a trimmed‑mean on a very stable 5‑model pool. To explore a different direction, try a data‑driven weighting on a slightly larger pool (pool2) that still contains the top perfo...
+[  51]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  51]   iter 6 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.0}
+[  51]     think: test inverse-error weighted combination on pool1 to see if it can beat the trimmed_mean baseline.
+[  51]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.0
+[  51]   iter 7 | evaluate_strategy {"combine": "weighted", "weights": "w2", "pool": "pool2", "rationale": "inverse_error weights on pool2 may ...
+[  51]     think: test weighted inverse_error on a slightly larger stable pool to see if it improves over trimmed_mean on pool1.
+[  51]     obs  : rank 7/13 score=0.6908 rmse=32.3447, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  51]   iter 8 | evaluate_strategy {"combine": "median", "pool": "pool2", "rationale": "median on a slightly larger robust pool"}
+[  51]     think: Test a simple median on pool2 to see if a different robust pool improves over the leader.
+[  51]     obs  : rank 3/14 score=0.6818 rmse=31.9969, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  51] trimmed_mean   score= 0.6795 origin=baseline iters=8 stop=no improvement in 4 consecutive proposals
+         TEST  smape=0.0896  rmse=25.5594  pocid=71.43  mape=0.0891
+         FORECAST [186.084, 216.312, 213.191, 204.989, 203.71, 213.733, 210.965, 212.422]
+         PROVENANCE tools=8 evaluate_calls=4 pool=5 effective=3 ok=True
+[  52]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  52]     think: The series has unstable ranking and highly correlated error groups; pruning redundant models should reduce noise and may improve a robust median combination.
+[  52]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'THETA', 'NaiveMovingAverage', 'catboost']
+[  52]   iter 2 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is best and indistinguishable from runn...
+[  52]     think: The median strategy is the current leader and indistinguishable from the runner‑up; given the noisy, unstable ranking, a robust median is the safest choice.
+[  52]     obs  : accepted a2 (confidence=None)
+[  52] median         score= 0.6638 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0821  rmse=7.8417  pocid=85.71  mape=0.0789
+         FORECAST [76.85, 76.302, 77.017, 75.721, 75.591, 75.721, 74.885, 76.902]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=1 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008557)
+[  53]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  53]     think: The series shows strong trend/seasonality but high noise and correlated errors; pruning redundant models should reduce over‑fitting and allow a better weighted inverse‑error combination.
+[  53]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'THETA', 'NaiveMovingAverage', 'catboost']
+[  53]   iter 2 | accept {"attempt_id": "a5", "confidence": "high", "justification": "Series has a dominant trend and seasonality, u...
+[  53]     think: The current leader (trimmed_mean pool1) is a robust, deterministic baseline that already accounts for unstable rankings and correlated errors; the runner‑up margin is indistinguishable, so acceptin...
+[  53]     obs  : accepted a5 (confidence=None)
+[  53] trimmed_mean   score= 0.5847 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1175  rmse=15.7569  pocid=28.57  mape=0.1172
+         FORECAST [121.642, 121.285, 121.531, 120.63, 120.645, 119.053, 119.827, 121.106]
+         PROVENANCE tools=1 evaluate_calls=0 pool=5 effective=3 ok=True
+[  54]   iter 1 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool1", "trim_pct": 0.1, "rationale": "robust trimmed‑mean on a stable...
+[  54]     think: The ranking is unstable and several models share correlated errors; a robust trimmed‑mean on a stable pool should beat the current leader.
+[  54]     obs  : rank 4/11 score=0.7178 rmse=11.3012, leader is a5 (trimmed_mean pool=pool1 trim=0.2) [SAME forecasts as a4]
+[  54]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  54]     think: Remove redundant models to reduce noise and then weight the remaining ones inversely by error; this may improve over the current trimmed‑mean baseline.
+[  54]     obs  : pool pool4 19->9 models, dropped ['ETS', 'THETA', 'CWT_rf', 'DWT_rf']
+[  54]   iter 3 | weights_inverse_error {"pool": "pool1", "windows": null, "metric": "rmse", "shrinkage": 0.5, "per_horizon": false}
+[  54]     think: test a weighted inverse‑error scheme on the stable pool1, shrinking weights to avoid over‑fitting the few validation windows.
+[  54]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  54]   iter 4 | accept {"attempt_id": "a5", "confidence": "high", "justification": "leader is a seed and indistinguishable from ru...
+[  54]     think: The leader a5 is a baseline trimmed‑mean on pool1 with indistinguishable margin; per the stopping rule we should accept it.
+[  54]     obs  : accepted a5 (confidence=None)
+[  54] trimmed_mean   score= 0.6999 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.0587  rmse=6.3736  pocid=28.57  mape=0.0608
+         FORECAST [75.056, 75.237, 76.172, 75.461, 75.596, 74.493, 75.36, 75.055]
+         PROVENANCE tools=3 evaluate_calls=1 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003548)
+[  55]   iter 1 | select_top_k {"k": 19}
+[  55]     think: The diagnostics suggest a robust, trimmed‑mean approach on a pool with redundant models removed should beat the current leader.
+[  55]     obs  : pool pool_full k=19 ['ONLY_DWT_catboost', 'ONLY_DWT_rf', 'DWT_rf', 'FT_catboost', 'FT_rf']
+[  55]   iter 2 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0}
+[  55]     think: The current leader is a robust trimmed‑mean on pool2. To beat it we can try a fitted weighting that respects the low‑predictability, noisy regime but avoids over‑fitting by using simple inverse‑err...
+[  55]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  55]   iter 3 | select_stable {"k": 5}
+[  55]     think: The current leader is a robust trimmed‑mean on pool2, but the ranking is unstable and the series is close to noise. Selecting the most stable models first should give a cleaner pool and may improve...
+[  55]     obs  : pool pool1 k=5 ['ONLY_DWT_catboost', 'DWT_rf', 'catboost', 'rf', 'FT_catboost']
+[  55]   iter 4 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "test inverse‑error weights on the s...
+[  55]     think: Try a fitted inverse‑error weighting on the stable pool2 to see if it beats the trimmed‑mean baseline, while keeping the risk of overfitting low by using the existing handle w2.
+[  55]     obs  : rank 4/11 score=0.6465 rmse=18.499, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[  55]   iter 5 | weights_forward {"pool": "pool2", "max_steps": 20, "metric": "rmse"}
+[  55]     think: The current leader is a robust trimmed‑mean; to see if a different robust weighting can beat it, try Caruana forward‑selection weights on the same stable pool.
+[  55]     obs  : handle w3 mode=forward_selection active=1/7 conc=1.0
+[  55]   iter 6 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool2", "trim_pct": 0.3, "rationale": "test 30% trimming on the stable...
+[  55]     think: Try a more aggressive trimming on the stable pool to see if removing the most extreme models improves the robust mean.
+[  55]     obs  : rank 3/12 score=0.6258 rmse=18.2976, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[  55]   iter 7 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.5}
+[  55]     think: Create a new inverse‑error weight handle with moderate shrinkage to reduce overfitting and test it on the stable pool.
+[  55]     obs  : handle w4 mode=inverse_error active=7/7 conc=0.0
+[  55]   iter 8 | accept {"attempt_id": "a7", "confidence": "high", "justification": "trimmed_mean pool2 is statistically indistingu...
+[  55]     think: The current leader a7 (trimmed_mean pool2 trim=0.2) is a baseline with indistinguishable performance from the runner‑up, and the series is noisy with unstable rankings – a robust trimmed mean is th...
+[  55]     obs  : accepted a7 (confidence=None)
+[  55] trimmed_mean   score= 0.6214 origin=baseline iters=8 stop=agent_accepted
+         TEST  smape=0.1519  rmse=16.9829  pocid=42.86  mape=0.1494
+         FORECAST [75.516, 73.004, 74.288, 71.469, 70.606, 70.34, 72.041, 72.328]
+         PROVENANCE tools=7 evaluate_calls=2 pool=7 effective=5 ok=True
+[  56]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  56]     think: The diagnostics recommend a robust combination due to unstable ranking and high error correlation. I will prune redundant models from the full pool and then apply inverse‑error weighting on the red...
+[  56]     obs  : pool pool4 19->7 models, dropped ['ETS', 'THETA', 'rf', 'CWT_rf']
+[  56]   iter 2 | weights_inverse_error {"pool": "pool1", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  56]     think: Create a weighted inverse‑error handle on pool1 and later evaluate it to see if a weighted combination can beat the current mean‑pool1 leader.
+[  56]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.003
+[  56]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w2", "rationale": "inverse_error weighting on pool1 ma...
+[  56]     think: test inverse_error weighting on pool1 to see if it improves over the mean pool1 baseline.
+[  56]     obs  : rank 1/11 score=0.6509 rmse=22.1593 (best so far)
+[  56]   iter 4 | weights_inverse_error {"pool": "pool4", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  56]     think: The current leader uses inverse-error weighting on pool1. Since pool4 contains the strongest models (ARIMA, catboost, and a few others) and is already pruned for redundancy, applying inverse-error ...
+[  56]     obs  : handle w3 mode=inverse_error active=7/7 conc=0.004
+[  56]   iter 5 | accept {"attempt_id": "a11", "confidence": "high", "justification": "Leader a11 (weighted pool1 with inverse error...
+[  56]     think: The current leader a11 is already separated from the runner‑up; the rule recommends accepting it.
+[  56]     obs  : accepted a11 (confidence=None)
+[  56] weighted       score= 0.6509 origin=agent    iters=5 stop=agent_accepted
+         TEST  smape=0.0754  rmse=11.5669  pocid=71.43  mape=0.0790
+         FORECAST [128.983, 131.329, 124.622, 120.774, 124.181, 126.364, 123.345, 126.992]
+         PROVENANCE tools=4 evaluate_calls=1 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003009)
+[  57]   iter 1 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on the most stable 5 models (ARIM...
+[  57]     think: The current leader a5 (trimmed_mean on pool1) has a separated margin and is the best seen so far; no evidence that a more complex strategy will beat it.
+[  57]     obs  : accepted a5 (confidence=None)
+[  57] trimmed_mean   score= 0.5933 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0757  rmse=14.8265  pocid=0.00  mape=0.0727
+         FORECAST [138.858, 138.66, 138.991, 139.307, 140.463, 140.117, 140.192, 140.103]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=3 ok=True
+[  58]   iter 1 | weights_topk_per_horizon {"pool": "pool3", "k": 3, "metric": "rmse"}
+[  58]     think: The current leader is a trimmed‑mean on pool3, but the ranking is unstable and errors are correlated. A per‑horizon top‑k weighting may capture changing strengths across the 8‑step horizon without ...
+[  58]     obs  : handle w2 mode=topk_mean_per_horizon active=9/9 conc=0.027
+[  58]   iter 2 | accept {"attempt_id": "a9", "confidence": "high", "justification": "The leader is a baseline trimmed_mean on pool3...
+[  58]     think: The leader a9 is a baseline trimmed_mean on pool3, and the runner-up margin is indistinguishable; the diagnosis recommends a robust combination.
+[  58]     obs  : accepted a9 (confidence=None)
+[  58] trimmed_mean   score= 0.6786 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1799  rmse=18.9438  pocid=42.86  mape=0.1826
+         FORECAST [82.941, 84.954, 86.012, 86.913, 83.921, 85.253, 85.104, 87.523]
+         PROVENANCE tools=1 evaluate_calls=0 pool=9 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.005048)
+[  59]   iter 1 | accept {"attempt_id": "a2", "confidence": 0.9, "justification": "Median is robust to unstable ranking and correlat...
+[  59]     think: The leader is the median strategy (a2) with an indistinguishable margin; given the unstable ranking, correlated errors, and noise‑dominated series, a robust median is the safest choice.
+[  59]     obs  : accepted a2 (confidence=0.9)
+[  59] median         score= 0.6582 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1932  rmse=26.2256  pocid=42.86  mape=0.2205
+         FORECAST [130.822, 129.744, 118.466, 114.765, 128.286, 129.638, 117.725, 118.416]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[  60]   iter 1 | weights_inverse_error {"pool": "pool3", "windows": null, "metric": "rmse", "shrinkage": 0.1, "per_horizon": false}
+[  60]     think: The ranking is unstable and several models are highly correlated, but the best baseline uses a robust mean over a stable subset (pool3). A weighted inverse‑error scheme on that same pool might redu...
+[  60]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.0
+[  60]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  60]     think: The leader is a mean over pool3, but the error table shows strong redundancy among the top models. Pruning correlated groups should reduce noise and let inverse‑error weighting focus on the truly d...
+[  60]     obs  : pool pool4 19->10 models, dropped ['ETS', 'THETA', 'catboost', 'CWT_rf']
+[  60]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w2", "rationale": "inverse_error weights on pool3"}
+[  60]     think: Test inverse‑error weighting on the top‑3‑model pool; it may beat the current mean‑pool3 baseline.
+[  60]     obs  : rank 2/11 score=0.6666 rmse=22.8684, leader is a8 (mean pool=pool3)
+[  60]   iter 4 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[  60]     think: Try forward‑selection weights on the pruned pool to see if a data‑driven combination can beat the current mean‑pool3 leader.
+[  60]     obs  : handle w3 mode=forward_selection active=2/10 conc=0.444
+[  60]   iter 5 | accept {"attempt_id": "a8", "confidence": "high", "justification": "Leader is a seed with indistinguishable margin...
+[  60]     think: The leader a8 (mean pool=pool3) is a seed and the margin is indistinguishable; no further improvement is likely needed.
+[  60]     obs  : accepted a8 (confidence=None)
+[  60] mean           score= 0.6651 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.0564  rmse=8.7210  pocid=14.29  mape=0.0594
+         FORECAST [118.431, 113.604, 117.009, 118.663, 120.056, 118.126, 119.037, 119.619]
+         PROVENANCE tools=4 evaluate_calls=1 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  61]   iter 1 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on pool1 is robust to ranking ins...
+[  61]     think: The trimmed_mean on pool1 is the current leader and indistinguishable from the runner‑up, so accepting it is the safest choice.
+[  61]     obs  : accepted a5 (confidence=None)
+[  61] trimmed_mean   score= 0.6373 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1226  rmse=21.1952  pocid=28.57  mape=0.1327
+         FORECAST [147.552, 146.998, 146.475, 146.433, 147.519, 145.789, 146.317, 146.299]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003972)
+[  62]   iter 1 | accept {"attempt_id": "a4", "confidence": "high", "justification": "The leader strategy is a deterministic robust ...
+[  62]     think: The leader (mean on pool1) is indistinguishable from the runner‑up and the ranking is unstable, so the robust mean is already optimal for this series.
+[  62]     obs  : accepted a4 (confidence=None)
+[  62] mean           score= 0.7197 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0775  rmse=10.5140  pocid=71.43  mape=0.0830
+         FORECAST [105.599, 103.034, 101.09, 99.297, 100.583, 100.95, 102.591, 100.122]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  63]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  63]     think: The series shows high outlier rate and unstable ranking; pruning redundant models may reduce noise and a weighted inverse-error scheme could exploit the remaining diverse models without overfitting.
+[  63]     obs  : pool pool4 19->10 models, dropped ['ARIMA', 'ETS', 'THETA', 'FT_rf']
+[  63]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool2", "rationale": "use median on the stable pool2 to increase robustness"}
+[  63]     think: The leader is a robust mean over pool2; a more robust statistic like the median on the same pool might reduce the influence of noisy models and improve performance.
+[  63]     obs  : rank 10/11 score=0.7355 rmse=19.1363, leader is a6 (mean pool=pool2)
+[  63]   iter 3 | weights_inverse_error {"pool": "pool2", "shrinkage": 0.5}
+[  63]     think: The leader is a robust mean over pool2; to beat it we try a fitted weighting that is regularised to avoid overfitting, e.g. inverse‑error weights with shrinkage.
+[  63]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  63]   iter 4 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "use inverse‑error weights on the stable pool2"}
+[  63]     think: The current leader is a simple mean over pool2, but inverse‑error weighting on the same pool may give a better trade‑off between the strong models and the noisy ones.
+[  63]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool2', but the strategy uses pool 'pool_full'
+[  63]   iter 5 | accept {"attempt_id": "a6", "confidence": "high", "justification": "Series shows low predictability and unstable r...
+[  63]     think: The current leader a6 (mean on pool2) is a seed strategy with indistinguishable margin; no clear improvement is expected, so we accept it.
+[  63]     obs  : accepted a6 (confidence=None)
+[  63] mean           score= 0.7032 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.1190  rmse=12.0573  pocid=57.14  mape=0.1207
+         FORECAST [79.719, 80.791, 81.724, 84.141, 80.149, 78.029, 80.688, 80.194]
+         PROVENANCE tools=4 evaluate_calls=1 pool=7 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  64]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  64]     think: The current leader uses a dataset‑wide meta‑model; pruning highly correlated models may reduce noise and let a simple inverse‑error weighting improve performance.
+[  64]     obs  : pool pool4 19->8 models, dropped ['ARIMA', 'THETA', 'CWT_catboost', 'FT_catboost']
+[  64]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "robust median on reduced, decorrelated pool"}
+[  64]     think: The series is noisy with unstable ranking and many correlated models; a robust median over the pruned pool should reduce noise and improve over the current weighted baseline.
+[  64]     obs  : rank 8/11 score=0.7835 rmse=32.5999, leader is a10 (weighted w=w1)
+[  64]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool3", "rationale": "robust median on a larger decorrelated pool"}
+[  64]     think: The series is noisy and ranking unstable, so a robust median over a slightly larger but still decorrelated pool (pool3) may beat the current leader.
+[  64]     obs  : rank 12/12 score=0.8276 rmse=32.3307, leader is a10 (weighted w=w1)
+[  64]   iter 4 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[  64]     think: The current leader is a weighted meta‑model that may be close to optimal; however, a simple inverse‑error weighting on the decorrelated pool4 could reduce noise further and beat the baseline.
+[  64]     obs  : handle w2 mode=inverse_error active=8/8 conc=0.002
+[  64]   iter 5 | select_stable {"k": 7}
+[  64]     think: The ranking is unstable and many models are correlated; a robust median over a subset of the most stable models might beat the current baseline.
+[  64]     obs  : pool pool2 k=7 ['ETS', 'catboost', 'FT_catboost', 'ARIMA', 'CWT_rf']
+[  64]   iter 6 | weights_forward {"pool": "pool2", "max_steps": 20, "metric": "rmse"}
+[  64]     think: The current leader is a weighted meta‑model (w1) on the full pool.
+[  64]     obs  : handle w3 mode=forward_selection active=1/7 conc=1.0
+[  64]   iter 7 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.5}
+[  64]     think: Try inverse‑error weighting with moderate shrinkage on the decorrelated pool4 to see if a smoothed weighting beats the current weighted‑w1 baseline.
+[  64]     obs  : handle w4 mode=inverse_error active=8/8 conc=0.0
+[  64]   iter 8 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  64]     think: The current leader is a weighted inverse‑error model (w1) but the margin to the runner‑up is indistinguishable. A promising next step is to prune redundant models from the full pool and then re‑app...
+[  64]     obs  : pool pool4 19->8 models, dropped ['ARIMA', 'THETA', 'CWT_catboost', 'FT_catboost']
+[  64]   iter 9 | accept {"attempt_id": "a10", "confidence": "high", "justification": "Series has strong trend and seasonality, unst...
+[  64]     think: The leader (a10) is a seed strategy with indistinguishable performance and the series shows unstable ranking and high correlation among models, so a robust cross‑series weighted approach is appropr...
+[  64]     obs  : accepted a10 (confidence=None)
+[  64] weighted       score= 0.7146 origin=baseline iters=9 stop=agent_accepted
+         TEST  smape=0.1202  rmse=26.8072  pocid=28.57  mape=0.1131
+         FORECAST [185.605, 179.799, 179.323, 177.639, 178.525, 175.844, 179.558, 178.974]
+         PROVENANCE tools=8 evaluate_calls=2 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.000924)
+[  65]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  65]     think: Reduce noise by pruning highly correlated models, then weight the remaining ones by inverse error to improve over the current dba baseline.
+[  65]     obs  : pool pool4 19->10 models, dropped ['ARIMA', 'THETA', 'DWT_rf', 'ONLY_CWT_rf']
+[  65]   iter 2 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[  65]     think: The current leader is a deterministic dba; a robust weighted inverse‑error scheme on the pruned pool4 might reduce variance and beat the baseline.
+[  65]     obs  : handle w2 mode=inverse_error active=10/10 conc=0.0
+[  65]   iter 3 | accept {"attempt_id": "a3", "confidence": "high", "justification": "dba is a seed strategy and the leader margin i...
+[  65]     think: The leader a3 (dba) is a seed strategy and the margin is indistinguishable, so we should accept it as the best strategy for this series.
+[  65]     obs  : accepted a3 (confidence=None)
+[  65] dba            score= 0.6577 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1253  rmse=27.1082  pocid=42.86  mape=0.1283
+         FORECAST [172.31, 180.33, 172.067, 181.876, 179.301, 178.122, 177.821, 186.393]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=19 ok=True
+[  66]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  66]     think: The diagnostics suggest correlated errors and unstable ranking; a robust combination on a pruned, less redundant pool may beat the current leader.
+[  66]     obs  : pool pool4 19->11 models, dropped ['ARIMA', 'ETS', 'rf', 'catboost']
+[  66]   iter 2 | accept {"attempt_id": "a9", "confidence": "high", "justification": "leader is a seed with indistinguishable margin...
+[  66]     think: The leader a9 is a baseline trimmed_mean on pool3 with indistinguishable margin; no clear improvement expected.
+[  66]     obs  : accepted a9 (confidence=None)
+[  66] trimmed_mean   score= 0.7302 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0750  rmse=18.5165  pocid=42.86  mape=0.0730
+         FORECAST [186.126, 183.981, 183.599, 179.402, 182.881, 182.608, 182.586, 183.82]
+         PROVENANCE tools=1 evaluate_calls=0 pool=9 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008444)
+[  67]   iter 1 | prune_redundant {"pool": "pool3", "corr_threshold": 0.95, "metric": "rmse"}
+[  67]     obs  : pool pool4 9->6 models, dropped ['CWT_rf', 'ONLY_DWT_rf', 'DWT_catboost']
+[  67]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim": 0.2, "rationale": "robust trimmed‑mean on the pruned p...
+[  67]     think: Try a robust trimmed‑mean on the pruned pool4 to see if removing the redundant models improves over the current leader.
+[  67]     obs  : rank 1/11 score=0.5792 rmse=42.5584 (best so far)
+[  67]   iter 3 | accept {"id": "a11", "confidence": "high", "justification": "trimmed_mean pool4 gives best score and runner‑up ind...
+[  67]     think: The trimmed‑mean on pool4 is the current leader and the runner‑up is statistically indistinguishable, so accepting it is the safest choice.
+[  67]     obs  : accepted a11 (confidence=None)
+[  67] trimmed_mean   score= 0.5792 origin=agent    iters=3 stop=agent_accepted
+         TEST  smape=0.1486  rmse=51.3337  pocid=57.14  mape=0.1639
+         FORECAST [356.158, 321.487, 342.729, 336.433, 331.334, 342.932, 353.013, 342.993]
+         PROVENANCE tools=2 evaluate_calls=1 pool=6 effective=4 ok=True
+[  68]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  68]     think: Reduce correlated error groups first, then test a robust median on the pruned pool to see if we can beat the current median baseline.
+[  68]     obs  : pool pool4 19->11 models, dropped ['ARIMA', 'ETS', 'THETA', 'rf']
+[  68]   iter 2 | weights_topk_per_horizon {"pool": "pool4", "k": 3, "metric": "rmse"}
+[  68]     think: create a horizon‑wise top‑k weighting on the pruned pool to capture subtle differences and potentially beat the robust median.
+[  68]     obs  : handle w2 mode=topk_mean_per_horizon active=9/11 conc=0.057
+[  68]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w2", "rationale": "horizon‑wise top‑3 weighted average...
+[  68]     think: Try a horizon‑wise top‑3 weighted average on the pruned pool to see if it beats the current median baseline.
+[  68]     obs  : rank 10/11 score=0.8318 rmse=29.8526, leader is a2 (median)
+[  68]   iter 4 | select_stable {"k": 7}
+[  68]     think: The ranking is unstable and many models are correlated, so a robust approach is to pick the most stable subset of models and weight them by inverse error with some shrinkage to avoid overfitting.
+[  68]     obs  : pool pool2 k=7 ['FT_catboost', 'NaiveMovingAverage', 'DWT_catboost', 'THETA', 'FT_rf']
+[  68]   iter 5 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is a seeded baseline, best score 0.7257...
+[  68]     think: The leader (median) is a seeded baseline and indistinguishable from the runner‑up, so accepting it is the safest move.
+[  68]     obs  : accepted a2 (confidence=None)
+[  68] median         score= 0.7257 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.0983  rmse=13.0864  pocid=57.14  mape=0.0996
+         FORECAST [109.412, 118.12, 113.936, 117.489, 115.661, 116.165, 116.893, 115.038]
+         PROVENANCE tools=4 evaluate_calls=1 pool=19 effective=1 ok=True
+[  69]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  69]     think: The current leader is a simple mean over all models, but the diagnostics suggest that correlated errors and unstable ranking could be mitigated by pruning redundant models and using a robust median.
+[  69]     obs  : pool pool4 19->10 models, dropped ['THETA', 'catboost', 'CWT_rf', 'ONLY_CWT_rf']
+[  69]   iter 2 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  69]     think: The series has unstable ranking and many correlated errors; a robust inverse‑error weighting on the pruned pool may reduce variance and beat the plain mean.
+[  69]     obs  : handle w2 mode=inverse_error active=10/10 conc=0.002
+[  69]   iter 3 | weights_meta_model {"pool": "pool2", "scope": "dataset", "metric": "smape", "eta": 1.0}
+[  69]     think: The ranking is unstable and many models are correlated, so a data‑driven weighting that learns from the other series may beat the simple mean. I will create a meta‑model weight vector on the stable...
+[  69]     obs  : handle w3 mode=pooled_meta_model active=7/7 conc=0.0
+[  69]   iter 4 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w3", "rationale": "use pooled meta‑model weights on th...
+[  69]     think: Try a pooled meta‑model weighting on the stable pool (pool2) to see if it can beat the current mean baseline.
+[  69]     obs  : rank 4/11 score=0.6972 rmse=15.6849, leader is a1 (mean) [SAME forecasts as a6]
+[  69]   iter 5 | accept {"attempt_id": "a1", "confidence": "high", "justification": "Leader mean baseline indistinguishable, no bet...
+[  69]     think: The leader (mean baseline) is indistinguishable from the runner‑up, and no new strategy has improved upon it; accept the leader.
+[  69]     obs  : accepted a1 (confidence=None)
+[  69] mean           score= 0.6952 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.1305  rmse=18.9446  pocid=14.29  mape=0.1463
+         FORECAST [127.441, 127.277, 127.678, 127.511, 130.651, 129.549, 129.659, 130.496]
+         PROVENANCE tools=4 evaluate_calls=1 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  70]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  70]     think: Reduce correlated errors first, then weight the remaining models inversely by error.
+[  70]     obs  : pool pool4 19->11 models, dropped ['THETA', 'NaiveMovingAverage', 'ONLY_CWT_catboost', 'CWT_rf']
+[  70]   iter 2 | accept {"id": "a3", "confidence": 1.0, "justification": "The series exhibits a dominant upward trend and strong se...
+[  70]     think: The leader a3 (dba) is a baseline strategy with the lowest score and the leader diagnostics show an indistinguishable margin, so accepting it is justified given the series’ strong trend, seasonalit...
+[  70]     obs  : accepted a3 (confidence=1.0)
+[  70] dba            score= 0.6383 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1595  rmse=16.2623  pocid=57.14  mape=0.1687
+         FORECAST [88.049, 90.952, 95.263, 88.669, 89.436, 93.913, 92.115, 91.822]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+[  71]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  71]     think: Reduce correlated error groups first, then combine the remaining models with a robust estimator (median) to see if a cleaner pool improves over the baseline mean.
+[  71]     obs  : pool pool4 19->8 models, dropped ['ARIMA', 'ETS', 'THETA', 'ONLY_FT_catboost']
+[  71]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "robust median on a low‑correlation pool"}
+[  71]     think: The series is noisy and ranking unstable, so a robust estimator on a pruned, low‑correlation pool may beat the plain mean.
+[  71]     obs  : rank 11/11 score=0.8425 rmse=28.4669, leader is a1 (mean)
+[  71]   iter 3 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0}
+[  71]     think: The series has unstable ranking and high correlation; a robust weighted average of the most stable models may beat the plain mean.
+[  71]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  71]   iter 4 | accept {"attempt_id": "a1", "confidence": "high", "justification": "The mean strategy is the best‑scoring baseline...
+[  71]     think: The current leader (mean) is indistinguishable from the runner‑up, and the series is highly noisy with unstable rankings; a simple robust mean is likely optimal.
+[  71]     obs  : accepted a1 (confidence=None)
+[  71] mean           score= 0.6857 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.0851  rmse=10.9971  pocid=28.57  mape=0.0856
+         FORECAST [104.916, 107.85, 115.24, 108.787, 112.65, 112.549, 111.847, 110.298]
+         PROVENANCE tools=3 evaluate_calls=1 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  72]   iter 1 | accept {"attempt_id": "a2", "confidence": "high", "justification": "Median is a robust deterministic combination t...
+[  72]     think: The leader is the median strategy, which is robust to unstable rankings and correlated errors, matching the series’ strong trend and seasonality.
+[  72]     obs  : accepted a2 (confidence=None)
+[  72] median         score= 0.6780 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1378  rmse=16.9550  pocid=57.14  mape=0.1516
+         FORECAST [108.899, 121.048, 115.254, 108.006, 111.893, 118.267, 122.787, 113.584]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[  73]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  73]     think: The ranking is unstable and many models are highly correlated; pruning redundant models and then weighting by inverse error should give a robust, low‑variance combination.
+[  73]     obs  : pool pool4 19->10 models, dropped ['ARIMA', 'ETS', 'NaiveMovingAverage', 'CWT_rf']
+[  73]   iter 2 | accept {"attempt_id": "a8", "confidence": "high", "justification": "leader is a seed with indistinguishable margin...
+[  73]     think: The leader a8 (mean on pool3) is a seed baseline with an indistinguishable margin; no strategy so far has statistically outperformed it, so we should accept it.
+[  73]     obs  : accepted a8 (confidence=None)
+[  73] mean           score= 0.6572 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1579  rmse=18.2593  pocid=42.86  mape=0.1444
+         FORECAST [90.049, 89.889, 90.922, 88.576, 89.416, 89.223, 91.223, 88.261]
+         PROVENANCE tools=1 evaluate_calls=0 pool=9 effective=9 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  74]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  74]     think: The diagnosis suggests a robust combination due to unstable ranking and correlated errors; pruning redundant models may sharpen the median.
+[  74]     obs  : pool pool4 19->10 models, dropped ['ARIMA', 'ETS', 'THETA', 'ONLY_CWT_rf']
+[  74]   iter 2 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable ranking and corre...
+[  74]     think: The median strategy already outperforms the runner‑up with a statistically separated margin; no further tuning is needed.
+[  74]     obs  : accepted a2 (confidence=None)
+[  74] median         score= 0.6388 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1377  rmse=17.1073  pocid=57.14  mape=0.1507
+         FORECAST [113.696, 112.822, 118.489, 117.026, 113.747, 109.704, 116.33, 116.279]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=1 ok=True
+[  75]   iter 1 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on pool1 outperforms all other te...
+[  75]     think: The current leader (trimmed_mean on pool1) is statistically better than the runner‑up with a separated margin, so we should accept it.
+[  75]     obs  : accepted a5 (confidence=None)
+[  75] trimmed_mean   score= 0.4479 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1245  rmse=15.0899  pocid=100.00  mape=0.1166
+         FORECAST [101.71, 101.802, 101.65, 101.59, 101.579, 101.719, 100.879, 101.569]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.00635)
+[  76]   iter 1 | accept {"attempt_id": "a4", "confidence": "high", "justification": "mean pool1 already achieves the best validatio...
+[  76]     think: The leader (mean pool1) is a seed and the margin is indistinguishable, so we should accept it as the best strategy for this series.
+[  76]     obs  : accepted a4 (confidence=None)
+[  76] mean           score= 0.5996 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0786  rmse=11.7526  pocid=57.14  mape=0.0820
+         FORECAST [122.0, 123.143, 122.621, 122.845, 121.761, 120.685, 121.415, 121.896]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  77]   iter 1 | evaluate_strategy {"combine": "median", "pool": "pool2", "rationale": "robust median on the best pool"}
+[  77]     think: The diagnostics suggest a robust combination; try a median over the same pool that currently leads (pool2) to see if it improves on the mean baseline.
+[  77]     obs  : rank 7/11 score=0.6292 rmse=14.7519, leader is a6 (mean pool=pool2)
+[  77]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool2", "trim": 0.2, "rationale": "robust trimmed mean on the most sta...
+[  77]     think: The series is noisy and rankings unstable, so a robust trimmed mean over the best pool may beat the current leader.
+[  77]     obs  : rank 4/11 score=0.6023 rmse=14.4506, leader is a6 (mean pool=pool2) [already tested]
+[  77]   iter 3 | accept {"attempt_id": "a6", "confidence": "high", "justification": "robust mean on pool2 outperforms all other tes...
+[  77]     think: The leader a6 (mean on pool2) is a baseline with indistinguishable margin; the series is noisy and ranking unstable, so a simple robust mean is likely optimal.
+[  77]     obs  : accepted a6 (confidence=None)
+[  77] mean           score= 0.5843 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.0885  rmse=17.1500  pocid=42.86  mape=0.0933
+         FORECAST [152.361, 154.443, 148.317, 143.704, 149.011, 147.43, 147.275, 147.526]
+         PROVENANCE tools=2 evaluate_calls=2 pool=7 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  78]   iter 1 | weights_forward {"pool": "pool2", "max_steps": 20, "metric": "rmse"}
+[  78]     think: The best baseline uses a trimmed mean over a stable subset (pool2). A more flexible weighted scheme on the same stable subset might reduce variance further.
+[  78]     obs  : handle w2 mode=forward_selection active=3/7 conc=0.222
+[  78]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "forward‑selection weights on the mo...
+[  78]     think: Test the forward‑selection weighted combination on pool2 (NaiveMovingAverage, ONLY_DWT_rf, ONLY_DWT_catboost) to see if it improves on the trimmed‑mean leader.
+[  78]     obs  : rank 11/11 score=0.7661 rmse=15.068, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[  78]   iter 3 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool2", "trim_pct": 0.1, "rationale": "test less aggressive trimming o...
+[  78]     think: The current leader is a robust trimmed‑mean on pool2. Trying a slightly less aggressive trim (0.1) may reduce bias while still guarding against outliers, potentially improving the score.
+[  78]     obs  : rank 6/12 score=0.6516 rmse=13.8964, leader is a7 (trimmed_mean pool=pool2 trim=0.2) [SAME forecasts as a6]
+[  78]   iter 4 | prune_redundant {"pool": "pool2", "corr_threshold": 0.95, "metric": "rmse"}
+[  78]     think: The ranking is unstable and many models are correlated; a robust trimmed mean on a pruned, non‑redundant pool should beat the current best trimmed mean on the full pool.
+[  78]     obs  : pool pool4 7->4 models, dropped ['ARIMA', 'THETA', 'ONLY_CWT_catboost']
+[  78]   iter 5 | accept {"attempt_id": "a7", "confidence": "high", "justification": "trimmed_mean on pool2 provides the best score ...
+[  78]     think: Accept the current leader a7 – trimmed_mean on pool2 is robust to unstable ranking and correlated errors, and the margin to the runner‑up is indistinguishable.
+[  78]     obs  : accepted a7 (confidence=None)
+[  78] trimmed_mean   score= 0.6282 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.1014  rmse=13.7804  pocid=14.29  mape=0.0958
+         FORECAST [108.368, 107.942, 106.364, 103.33, 108.978, 106.788, 106.899, 106.036]
+         PROVENANCE tools=4 evaluate_calls=2 pool=7 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.009397)
+[  79]   iter 1 | accept {"attempt_id": "a5", "confidence": "high", "justification": "The leader is a robust trimmed‑mean on a stabl...
+[  79]     think: The current leader a5 is a robust trimmed‑mean on pool1 and the margin to the runner‑up is indistinguishable, so accepting it is the safest choice.
+[  79]     obs  : accepted a5 (confidence=None)
+[  79] trimmed_mean   score= 0.6296 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1177  rmse=23.0436  pocid=71.43  mape=0.1205
+         FORECAST [159.765, 158.651, 142.38, 159.721, 157.738, 161.863, 152.935, 156.295]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=3 ok=True
+[  80]   iter 1 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool2", "trim_pct": 0.1, "rationale": "test lighter trimming on the ro...
+[  80]     think: The current leader uses trimmed_mean on pool2 with 20% trimming. Try a lighter trim (10%) to see if we can reduce bias while still removing outliers.
+[  80]     obs  : rank 3/11 score=0.6193 rmse=12.6619, leader is a7 (trimmed_mean pool=pool2 trim=0.2) [SAME forecasts as a6]
+[  80]   iter 2 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  80]     think: Try a fitted weighting that may beat the robust trimmed‑mean, using the same stable pool (pool2) but weighting by inverse error to give more influence to the better models.
+[  80]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  80]   iter 3 | accept {"attempt_id": "a7", "confidence": "high", "justification": "trimmed_mean pool2 robust to outliers and rank...
+[  80]     think: The trimmed_mean on pool2 (a7) is the current leader with a statistically separated margin; no other strategy tested has improved on it, and the margin is significant enough to accept.
+[  80]     obs  : accepted a7 (confidence=None)
+[  80] trimmed_mean   score= 0.6175 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1695  rmse=12.9178  pocid=0.00  mape=0.1919
+         FORECAST [72.841, 67.449, 73.748, 70.547, 70.632, 68.893, 75.516, 71.986]
+         PROVENANCE tools=2 evaluate_calls=1 pool=7 effective=5 ok=True
+[  81]   iter 1 | accept {"attempt_id": "a3", "confidence": "high", "justification": "Series has strong trend/seasonality, unstable ...
+[  81]     think: The leader is a deterministic baseline (dba) and the verdict is indistinguishable, so the rule says to accept it.
+[  81]     obs  : accepted a3 (confidence=None)
+[  81] dba            score= 0.6377 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1137  rmse=11.8396  pocid=85.71  mape=0.1109
+         FORECAST [86.11, 83.831, 88.858, 85.751, 85.771, 89.459, 86.179, 85.839]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+[  82]   iter 1 | weights_inverse_error {"pool": "pool_full", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  82]     think: The series has unstable ranking and correlated errors; a fitted inverse‑error weighting on the full pool might reduce noise and improve over the trimmed‑mean baseline.
+[  82]     obs  : handle w2 mode=inverse_error active=19/19 conc=0.001
+[  82]   iter 2 | accept {"attempt_id": "a7", "confidence": "high", "justification": "robust trimmed mean over stable pool2 matches ...
+[  82]     think: The leader a7 (trimmed_mean on pool2) is indistinguishable from the runner‑up, and diagnostics recommend a robust combination; accepting it is the safest move.
+[  82]     obs  : accepted a7 (confidence=None)
+[  82] trimmed_mean   score= 0.7215 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1296  rmse=36.1083  pocid=28.57  mape=0.1334
+         FORECAST [214.708, 223.969, 216.543, 217.175, 225.188, 214.151, 217.884, 217.225]
+         PROVENANCE tools=1 evaluate_calls=0 pool=7 effective=5 ok=True
+[  83]   iter 1 | accept {"attempt_id": "a1", "confidence": "high", "justification": "The leader strategy (mean) is a seed and the m...
+[  83]     think: The leader is a baseline mean with indistinguishable margin, so we should accept it.
+[  83]     obs  : accepted a1 (confidence=None)
+[  83] mean           score= 0.6857 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1207  rmse=21.0334  pocid=42.86  mape=0.1114
+         FORECAST [118.584, 120.397, 117.59, 118.107, 120.135, 121.475, 121.303, 120.143]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  84]   iter 1 | evaluate_strategy {"combine": "median", "pool": "pool3", "rationale": "robust median over the most stable subset"}
+[  84]     think: The leader is a mean over pool3, but a robust median over the same pool might reduce the influence of outliers and improve stability given the unstable ranking and correlated errors.
+[  84]     obs  : rank 1/11 score=0.6645 rmse=15.5639 (best so far)
+[  84]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool3", "trim_pct": 0.2, "rationale": "robust trimmed mean on the most...
+[  84]     think: The current leader is a robust median over pool3; a trimmed‑mean on the same pool may further reduce the influence of any remaining outlier models and could improve the score.
+[  84]     obs  : rank 3/11 score=0.694 rmse=15.7764, leader is a11 (median pool=pool3) [already tested]
+[  84]   iter 3 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  84]     think: The current leader uses a robust median on a 9‑model pool.
+[  84]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'CWT_catboost', 'ONLY_CWT_catboost']
+[  84]   iter 4 | weights_inverse_error {"pool": "pool3", "metric": "rmse", "shrinkage": 0.0}
+[  84]     think: Test a fitted weighted combination on the stable pool3 to see if inverse‑error weighting beats the robust median.
+[  84]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.0
+[  84]   iter 5 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "robust median on the pruned pool to reduce redundancy"}
+[  84]     think: The current leader is a robust median on pool3, but pruning correlated models may yield a cleaner pool. Test a median on the pruned pool4 to see if removing redundant models improves performance.
+[  84]     obs  : rank 12/12 score=0.7368 rmse=16.4738, leader is a11 (median pool=pool3)
+[  84]   iter 6 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0}
+[  84]     think: Test a weighted inverse‑error combination on the pruned pool to see if removing redundancy improves over the median.
+[  84]     obs  : handle w3 mode=inverse_error active=9/9 conc=0.002
+[  84]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool3", "weights": "w2", "rationale": "inverse-error weighted on pool3"}
+[  84]     think: Test a fitted weighted combination on the stable pool3 to see if inverse-error weighting beats the robust median.
+[  84]     obs  : rank 3/13 score=0.6932 rmse=15.7758, leader is a11 (median pool=pool3)
+[  84]   iter 8 | weights_topk_per_horizon {"pool": "pool3", "k": 3, "metric": "rmse"}
+[  84]     think: The ranking is unstable and errors are correlated, so a horizon‑wise top‑k weighting might capture complementary strengths better than a single robust median.
+[  84]     obs  : handle w4 mode=topk_mean_per_horizon active=9/9 conc=0.004
+[  84]   iter 9 | weights_forward {"pool": "pool3", "max_steps": 20, "metric": "rmse"}
+[  84]     think: Try a forward‑selection weighted combination on pool3 to see if a data‑driven subset can beat the robust median.
+[  84]     obs  : handle w5 mode=forward_selection active=1/9 conc=1.0
+[  84]   iter 10 | select_top_k {"k": 19}
+[  84]     think: Reduce redundancy by pruning the full model pool and then apply a robust median to see if performance improves.
+[  84]     obs  : pool pool_full k=19 ['FT_catboost', 'NaiveMovingAverage', 'THETA', 'ONLY_FT_catboost', 'CWT_catboost']
+[  84]   iter 11 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  84]     think: The pool contains many highly correlated models; pruning redundant ones may give a cleaner set for a robust median.
+[  84]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'CWT_catboost', 'ONLY_CWT_catboost']
+[  84]   iter 12 | accept {"attempt_id": "a11", "confidence": "high", "justification": "robust median on stable pool beats all other ...
+[  84]     think: The median on pool3 already outperforms all other tested strategies with a clear margin and the leader diagnostics indicate indistinguishable runner‑up; given the series’ unstable ranking and corre...
+[  84]     obs  : accepted a11 (confidence=None)
+[  84] median         score= 0.6645 origin=agent    iters=12 stop=agent_accepted
+         TEST  smape=0.1449  rmse=15.1922  pocid=28.57  mape=0.1637
+         FORECAST [99.302, 94.219, 91.075, 94.486, 94.887, 83.179, 89.492, 95.337]
+         PROVENANCE tools=11 evaluate_calls=4 pool=9 effective=1 ok=True
+[  85]   iter 1 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.5}
+[  85]     think: test whether inverse‑error weighting on the stable pool1 can beat the current mean‑pool1 leader.
+[  85]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  85]   iter 2 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "test inverse‑error weighting on the stable pool"}
+[  85]     think: Evaluate the inverse‑error weighted combination on pool1 to see if it can beat the current leader mean‑pool1 baseline.
+[  85]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool1', but the strategy uses pool 'pool_full'
+[  85]   iter 3 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  85]     think: The current leader is a simple mean over pool1. Since the ranking is unstable and the pool is small, a data‑driven weighting (inverse‑error) on the same pool may reduce error further.
+[  85]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.001
+[  85]   iter 4 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  85]     think: The ranking is unstable and many models are highly correlated; pruning redundant models may reduce noise and a weighted inverse‑error scheme on the reduced pool could beat the current mean‑pool1 le...
+[  85]     obs  : pool pool4 19->7 models, dropped ['ARIMA', 'ETS', 'THETA', 'FT_catboost']
+[  85]   iter 5 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.5}
+[  85]     think: test inverse‑error weighting with shrinkage on the stable pool1 to see if it beats the mean baseline.
+[  85]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  85]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w3", "rationale": "inverse‑error weighting on the stab...
+[  85]     think: Test a weighted inverse‑error combination on the stable pool1 to see if it can beat the current mean‑pool leader.
+[  85]     obs  : rank 2/11 score=0.6792 rmse=25.6965, leader is a4 (mean pool=pool1)
+[  85]   iter 7 | accept {"attempt_id": "a4", "confidence": "high", "justification": "mean pool=pool1 already achieves the best scor...
+[  85]     think: The leader (mean pool=pool1) is indistinguishable from the runner‑up; accepting it is safe and likely optimal.
+[  85]     obs  : accepted a4 (confidence=None)
+[  85] mean           score= 0.6778 origin=baseline iters=7 stop=agent_accepted
+         TEST  smape=0.0844  rmse=10.7678  pocid=42.86  mape=0.0883
+         FORECAST [102.142, 97.667, 89.863, 96.973, 105.897, 103.819, 102.746, 100.288]
+         PROVENANCE tools=6 evaluate_calls=1 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  86]   iter 1 | accept {"attempt_id": "a3", "confidence": "high", "justification": "The series shows strong trend and seasonality ...
+[  86]     think: The leader dba already achieves the best score and the margin is indistinguishable; the series has unstable ranking and correlated errors, so a robust deterministic barycenter is appropriate.
+[  86]     obs  : accepted a3 (confidence=None)
+[  86] dba            score= 0.6423 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0894  rmse=13.5008  pocid=71.43  mape=0.0866
+         FORECAST [134.742, 128.889, 121.45, 133.851, 141.606, 137.173, 136.919, 126.407]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=19 ok=True
+[  87]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  87]     think: The series shows unstable ranking and correlated errors; a robust combination on a pruned pool may beat the current weighted meta‑model.
+[  87]     obs  : pool pool4 19->16 models, dropped ['THETA', 'CWT_rf', 'ONLY_DWT_rf']
+[  87]   iter 2 | accept {"attempt_id": "a10", "confidence": "high", "justification": "leader is separated from runner‑up, robust we...
+[  87]     think: The leader a10 (weighted w1) is statistically separated from the runner‑up, so we should accept it as the final strategy.
+[  87]     obs  : accepted a10 (confidence=None)
+[  87] weighted       score= 0.7025 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.4163  rmse=42.5656  pocid=71.43  mape=0.6516
+         FORECAST [110.411, 115.358, 104.542, 107.034, 113.986, 112.203, 110.742, 109.725]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.004891)
+[  88]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  88]     think: The series has unstable ranking and correlated errors; a robust median on a pruned, non‑redundant pool may beat the full‑pool median.
+[  88]     obs  : pool pool4 19->15 models, dropped ['THETA', 'ONLY_DWT_rf', 'ONLY_CWT_rf', 'ONLY_DWT_catboost']
+[  88]   iter 2 | weights_inverse_error {"pool": "pool4", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  88]     think: Test a weighted inverse‑error combination on the pruned pool to see if it can beat the robust median baseline.
+[  88]     obs  : handle w2 mode=inverse_error active=15/15 conc=0.007
+[  88]   iter 3 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "test inverse‑error weighting on the pruned pool"}
+[  88]     think: The current leader is a robust median, but the inverse‑error weights on the pruned pool (w2) might reduce variance and improve accuracy.
+[  88]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[  88]   iter 4 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable ranking and corre...
+[  88]     think: The current leader (median) is a seed strategy with a statistically separated margin, and the series shows unstable ranking and correlated errors, so a robust median is appropriate.
+[  88]     obs  : accepted a2 (confidence=None)
+[  88] median         score= 0.6488 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.3900  rmse=28.7573  pocid=71.43  mape=0.5437
+         FORECAST [90.48, 82.559, 79.671, 81.695, 84.954, 82.978, 83.394, 87.455]
+         PROVENANCE tools=3 evaluate_calls=0 pool=19 effective=1 ok=True
+[  89]   iter 1 | select_stable {"k": 7}
+[  89]     think: The current leader (median) is indistinguishable from the runner‑up; a robust median over the most stable subset of models may shave a few points off the error.
+[  89]     obs  : pool pool2 k=7 ['ETS', 'THETA', 'ARIMA', 'ONLY_DWT_catboost', 'FT_catboost']
+[  89]   iter 2 | weights_topk_per_horizon {"pool": "pool2", "k": 3, "metric": "rmse"}
+[  89]     think: The median is robust but may ignore horizon‑specific strengths. Try a per‑horizon top‑k weighting on the stable pool to capture any horizon‑varying best models.
+[  89]     obs  : handle w2 mode=topk_mean_per_horizon active=7/7 conc=0.012
+[  89]   iter 3 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable rankings and corr...
+[  89]     think: The current leader (median) is a seeded baseline and the margin to the runner‑up is indistinguishable; the series is noisy with unstable rankings and high error correlation, so a robust median is a...
+[  89]     obs  : accepted a2 (confidence=None)
+[  89] median         score= 0.6878 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1170  rmse=19.8321  pocid=28.57  mape=0.1294
+         FORECAST [138.978, 141.312, 151.701, 143.034, 143.314, 140.055, 145.31, 146.922]
+         PROVENANCE tools=2 evaluate_calls=0 pool=19 effective=1 ok=True
+[  90]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  90]     think: The ranking is unstable and many models are highly correlated; pruning redundant models and then weighting by inverse error should give a robust, low‑variance combination.
+[  90]     obs  : pool pool4 19->9 models, dropped ['ARIMA', 'ETS', 'THETA', 'catboost']
+[  90]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "robust median over a pruned, low‑correlation pool"}
+[  90]     think: The ranking is unstable and several models are highly correlated; a robust aggregator like the median over a pruned pool should beat the current leader.
+[  90]     obs  : rank 11/11 score=0.7029 rmse=22.2933, leader is a6 (mean pool=pool2)
+[  90]   iter 3 | weights_inverse_error {"pool": "pool2", "windows": null, "metric": "rmse", "shrinkage": 0.5, "per_horizon": false}
+[  90]     think: Ranking is unstable and errors are correlated, but the best baseline uses a simple mean over pool2. A weighted inverse‑error scheme on the same pool may reduce variance and improve accuracy while s...
+[  90]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  90]   iter 4 | accept {"attempt_id": "a6", "confidence": "high", "justification": "Series has strong trend/seasonality and unstab...
+[  90]     think: The current leader (mean pool=pool2) is a baseline with indistinguishable margin; the series shows strong trend and seasonality with unstable ranking, so a robust mean over the stable pool is appro...
+[  90]     obs  : accepted a6 (confidence=None)
+[  90] mean           score= 0.6163 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.0993  rmse=13.2988  pocid=57.14  mape=0.1112
+         FORECAST [100.958, 105.348, 100.555, 99.028, 100.847, 101.641, 101.693, 100.576]
+         PROVENANCE tools=3 evaluate_calls=1 pool=7 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  91]   iter 1 | select_stable {"k": 7}
+[  91]     think: The ranking is unstable and several models share correlated errors; a stable subset with inverse‑error weighting should reduce noise and improve over the current leader.
+[  91]     obs  : pool pool2 k=7 ['ETS', 'THETA', 'ONLY_DWT_catboost', 'DWT_catboost', 'FT_catboost']
+[  91]   iter 2 | accept {"attempt_id": "a4", "confidence": "high", "justification": "The mean of the most stable 5 models (ETS, THE...
+[  91]     think: The current leader (mean on pool1) is a baseline seed and the margin to the runner‑up is indistinguishable, so accepting it is the safest choice given the series’ strong trend, seasonality and unst...
+[  91]     obs  : accepted a4 (confidence=None)
+[  91] mean           score= 0.6052 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1806  rmse=21.6758  pocid=57.14  mape=0.1667
+         FORECAST [96.333, 101.793, 105.512, 105.228, 104.882, 103.935, 107.068, 107.089]
+         PROVENANCE tools=1 evaluate_calls=0 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  92]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  92]     think: The ranking is unstable and several models are highly correlated; pruning redundant models should reduce noise and a robust weighted inverse-error scheme may outperform the current dba baseline.
+[  92]     obs  : pool pool4 19->15 models, dropped ['THETA', 'DWT_rf', 'CWT_catboost', 'ONLY_CWT_catboost']
+[  92]   iter 2 | weights_forward {"pool": "pool4", "max_steps": 20, "metric": "rmse"}
+[  92]     think: The ranking is unstable and many models are correlated, so a robust forward‑selection weighting on the pruned pool should beat the current baseline.
+[  92]     obs  : handle w2 mode=forward_selection active=4/15 conc=0.196
+[  92]   iter 3 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "forward selection on pool4 to capture complementary ...
+[  92]     think: test the forward‑selection weights (w2) on pool4 to see if a data‑driven sparse combination can beat the current leader.
+[  92]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[  92]   iter 4 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.0}
+[  92]     think: The ranking is unstable and several models are correlated, so a robust weighted average of the most stable subset (pool1) should beat the current leader.
+[  92]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.001
+[  92]   iter 5 | accept {"id": "a3", "confidence": "high", "justification": "leader dba is indistinguishable from the runner‑up, an...
+[  92]     think: The current leader a3 (dba) is a seed strategy with an indistinguishable margin from the runner‑up; given the unstable ranking and correlated errors, a robust deterministic combination is already o...
+[  92]     obs  : accepted a3 (confidence=None)
+[  92] dba            score= 0.6467 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.1299  rmse=27.6728  pocid=71.43  mape=0.1214
+         FORECAST [170.34, 179.594, 168.826, 167.507, 167.853, 192.761, 176.968, 164.91]
+         PROVENANCE tools=4 evaluate_calls=0 pool=19 effective=19 ok=True
+[  93]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  93]     think: Reduce correlated redundancy first, then use inverse-error weighting on the cleaned pool to see if a more parsimonious weighted mean beats the baseline mean.
+[  93]     obs  : pool pool4 19->12 models, dropped ['ETS', 'NaiveMovingAverage', 'ONLY_CWT_rf', 'DWT_rf']
+[  93]   iter 2 | accept {"attempt_id": "a1", "confidence": 0.95, "justification": "The series is highly noisy with unstable model r...
+[  93]     think: The leader is a seed baseline (mean) and the margin is indistinguishable, so the safest choice is to accept it.
+[  93]     obs  : accepted a1 (confidence=0.95)
+[  93] mean           score= 0.6667 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1256  rmse=17.9576  pocid=71.43  mape=0.1265
+         FORECAST [126.522, 128.915, 129.039, 128.04, 126.868, 128.59, 130.279, 127.503]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  94]   iter 1 | weights_topk_per_horizon {"pool": "pool1", "k": 3}
+[  94]     think: Use a horizon‑specific weighted combination on the small, stable pool1 to capture any variation in model strength across the 8‑step horizon.
+[  94]     obs  : handle w2 mode=topk_mean_per_horizon active=5/5 conc=0.028
+[  94]   iter 2 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on pool1 exploits the stable subs...
+[  94]     think: The current leader a5 (trimmed_mean on pool1) is statistically separated from the runner‑up, and the series shows strong trend, seasonality, and unstable ranking, so a robust trimmed mean over the ...
+[  94]     obs  : accepted a5 (confidence=None)
+[  94] trimmed_mean   score= 0.6267 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0954  rmse=18.6102  pocid=57.14  mape=0.0906
+         FORECAST [149.657, 150.132, 152.688, 155.017, 146.756, 149.263, 148.651, 149.411]
+         PROVENANCE tools=1 evaluate_calls=0 pool=5 effective=3 ok=True
+[  95]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  95]     think: The series has unstable ranking and correlated errors; a robust median over a pruned pool of non‑redundant models should reduce noise and improve performance.
+[  95]     obs  : pool pool4 19->13 models, dropped ['THETA', 'DWT_rf', 'CWT_catboost', 'FT_rf']
+[  95]   iter 2 | accept {"attempt_id": "a3", "confidence": "high", "justification": "dba already achieves the best score and the ma...
+[  95]     think: The leader dba is a seeded baseline with indistinguishable margin; given the unstable ranking and correlated errors, a robust deterministic barycenter is appropriate.
+[  95]     obs  : accepted a3 (confidence=None)
+[  95] dba            score= 0.6534 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0423  rmse=8.6894  pocid=71.43  mape=0.0415
+         FORECAST [148.651, 158.42, 159.666, 158.204, 158.204, 158.204, 152.77, 161.662]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+[  96]   iter 1 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[  96]     think: Create inverse‑error weights on pool2 to see if a weighted combination can beat the current leader (mean pool2).
+[  96]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.004
+[  96]   iter 2 | accept {"attempt_id": "a6", "confidence": "high", "justification": "Leader is a seed with a statistically separate...
+[  96]     think: The current leader a6 (mean pool=pool2) is a baseline seed and the margin is statistically separated, so we should accept it.
+[  96]     obs  : accepted a6 (confidence=None)
+[  96] mean           score= 0.4739 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1002  rmse=12.8702  pocid=57.14  mape=0.1004
+         FORECAST [93.13, 90.355, 93.404, 93.36, 92.798, 91.126, 91.602, 92.175]
+         PROVENANCE tools=1 evaluate_calls=0 pool=7 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  97]   iter 1 | weights_inverse_error {"pool": "pool1", "windows": null, "metric": "rmse", "shrinkage": 0.0}
+[  97]     think: The ranking is unstable and several models are highly correlated, so a robust weighted combination that down‑weights the worst performers may beat the current mean pool1.
+[  97]     obs  : handle w2 mode=inverse_error active=5/5 conc=0.0
+[  97]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  97]     think: Ranking is unstable and many models are correlated; pruning redundant models may reduce noise and allow inverse‑error weighting to improve over the current mean pool1 baseline.
+[  97]     obs  : pool pool4 19->8 models, dropped ['THETA', 'rf', 'FT_rf', 'CWT_catboost']
+[  97]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w2", "rationale": "test inverse‑error weights on the s...
+[  97]     think: The leader is indistinguishable from the runner‑up; a robust weighted combination on the same pool might squeeze a small gain.
+[  97]     obs  : rank 2/11 score=0.7053 rmse=18.417, leader is a4 (mean pool=pool1)
+[  97]   iter 4 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "robust median over the pruned, diverse pool"}
+[  97]     think: The ranking is unstable and many models are correlated; a robust deterministic combination such as the median over the pruned, most diverse pool (pool4) should beat the current mean‑pool1 baseline.
+[  97]     obs  : rank 12/12 score=0.864 rmse=20.4232, leader is a4 (mean pool=pool1)
+[  97]   iter 5 | accept {"attempt_id": "a4", "confidence": 1.0, "justification": "Series shows strong trend and seasonality, rankin...
+[  97]     think: The leader a4 (mean over pool1) is a seed strategy with indistinguishable margin; given the unstable ranking and strong trend/seasonality, a robust mean of the most stable models is the safest choice.
+[  97]     obs  : accepted a4 (confidence=1.0)
+[  97] mean           score= 0.7036 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.1185  rmse=23.7866  pocid=57.14  mape=0.1382
+         FORECAST [150.646, 150.687, 151.219, 152.062, 151.771, 150.783, 151.483, 152.035]
+         PROVENANCE tools=4 evaluate_calls=2 pool=5 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[  98]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  98]     think: The ranking is unstable and several models share correlated errors; pruning redundant models and weighting by inverse error should reduce noise and improve the robust average.
+[  98]     obs  : pool pool4 19->14 models, dropped ['NaiveMovingAverage', 'CWT_rf', 'DWT_rf', 'FT_catboost']
+[  98]   iter 2 | accept {"attempt_id": "a3", "confidence": 1.0, "justification": "leader indistinguishable, no statistically better...
+[  98]     think: The leader dba is indistinguishable from the runner‑up, so accepting it is the safest move.
+[  98]     obs  : accepted a3 (confidence=1.0)
+[  98] dba            score= 0.6345 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1435  rmse=19.7560  pocid=28.57  mape=0.1363
+         FORECAST [112.638, 105.087, 110.406, 110.673, 117.217, 112.016, 110.512, 113.253]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+[  99]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  99]     think: The ranking is unstable and several models are correlated; pruning redundant models may reduce noise and allow a robust median to improve over the current trimmed‑mean pool1.
+[  99]     obs  : pool pool4 19->14 models, dropped ['ETS', 'CWT_rf', 'ONLY_CWT_rf', 'FT_rf']
+[  99]   iter 2 | weights_forward {"pool": "pool1", "max_steps": 20, "metric": "rmse"}
+[  99]     think: The current leader is a trimmed‑mean on pool1, but the ranking is unstable and only 5 models are in pool1. A forward‑selection weight vector may pick the best subset per horizon and could improve o...
+[  99]     obs  : handle w2 mode=forward_selection active=1/5 conc=1.0
+[  99]   iter 3 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.0}
+[  99]     think: Test a fitted weighting that emphasizes the best models, using inverse‑error weights on the same pool that trimmed‑mean used, to see if it can beat the current leader.
+[  99]     obs  : handle w3 mode=inverse_error active=5/5 conc=0.033
+[  99]   iter 4 | evaluate_strategy {"combine": "weighted", "pool": "pool1", "weights": "w3", "rationale": "inverse‑error weights on the most s...
+[  99]     think: test inverse‑error weighting on the stable pool1 to see if it can beat the trimmed‑mean leader.
+[  99]     obs  : rank 2/11 score=0.4728 rmse=16.1846, leader is a5 (trimmed_mean pool=pool1 trim=0.2)
+[  99]   iter 5 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on pool1 already achieves the bes...
+[  99]     think: The current leader a5 is a baseline trimmed‑mean on pool1 with an indistinguishable margin; accepting it is the safest choice.
+[  99]     obs  : accepted a5 (confidence=None)
+[  99] trimmed_mean   score= 0.4671 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.0674  rmse=8.4933  pocid=28.57  mape=0.0660
+         FORECAST [96.77, 96.549, 97.494, 97.97, 96.087, 94.727, 98.096, 96.765]
+         PROVENANCE tools=4 evaluate_calls=1 pool=5 effective=3 ok=True
+[ 100]   iter 1 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on a stable, small pool handles u...
+[ 100]     think: The current leader (trimmed_mean on pool1) has a separated margin and the series shows unstable ranking and correlated errors, so a robust trimmed mean is likely optimal.
+[ 100]     obs  : accepted a5 (confidence=None)
+[ 100] trimmed_mean   score= 0.6581 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1093  rmse=18.8526  pocid=57.14  mape=0.1133
+         FORECAST [151.432, 150.636, 150.415, 150.078, 147.902, 149.446, 149.632, 149.579]
+         PROVENANCE tools=0 evaluate_calls=0 pool=5 effective=3 ok=True
+[ 101]   iter 1 | prune_redundant {"pool": "pool3", "corr_threshold": 0.95, "metric": "rmse"}
+[ 101]     think: The ranking is unstable and many models are correlated; pruning pool3 should reduce redundancy and allow a more effective weighted inverse‑error combination.
+[ 101]     obs  : pool pool4 9->4 models, dropped ['ARIMA', 'ETS', 'FT_catboost', 'DWT_catboost']
+[ 101]   iter 2 | weights_forward {"pool": "pool3", "max_steps": 20, "metric": "rmse"}
+[ 101]     think: test a data‑driven subset via Caruana forward selection on the full pool3 to see if a learned weighting can beat the trimmed‑mean baseline.
+[ 101]     obs  : handle w2 mode=forward_selection active=1/9 conc=1.0
+[ 101]   iter 3 | weights_best_per_horizon {"pool": "pool3", "metric": "rmse"}
+[ 101]     think: Horizon‑specific weighting on the robust pool3 may capture the changing strengths of models across the 8‑step horizon and beat the trimmed‑mean leader.
+[ 101]     obs  : handle w3 mode=best_per_horizon active=6/9 conc=0.086
+[ 101]   iter 4 | weights_inverse_error {"pool": "pool3", "metric": "rmse", "shrinkage": 0.0}
+[ 101]     think: The current leader uses a trimmed mean; a data‑driven weighting might reduce variance. I’ll try inverse‑error weighting on the full pool to see if it beats the trimmed mean.
+[ 101]     obs  : handle w4 mode=inverse_error active=9/9 conc=0.001
+[ 101]   iter 5 | accept {"attempt_id": "a9", "confidence": "high", "justification": "trimmed_mean on pool3 is robust to unstable ra...
+[ 101]     think: The current leader a9 (trimmed_mean on pool3) is separated from the runner‑up by a statistically significant margin; the series has unstable ranking and correlated errors, so a robust trimmed mean ...
+[ 101]     obs  : accepted a9 (confidence=None)
+[ 101] trimmed_mean   score= 0.6270 origin=baseline iters=5 stop=agent_accepted
+         TEST  smape=0.0915  rmse=14.4485  pocid=14.29  mape=0.0928
+         FORECAST [150.252, 137.781, 146.11, 143.607, 147.332, 145.485, 149.864, 146.789]
+         PROVENANCE tools=4 evaluate_calls=0 pool=9 effective=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.006699)
+[ 102]   iter 1 | weights_inverse_error {"pool": "pool3", "windows": null, "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[ 102]     think: The leader is a trimmed mean on pool3, but a weighted inverse‑error scheme on the same pool might reduce variance and improve performance.
+[ 102]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.003
+[ 102]   iter 2 | accept {"attempt_id": "a9", "confidence": "high", "justification": "trimmed_mean on pool3 is robust to unstable ra...
+[ 102]     think: The current leader a9 (trimmed_mean on pool3) is indistinguishable from the runner‑up, and the series shows unstable ranking and correlated errors, so a robust trimmed mean is appropriate.
+[ 102]     obs  : accepted a9 (confidence=None)
+[ 102] trimmed_mean   score= 0.7090 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1511  rmse=10.9337  pocid=42.86  mape=0.1403
+         FORECAST [54.969, 54.859, 56.387, 56.043, 55.837, 55.656, 56.151, 55.628]
+         PROVENANCE tools=1 evaluate_calls=0 pool=9 effective=7 ok=True
+[ 103]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[ 103]     think: The top models are highly correlated; pruning redundant ones may reduce noise and allow a simple inverse‑error weighting to beat the current dba baseline.
+[ 103]     obs  : pool pool4 19->11 models, dropped ['ARIMA', 'ETS', 'catboost', 'CWT_rf']
+[ 103]   iter 2 | select_top_k {"k": 3}
+[ 103]     think: The top three models have the lowest errors but ranking is unstable; a robust median over this small pool may beat the current leader.
+[ 103]     obs  : pool pool5 k=3 ['ONLY_CWT_rf', 'ONLY_CWT_catboost', 'ONLY_FT_catboost']
+[ 103]   iter 3 | evaluate_strategy {"combine": "forward", "pool": "pool4", "rationale": "forward selection on pruned pool to capture complemen...
+[ 103]     think: The current leader (dba) is robust but we can try a forward‑selection weighting on the pruned pool (pool4) to see if a data‑driven, low‑variance combination can beat it.
+[ 103]     obs  : ERROR invalid_argument: combine='forward' is invalid. Valid: ['mean', 'median', 'trimmed_mean', 'weighted', 'dba', 'best_single']
+[ 103]   iter 4 | accept {"attempt_id": "a3", "confidence": "high", "justification": "leader is seed, indistinguishable, no better s...
+[ 103]     think: The leader is a seed strategy (dba) and the runner‑up is statistically indistinguishable, so accepting it is the safest move.
+[ 103]     obs  : accepted a3 (confidence=None)
+[ 103] dba            score= 0.6755 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.1008  rmse=18.7019  pocid=57.14  mape=0.0976
+         FORECAST [170.148, 161.885, 182.158, 157.859, 163.495, 159.551, 166.884, 171.382]
+         PROVENANCE tools=3 evaluate_calls=0 pool=19 effective=19 ok=True
+[ 104]   iter 1 | accept {"attempt_id": "a2", "confidence": "high", "justification": "median is robust to unstable ranking and corre...
+[ 104]     think: The current leader (median) is a seed and indistinguishable from the runner‑up, so accepting it is the safest choice.
+[ 104]     obs  : accepted a2 (confidence=None)
+[ 104] median         score= 0.6796 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0414  rmse=5.8662  pocid=57.14  mape=0.0421
+         FORECAST [111.814, 116.463, 117.363, 115.12, 113.673, 112.989, 117.992, 113.317]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[ 105]   iter 1 | accept {"attempt_id": "a2", "confidence": 0.9, "justification": "median is robust to outliers, ranking instability...
+[ 105]     think: The current leader (median) is indistinguishable from the runner‑up and the series shows unstable ranking and high error correlation; a robust deterministic baseline is appropriate.
+[ 105]     obs  : accepted a2 (confidence=0.9)
+[ 105] median         score= 0.6583 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0585  rmse=9.9628  pocid=57.14  mape=0.0591
+         FORECAST [137.413, 131.91, 131.124, 135.807, 139.339, 135.974, 132.18, 135.643]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[ 106]   iter 1 | weights_best_per_horizon {"pool": "pool1", "k": null, "metric": "rmse"}
+[ 106]     think: The series has strong seasonality and the ranking is unstable, so the best model may change across horizons. Using horizon‑specific weights on the stable pool1 could capture that pattern.
+[ 106]     obs  : ERROR unknown_argument: weights_best_per_horizon does not accept ['k']
+[ 106]   iter 2 | accept {"id": "a5", "confidence": "high", "justification": "robust trimmed‑mean on a stable, low‑error pool matche...
+[ 106]     think: The leader is a robust trimmed‑mean on pool1, which is well‑suited to a series with unstable ranking and highly correlated errors; the margin is indistinguishable, so we accept it.
+[ 106]     obs  : accepted a5 (confidence=None)
+[ 106] trimmed_mean   score= 0.5707 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.1564  rmse=20.2491  pocid=0.00  mape=0.1714
+         FORECAST [119.085, 116.977, 118.384, 118.245, 118.368, 117.836, 118.138, 118.376]
+         PROVENANCE tools=1 evaluate_calls=0 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008885)
+[ 107]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[ 107]     think: The ranking is unstable and many models are correlated; pruning redundant models may give a cleaner pool for a weighted inverse‑error scheme.
+[ 107]     obs  : pool pool4 19->11 models, dropped ['ARIMA', 'ETS', 'NaiveMovingAverage', 'CWT_rf']
+[ 107]   iter 2 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.0, "per_horizon": false}
+[ 107]     think: The current leader is a robust trimmed‑mean over a small stable pool.
+[ 107]     obs  : handle w2 mode=inverse_error active=11/11 conc=0.002
+[ 107]   iter 3 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "inverse‑error weights on pool4"}
+[ 107]     think: The current leader uses a trimmed‑mean on a small, stable pool.
+[ 107]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool4', but the strategy uses pool 'pool_full'
+[ 107]   iter 4 | accept {"attempt_id": "a5", "confidence": "high", "justification": "trimmed_mean on a stable, low‑variance pool of...
+[ 107]     think: The current leader a5 (trimmed_mean on pool1) is a seeded baseline and the runner‑up margin is indistinguishable; accepting it is the safest choice.
+[ 107]     obs  : accepted a5 (confidence=None)
+[ 107] trimmed_mean   score= 0.6052 origin=baseline iters=4 stop=agent_accepted
+         TEST  smape=0.1064  rmse=14.7482  pocid=42.86  mape=0.1098
+         FORECAST [111.755, 110.582, 110.184, 109.458, 108.089, 107.44, 105.431, 108.119]
+         PROVENANCE tools=3 evaluate_calls=0 pool=5 effective=3 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.006111)
+[ 108]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[ 108]     think: The series shows strong trend/seasonality but high outliers and correlated errors; pruning redundant models should reduce noise and then weighted inverse error may give a better blend than the plai...
+[ 108]     obs  : pool pool4 19->12 models, dropped ['ARIMA', 'THETA', 'CWT_rf', 'ONLY_CWT_rf']
+[ 108]   iter 2 | accept {"attempt_id": "a1", "confidence": "high", "justification": "Mean strategy is statistically better than all...
+[ 108]     think: The current leader (mean) is separated from the runner‑up, so we should accept it as the best strategy for this series.
+[ 108]     obs  : accepted a1 (confidence=None)
+[ 108] mean           score= 0.6762 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.0835  rmse=17.3461  pocid=57.14  mape=0.0799
+         FORECAST [188.5, 187.519, 188.532, 189.172, 188.303, 189.139, 191.013, 191.761]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[ 109]   iter 1 | select_stable {"k": 7}
+[ 109]     think: The ranking is unstable and several models are correlated, so a robust weighted combination of the most stable models may beat the current dba baseline.
+[ 109]     obs  : pool pool2 k=7 ['NaiveMovingAverage', 'CWT_rf', 'FT_rf', 'ARIMA', 'ONLY_FT_catboost']
+[ 109]   iter 2 | accept {"attempt_id": "a3", "confidence": "high", "justification": "The leader is a seed strategy with indistingui...
+[ 109]     think: The current leader a3 (dba) is a seed strategy with indistinguishable margin; no new strategy is likely to improve significantly given the high variance and unstable ranking.
+[ 109]     obs  : accepted a3 (confidence=None)
+[ 109] dba            score= 0.6621 origin=baseline iters=2 stop=agent_accepted
+         TEST  smape=0.3514  rmse=88.3087  pocid=28.57  mape=0.2904
+         FORECAST [163.786, 146.777, 139.742, 151.244, 150.526, 148.502, 149.175, 165.104]
+         PROVENANCE tools=1 evaluate_calls=0 pool=19 effective=19 ok=True
+[ 110]   iter 1 | weights_inverse_error {"pool": "pool2", "shrinkage": 0.1}
+[ 110]     think: Try a weighted inverse‑error scheme on the stable pool2, shrinking the weights slightly to avoid over‑fitting the three validation windows.
+[ 110]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[ 110]   iter 2 | evaluate_strategy {"combine": "weighted", "weights": "w2", "rationale": "inverse‑error weights on a pruned pool to reduce cor...
+[ 110]     think: Test a weighted combination using the inverse‑error weights (w2) on pool2 to see if it can beat the current trimmed‑mean leader, while keeping the pool small to reduce over‑fitting.
+[ 110]     obs  : ERROR invalid_argument: weights 'w2' were computed over 'pool2', but the strategy uses pool 'pool_full'
+[ 110]   iter 3 | accept {"attempt_id": "a7", "confidence": "high", "justification": "trimmed_mean pool2 is the best seed and indist...
+[ 110]     think: The current leader a7 (trimmed_mean pool2) is indistinguishable from the runner‑up, and it is a baseline seed. According to the stopping rule, we should accept this strategy.
+[ 110]     obs  : accepted a7 (confidence=None)
+[ 110] trimmed_mean   score= 0.6209 origin=baseline iters=3 stop=agent_accepted
+         TEST  smape=0.1009  rmse=13.8069  pocid=28.57  mape=0.0952
+         FORECAST [108.453, 108.312, 106.183, 103.046, 109.003, 106.941, 106.877, 106.346]
+         PROVENANCE tools=2 evaluate_calls=0 pool=7 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.008884)
+--------------------------------------------------------------------------
+done in 1336.7s | ok: 111 | failed: 0
+agent summary: ./timeseries/mestrado/resultados/orchestrator_react_v2_medium/agent_summary.json
+
+DATASET SUMMARY over 111 series (mean across series):
+  this run   smape=0.1157  rmse=18.2369  pocid=46.07  mape=0.1208  mae=14.9358
+  mean       smape=0.1199  rmse=18.8837  pocid=44.53  mape=0.1241  <- this run is better
+  median     smape=0.1201  rmse=18.6626  pocid=46.20  mape=0.1238  <- this run is better
+  dba        smape=0.1226  rmse=19.3352  pocid=46.46  mape=0.1265  <- this run is better
+  ADE        smape=0.1178  rmse=18.5121  pocid=45.05  mape=0.1219  <- this run is better
+  FFORMA     smape=0.1197  rmse=18.8493  pocid=44.66  mape=0.1239  <- this run is better
+  strategy chosen by the agent in 7/111 series
+  selection verdict: {'indistinguishable': 86, 'separated': 25}
+csv: ./timeseries/mestrado/resultados/orchestrator_react_v2_medium/NN5_WEEKLY_DATASET.csv
+artifacts: ./timeseries/mestrado/resultados/orchestrator_react_v2_medium/llm_artifacts/NN5_WEEKLY_DATASET
