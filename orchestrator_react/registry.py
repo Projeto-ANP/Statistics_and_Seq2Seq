@@ -79,10 +79,12 @@ CATALOG_V2_WITHHELD: tuple = (
     "sanity_check", "list_attempts",
 )
 
-#: Per-horizon and forward-selection weighting recipes. Exposed by default
-#: (`config.extra_actions=False` hides them for the ten-action ablation): an
-#: extra action can only add candidates, and the applied strategy is always the
-#: best-scoring one of the history, so the seeded floor still protects the result.
+#: Per-horizon and forward-selection weighting recipes. Exposed by default as
+#: agent options (`config.extra_actions=False` hides them for the ten-entry
+#: ablation): the offline battery in `aprovacao_solida/07_novas_combinacoes`
+#: rejected them as forced picks against the floor, so what they add is
+#: diversity for the agent to choose from per series, not candidates adopted
+#: into the floor.
 EXTRA_ACTIONS: tuple = (
     "weights_best_per_horizon",
     "weights_topk_per_horizon",

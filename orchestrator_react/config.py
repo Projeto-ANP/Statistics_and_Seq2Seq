@@ -110,11 +110,12 @@ class ReactConfig:
     #:
     #: `extra_actions` additionally exposes the recipes tested offline in
     #: `aprovacao_solida/07_novas_combinacoes`: `weights_best_per_horizon`,
-    #: `weights_topk_per_horizon` and `weights_forward`. On by default: an extra
-    #: action can only add candidates, and the applied strategy is always the
-    #: best-scoring one of the history, so the seed floor still protects the
-    #: result. The CLI switch is `--no-extra-actions`, which restores the
-    #: ten-action catalog for the ablation.
+    #: `weights_topk_per_horizon` and `weights_forward`. On by default as agent
+    #: options: the offline battery rejected them as forced picks (validation
+    #: selects them, the test does not confirm), so what they add is pool and
+    #: weighting diversity for the agent to choose per series, not a new floor.
+    #: The CLI switch is `--no-extra-actions`, which restores the ten-entry
+    #: catalog for the ablation.
     #: RESEARCH: tool selection degrades as the catalog grows, and overlapping
     #: or ambiguous tools make it worse; fewer, well-described actions are
     #: easier for local models to choose from.

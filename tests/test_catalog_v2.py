@@ -51,7 +51,7 @@ def test_v2_catalog_keeps_the_core_actions_and_accept():
 def test_extra_actions_are_on_by_default_and_can_be_disabled():
     cfg = ReactConfig()
     cfg.catalog_v2 = True
-    assert cfg.extra_actions  # on by default: extra candidates cannot hurt the floor
+    assert cfg.extra_actions  # on by default by decision: agent options, not floor entries
     base = set(R.tool_names(R.withheld_tools(cfg, 3)))
     assert set(R.EXTRA_ACTIONS) <= base
     cfg.extra_actions = False

@@ -21,6 +21,10 @@ Uso:
     cd ~/Statistics_and_Seq2Seq
     nohup python3 aprovacao_solida/07_novas_combinacoes/run_new_combos.py \\
         > logs/new_combos.log 2>&1 &
+
+A saida e gravada por dataset, nao acumulada em memoria ate o fim. Com
+`--windows-out` o script tambem salva o score de cada candidato em cada janela
+de validacao, usado nas analises de consistencia entre janelas.
 """
 
 from __future__ import annotations
@@ -51,6 +55,17 @@ from orchestrator_react.selection import PoolRecipe, forward_indices  # noqa: E4
 from orchestrator_react.state import FULL_POOL  # noqa: E402
 from orchestrator_react.weighting import per_model_error, WeightsRecipe  # noqa: E402
 from run_tsf_orchestrator import DEFAULT_MODELS  # noqa: E402
+
+
+def _append_csv(path, frame):
+    """Grava por dataset, com cabecalho na primeira escrita.
+
+    O script salva a cada dataset em vez de acumular tudo em memoria: uma
+    falha no meio do run perde apenas o dataset corrente.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    header = not (os.path.isfile(path) and os.path.getsize(path) > 0)
+    frame.to_csv(path, sep=";", index=False, mode="a", header=header)
 
 
 def _label(spec):
@@ -124,13 +139,16 @@ def main(argv=None):
     p.add_argument("--no-source", action="store_true")
     p.add_argument("--score-preset", default="balanced")
     p.add_argument("--out", default="outputs/resultados/aprovacao_solida/novas_combinacoes.csv")
+    p.add_argument("--windows-out", default=None)
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
     models = list(args.models) if args.models else list(DEFAULT_MODELS)
     cfg = v5_config(no_pooled=args.no_pooled_meta_model, name="new_combos")
     cfg.score_preset = args.score_preset
-    all_rows = []
+    for path in [p for p in (args.out, args.windows_out) if p]:
+        if os.path.isfile(path):
+            os.remove(path)
 
     for dataset in args.datasets:
         frames, n_series, source = load_context(
@@ -151,6 +169,7 @@ def main(argv=None):
             )
 
         rows = []
+        ds_window_rows = []
         for idx in todo:
             try:
                 ingested = ingest_mod.load_series(
@@ -175,6 +194,15 @@ def main(argv=None):
                     "smape": floor_m["smape"], "pocid": floor_m["pocid"], "rmse": floor_m["rmse"],
                     "spec": json.dumps(floor.spec, ensure_ascii=False, default=str),
                 })
+                if args.windows_out is not None:
+                    for w, window in enumerate(floor.per_window):
+                        ds_window_rows.append({
+                            "dataset": dataset, "dataset_index": int(idx), "method": "floor",
+                            "window": w,
+                            "score": float(floor.per_window_scores[w]) if w < len(floor.per_window_scores) else np.nan,
+                            "smape": window.get("SMAPE"), "rmse": window.get("RMSE"),
+                            "pocid": window.get("POCID"),
+                        })
 
                 cand_preview = []
                 for name, attempt in candidates:
@@ -187,6 +215,15 @@ def main(argv=None):
                         "smape": m["smape"], "pocid": m["pocid"], "rmse": m["rmse"],
                         "spec": json.dumps(attempt.spec, ensure_ascii=False, default=str),
                     })
+                    if args.windows_out is not None:
+                        for w, window in enumerate(attempt.per_window):
+                            ds_window_rows.append({
+                                "dataset": dataset, "dataset_index": int(idx), "method": name,
+                                "window": w,
+                                "score": float(attempt.per_window_scores[w]) if w < len(attempt.per_window_scores) else np.nan,
+                                "smape": window.get("SMAPE"), "rmse": window.get("RMSE"),
+                                "pocid": window.get("POCID"),
+                            })
                     cand_preview.append(f"{name}={m['smape']:.4f}")
                 if not args.quiet:
                     print(
@@ -198,7 +235,9 @@ def main(argv=None):
                 print(f"[{dataset} {idx}] FALHOU: {type(exc).__name__}: {exc}", flush=True)
 
         if rows:
-            all_rows.extend(rows)
+            _append_csv(args.out, pd.DataFrame(rows))
+            if args.windows_out is not None and ds_window_rows:
+                _append_csv(args.windows_out, pd.DataFrame(ds_window_rows))
             sub = pd.DataFrame(rows)
             print(f"\n=== {dataset}: n={sub['dataset_index'].nunique()} series ===")
             floor = sub[sub.method == "floor"].set_index("dataset_index")["smape"]
@@ -216,10 +255,9 @@ def main(argv=None):
                     f"{int(s.beats_floor_validation.sum())}/{len(s)}"
                 )
 
-    if all_rows:
-        os.makedirs(os.path.dirname(args.out), exist_ok=True)
-        pd.DataFrame(all_rows).to_csv(args.out, sep=";", index=False)
-        print(f"\nsalvo em: {args.out}")
+    print(f"\nsalvo incrementalmente em: {args.out}")
+    if args.windows_out is not None:
+        print(f"janelas salvas incrementalmente em: {args.windows_out}")
     return 0
 
 

@@ -798,9 +798,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-extra-actions", dest="extra_actions", action="store_false",
                    default=True,
                    help="ablation: hide the per-horizon and forward-selection recipes, "
-                        "restoring the ten-action catalog (they are ON by default: an "
-                        "extra action only adds candidates and the applied strategy is "
-                        "always the best of the history)")
+                        "restoring the ten-entry catalog (they are ON by default as agent "
+                        "options: the offline battery rejected them as forced picks, so "
+                        "what they add is diversity for the agent to choose per series)")
     p.add_argument("--reasoning", default=None,
                    metavar="LEVEL",
                    help="gpt-oss reasoning: low|medium|high, or off. Unset = the "
