@@ -1,0 +1,32 @@
+dataset      : ANP_MONTHLY
+reading from : ./timeseries/mestrado/resultados
+writing to   : ./timeseries/mestrado/resultados/orchestrator_react_v2_medium_x1_muse-glimmer-30b
+source       : mes_11_venda_mensal.tsf
+models       : 19
+ablation     : v2_medium_x1_muse-glimmer-30b-04b3358113
+pool mode    : full | windows: 3 | backtest: expanding
+final        : argmin | stable seeds: True | pooled: True/fforma seeded | card: True (min 20 series) | budget: 12 iters, patience 4
+protocol     : nested_selection=True | min_windows_for_ols=5 (weights_ols WITHHELD this run)
+llm          : combinator=muse-glimmer:30b reasoning=medium diagnostician=none reporter=none
+series       : all
+--------------------------------------------------------------------------
+llm preflight: OK ('OK')
+--------------------------------------------------------------------------
+/home/lucas.castro/.conda/envs/agno/lib/python3.11/site-packages/tslearn/bases/bases.py:15: UserWarning: h5py not installed, hdf5 features will not be supported.
+Install h5py to use hdf5 features: http://docs.h5py.org/
+  warn(h5py_msg)
+[   0]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   0]     think: ranking is unstable across windows and error correlation is high with two large redundant groups, so pruning correlated models to keep one representative per group should reduce redundancy before c...
+[   0]     obs  : pool pool4 19->12 models, dropped ['ARIMA', 'CWT_rf', 'FT_rf', 'NaiveMovingAverage']
+[   0]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "pruned pool reduces correlated error groups; median is...
+[   0]     think: the series has strong trend, unstable ranking and correlated errors, so reducing redundancy should help a robust combiner; the current leader DBA uses the full pool, so testing a robust median on t...
+[   0]     obs  : rank 8/11 score=0.7497 rmse=2027.6165, leader is a3 (dba)
+[   0]   iter 3 | select_top_k {"k": 3, "metric": "rmse"}
+[   0]     think: ranking is unstable across windows and several models are highly correlated, so a small robust pool of the top-performing models may reduce noise from weaker and redundant forecasts.
+[   0]     obs  : pool pool5 k=3 ['ONLY_DWT_rf', 'rf', 'ARIMA']
+[   0]   iter 4 | evaluate_strategy {"combine": "median", "pool": "pool5", "rationale": "top-3 RMSE models form a compact pool; median provides...
+[   0]     think: the top-3 RMSE models are all in the same correlated-error group, so a small robust pool may reduce noise from the full set while keeping the strongest signals; a median should be robust to the uns...
+[   0]     obs  : rank 12/12 score=0.77 rmse=2074.6168, leader is a3 (dba)
+[   0]   iter 5 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2, "rationale": "pruned pool reduces correlated ...
+[   0]     think: the pruned pool pool4 removes highly correlated error groups, and with unstable ranking a trimmed mean should be more robust than a plain median or fitted weights.
+[   0]     obs  : rank 13/13 score=0.8176 rmse=2120.7791, leader is a3 (dba)

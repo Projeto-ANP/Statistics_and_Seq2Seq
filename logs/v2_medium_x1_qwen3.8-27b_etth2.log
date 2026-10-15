@@ -1,0 +1,128 @@
+dataset      : ETTH2
+reading from : ./timeseries/mestrado/resultados
+writing to   : ./timeseries/mestrado/resultados/orchestrator_react_v2_medium_x1_qwen3.8-27b
+source       : ETTH2.tsf
+models       : 19
+ablation     : v2_medium_x1_qwen3.8-27b-58b166d2c0
+pool mode    : full | windows: 3 | backtest: expanding
+final        : argmin | stable seeds: True | pooled: True/fforma seeded | card: True (min 20 series) | budget: 12 iters, patience 4
+protocol     : nested_selection=True | min_windows_for_ols=5 (weights_ols WITHHELD this run)
+llm          : combinator=qwen3.8:27b reasoning=medium diagnostician=none reporter=none
+series       : all
+--------------------------------------------------------------------------
+llm preflight: OK ('OK')
+--------------------------------------------------------------------------
+/home/lucas.castro/.conda/envs/agno/lib/python3.11/site-packages/tslearn/bases/bases.py:15: UserWarning: h5py not installed, hdf5 features will not be supported.
+Install h5py to use hdf5 features: http://docs.h5py.org/
+  warn(h5py_msg)
+[   0]   iter 1 | accept {"attempt_id": "a7", "confidence": 0.82, "justification": "The series is trend-dominated (strength 0.85) wi...
+[   0]     think: The leader is a seeded baseline (trimmed_mean on pool2) and the verdict is 'indistinguishable' — the runner-up differs by only 0.00048. With a trend-dominated series, moderate ranking stability, an...
+[   0]     obs  : accepted a7 (confidence=0.82)
+[   0] trimmed_mean   score=-0.1136 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.1310  rmse=5.4826  pocid=56.52  mape=0.1236
+         FORECAST [37.831, 38.008, 38.032, 37.483, 36.722, 35.531, 34.226, 33.04, 32.11, 31.556, 31.46, 31.264, 31.395, 32.029, 32.46, 33.173, 33.845, 34.359, 34.719, 35.096, 35.336, 35.566, 35.653, 35.764]
+         PROVENANCE tools=0 evaluate_calls=0 pool=7 effective=5 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.007004)
+[   1]   iter 1 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.3}
+[   1]     think: The leader (median, full pool) is separated from the runner-up, but I haven't tested any weighted strategy yet. The diagnosis hints at "weighted" combination, and the top-5 pool has clear error dif...
+[   1]     obs  : handle w1 mode=inverse_error active=5/5 conc=0.0
+[   1]   iter 2 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[   1]     think: The leader (full-pool median) is "separated" over the runner-up, but I want to test whether pruning correlated-error groups first and then taking a median of the more diverse subset can improve fur...
+[   1]     obs  : pool pool4 19->9 models, dropped ['THETA', 'rf', 'DWT_rf', 'FT_rf']
+[   1]   iter 3 | weights_inverse_error {"pool": "pool4", "metric": "rmse", "shrinkage": 0.2}
+[   1]     think: The leader (median of 19) is "separated" but it's a seed baseline. The series is trend-dominated with high predictability, and the pruned pool4 removes redundant and catastrophic models. A weighted...
+[   1]     obs  : handle w2 mode=inverse_error active=9/9 conc=0.022
+[   1]   iter 4 | evaluate_strategy {"weights": "w2", "combine": "weighted", "pool": "pool4", "rationale": "inverse-error weights on pruned poo...
+[   1]     think: The leader (median of full pool) has a "separated" margin, but I have a pruned pool with inverse-error weights (w2) that I haven't evaluated yet. Let me test whether weighted combination on the red...
+[   1]     obs  : rank 10/10 score=0.7306 rmse=106418227772.8155, leader is a2 (median)
+[   1]   iter 5 | select_top_k {"k": 3, "metric": "rmse"}
+[   1]     think: The leader (median of 19) wins on composite score but the top-5 mean (a4) has lower RMSE on every window. The top 3 models (ONLY_CWT_rf, ONLY_FT_rf, ONLY_FT_catboost) span two correlation groups an...
+[   1]     obs  : pool pool5 k=3 ['ONLY_CWT_rf', 'ONLY_FT_rf', 'ONLY_FT_catboost']
+[   1]   iter 6 | evaluate_strategy {"combine": "median", "pool": "pool5", "rationale": "median of top-3 models: robust to the one catastrophic...
+[   1]     think: The leader (median of 19) is a baseline with a "separated" verdict, but I can still try to improve. The top-3 pool (pool5) contains the best models and avoids the catastrophic outlier. A median of ...
+[   1]     obs  : rank 8/11 score=-0.0797 rmse=1.8642, leader is a2 (median)
+[   1]   iter 7 | weights_topk_per_horizon {"pool": "pool1", "k": 3, "metric": "rmse"}
+[   1]     think: The leader is a seed (median full pool) with a "separated" verdict, and none of my 11 attempts have beaten it. The best model changes across windows (rf, ONLY_CWT_rf, ONLY_FT_rf), suggesting per-ho...
+[   1]     obs  : handle w3 mode=topk_mean_per_horizon active=5/5 conc=0.011
+[   1]   iter 8 | evaluate_strategy {"weights": "w3", "combine": "weighted", "pool": "pool1", "rationale": "unstable ranking across windows (rf...
+[   1]     think: I just created w3 (topk_per_horizon on pool1) to test whether per-horizon model selection helps given the unstable ranking (different best model per window). Let me evaluate it against the leader.
+[   1]     obs  : rank 2/12 score=-0.0977 rmse=1.7638, leader is a2 (median)
+[   1]   iter 9 | accept {"attempt_id": "a2", "confidence": 0.82, "justification": "The series is strongly trend-dominated (trend_st...
+[   1]     think: The leader (full-pool median, a seed) has a "separated" margin over my best attempt (a12, weighted topk_per_horizon on pool1). The series is trend-dominated with moderate ranking stability and heav...
+[   1]     obs  : accepted a2 (confidence=0.82)
+[   1] median         score=-0.1019 origin=baseline iters=9 stop=agent_accepted
+         TEST  smape=0.1395  rmse=1.7078  pocid=60.87  mape=0.1370
+         FORECAST [10.404, 10.675, 10.642, 10.486, 10.408, 9.969, 10.147, 10.136, 10.006, 9.822, 9.782, 9.771, 9.116, 9.684, 9.643, 10.028, 10.203, 10.45, 10.532, 10.61, 10.38, 10.378, 10.183, 9.86]
+         PROVENANCE tools=8 evaluate_calls=3 pool=19 effective=1 ok=True
+[   2]   iter 1 | evaluate_strategy {"combine": "best_single", "model": "ONLY_CWT_rf", "rationale": "ONLY_CWT_rf dominates all 3 windows; selec...
+[   2]     think: ONLY_CWT_rf is the best model in all 3 validation windows and the diagnosis favors a "selective" combination. The median of 19 models includes many correlated weaker models that dilute the signal. ...
+[   2]     obs  : rank 7/10 score=-0.1081 rmse=2.7202, leader is a2 (median)
+[   2]   iter 2 | evaluate_strategy {"combine": "median", "pool": "pool1", "rationale": "median of top-5 selective pool: robust to outliers whi...
+[   2]     think: The leader (median of 19) wins partly because it's robust to the catastrophic model, but 11 of 19 models are in one correlated group. A median of just the top-5 pool would be more selective (focusi...
+[   2]     obs  : rank 3/11 score=-0.1153 rmse=3.1784, leader is a2 (median)
+[   2]   iter 3 | select_forward {"max_steps": 20, "metric": "rmse"}
+[   2]     think: The leader is the full-pool median (19 models) with a "separated" margin. The diagnosis hints at "selective" combination and there are 7 correlated-error groups with only 4 independent. Forward sel...
+[   2]     obs  : pool pool4 k=2 ['ARIMA', 'ONLY_CWT_rf']
+[   2]   iter 4 | evaluate_strategy {"combine": "mean", "pool": "pool4", "rationale": "forward-selected 2-model pair (ARIMA + ONLY_CWT_rf) with...
+[   2]     think: I just created pool4 (ARIMA + ONLY_CWT_rf) via forward selection. These are the two best models with complementary error structures (linear vs. tree-based). Let me test a mean of this pair to see i...
+[   2]     obs  : rank 1/12 score=-0.1236 rmse=2.3637 (best so far)
+[   2]   iter 5 | accept {"attempt_id": "a12", "confidence": 0.9, "justification": "The series is trend-dominated with moderate seas...
+[   2]     think: The leader a12 (mean of ARIMA + ONLY_CWT_rf) leads with a "separated" margin of 0.045 over the runner-up, and it was my own agent strategy. The two models are complementary (linear vs. tree-based),...
+[   2]     obs  : accepted a12 (confidence=0.9)
+[   2] mean           score=-0.1236 origin=agent    iters=5 stop=agent_accepted
+         TEST  smape=0.0807  rmse=4.6228  pocid=69.57  mape=0.0768
+         FORECAST [51.372, 51.7, 50.877, 48.308, 47.202, 44.99, 44.102, 43.54, 42.121, 39.862, 37.582, 39.909, 37.966, 41.999, 42.254, 44.777, 46.362, 47.419, 46.47, 46.637, 49.472, 49.597, 49.123, 47.18]
+         PROVENANCE tools=4 evaluate_calls=3 pool=2 effective=2 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.0)
+[   3]   iter 1 | weights_inverse_error {"pool": "pool1", "metric": "rmse", "shrinkage": 0.3}
+[   3]     think: The diagnosis suggests a weighted combination, and the top 5 models (pool1) have clearly differentiated errors. Inverse-error weighting should favor the best CWT variants while still benefiting fro...
+[   3]     obs  : handle w1 mode=inverse_error active=5/5 conc=0.0
+[   3]   iter 2 | evaluate_strategy {"weights": "w1", "combine": "weighted", "rationale": "trend-dominated series with clear top-5 models; inve...
+[   3]     think: I've already created w1 (inverse_error weights on pool1 with shrinkage 0.3). Let me evaluate it to see if a weighted combination of the top-5 models can beat the trimmed_mean leader, especially giv...
+[   3]     obs  : rank 8/10 score=0.6395 rmse=80719732277.7859, leader is a7 (trimmed_mean pool=pool2 trim=0.2)
+[   3]   iter 3 | evaluate_strategy {"combine": "best_single", "model": "ONLY_CWT_rf", "rationale": "ONLY_CWT_rf is rank 1 overall and best in ...
+[   3]     think: The leader is a baseline (trimmed_mean pool2) with a "separated" verdict, so I should try to beat it. The top model ONLY_CWT_rf is rank 1 overall and the series is trend-dominated where a single st...
+[   3]     obs  : rank 1/11 score=-0.1173 rmse=1.3372 (best so far)
+[   3]   iter 4 | accept {"attempt_id": "a11", "confidence": 0.92, "justification": "ONLY_CWT_rf dominates on both trend (0.86) and ...
+[   3]     think: The leader "best_single ONLY_CWT_rf" has a 'separated' margin over the runner-up, and the series characteristics strongly support this: ONLY_CWT_rf is both the trend champion (0.86) and seasonality...
+[   3]     obs  : accepted a11 (confidence=0.92)
+[   3] best_single    score=-0.1173 origin=agent    iters=4 stop=agent_accepted
+         TEST  smape=0.1144  rmse=1.5346  pocid=56.52  mape=0.1113
+         FORECAST [10.536, 10.775, 11.144, 10.542, 10.763, 10.235, 10.359, 10.151, 10.315, 10.246, 10.014, 9.91, 9.695, 10.584, 10.425, 10.622, 10.715, 10.875, 11.03, 11.308, 11.143, 11.008, 10.686, 10.055]
+         PROVENANCE tools=3 evaluate_calls=2 pool=1 effective=1 ok=True
+[   4]   iter 1 | accept {"attempt_id": "a2", "confidence": 0.72, "justification": "The series is strongly trend-dominated (trend st...
+[   4]     think: The leader is the median of the full pool (a seed baseline), and the verdict is "indistinguishable" — the runner-up is not statistically better. Given the series has a strong trend with moderate se...
+[   4]     obs  : accepted a2 (confidence=0.72)
+[   4] median         score=-0.0752 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0793  rmse=1.0306  pocid=34.78  mape=0.0811
+         FORECAST [-9.793, -9.884, -9.802, -9.696, -9.738, -9.661, -9.766, -9.812, -9.858, -9.842, -9.839, -10.048, -10.125, -10.271, -10.33, -10.321, -10.302, -10.199, -10.266, -10.151, -10.186, -10.125, -9.977, -9.923]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[   5]   iter 1 | accept {"attempt_id": "a2", "confidence": 0.85, "justification": "The series is trend-dominated (strength 0.98) wi...
+[   5]     think: The leader is the median of all 19 models (a seeded baseline), and the runner-up margin is "indistinguishable" — meaning no tested strategy is statistically better. The median naturally handles the...
+[   5]     obs  : accepted a2 (confidence=0.85)
+[   5] median         score=-0.0041 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.6525  rmse=0.7116  pocid=43.48  mape=1271662993922632.2500
+         FORECAST [-1.428, -1.26, -1.125, -1.126, -1.098, -1.053, -1.148, -1.11, -1.025, -1.07, -1.116, -1.135, -1.187, -1.389, -1.459, -1.595, -1.562, -1.501, -1.484, -1.465, -1.436, -1.426, -1.403, -1.352]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+[   6]   iter 1 | accept {"attempt_id": "a2", "confidence": 0.82, "justification": "The series has strong trend (0.96) and moderate ...
+[   6]     think: The leader is a seeded baseline (median of full pool) and the runner-up margin is statistically indistinguishable. The series has unstable rankings, high error correlation, and only 3 validation wi...
+[   6]     obs  : accepted a2 (confidence=0.82)
+[   6] median         score= 0.4724 origin=baseline iters=1 stop=agent_accepted
+         TEST  smape=0.0359  rmse=1.7847  pocid=73.91  mape=0.0355
+         FORECAST [44.734, 43.141, 41.767, 41.135, 40.803, 40.415, 39.926, 39.45, 38.98, 38.355, 37.869, 37.591, 37.968, 39.277, 41.775, 44.223, 46.713, 48.328, 49.511, 50.18, 49.815, 48.964, 47.65, 46.204]
+         PROVENANCE tools=0 evaluate_calls=0 pool=19 effective=1 ok=True
+--------------------------------------------------------------------------
+done in 236.1s | ok: 7 | failed: 0
+agent summary: ./timeseries/mestrado/resultados/orchestrator_react_v2_medium_x1_qwen3.8-27b/agent_summary.json
+
+DATASET SUMMARY over 7 series (mean across series):
+  this run   smape=0.1762  rmse=2.4107  pocid=56.52  mape=181666141988947.5312  mae=2.0339
+  mean       smape=1.7197  rmse=99996379087.4691  pocid=49.69  mape=20879052073827343269888.0000  <- this run is better
+  median     smape=0.1815  rmse=2.5568  pocid=56.52  mape=181666141988947.5312  <- this run is better
+  dba        smape=1.7257  rmse=151967111938.0612  pocid=52.80  mape=20879052073826667986944.0000  <- this run is better
+  ADE        smape=0.2261  rmse=2.6531  pocid=56.52  mape=299065117726769.6250  <- this run is better
+  FFORMA     smape=0.2035  rmse=2.5436  pocid=56.52  mape=269479043127657.0625  <- this run is better
+  strategy chosen by the agent in 2/7 series
+  selection verdict: {'indistinguishable': 4, 'separated': 3}
+csv: ./timeseries/mestrado/resultados/orchestrator_react_v2_medium_x1_qwen3.8-27b/ETTH2.csv
+artifacts: ./timeseries/mestrado/resultados/orchestrator_react_v2_medium_x1_qwen3.8-27b/llm_artifacts/ETTH2
