@@ -58,9 +58,14 @@ class LLMRole:
     #: response empty every time (ollama/ollama#11867). The three-line text contract
     #: exists precisely to avoid depending on structured-output support.
     #:
-    #: `False` is "off"; the intensity strings "low"/"medium"/"high" cap the
-    #: reasoning budget (gpt-oss only). Both are meaningful and distinct to Ollama —
-    #: `bool("low") is True`, which is NOT the same as "low".
+    #: Booleans are the universal control: `False` is "off" and `True` is "on" for
+    #: models that support thinking. Any other string is a named level, defined per
+    #: model and discovered with `/api/show`: gpt-oss low/medium/high (default
+    #: medium), qwen3.8 low/medium/xhigh (default xhigh), muse-glimmer
+    #: low/medium/high/max (default high). An unsupported name falls back to the
+    #: model default inside Ollama instead of erroring, so check the level per model
+    #: before comparing runs. Booleans and strings are NOT interchangeable to
+    #: Ollama: `bool("low")` is True, which is not the same as "low".
     reasoning: Optional[Union[bool, str]] = None
 
     @property

@@ -1154,3 +1154,15 @@ def test_dba_strategy_is_reproducible_through_the_state_backtest():
     f1, _ = s1.apply_to_test({"combine": "dba", "pool": FULL_POOL})
     f2, _ = s2.apply_to_test({"combine": "dba", "pool": FULL_POOL})
     assert np.allclose(f1, f2)
+
+
+def test_parse_reasoning_normalises_booleans_and_keeps_named_levels():
+    import run_tsf_orchestrator as R
+
+    assert R.parse_reasoning(None) is None
+    for off in ("off", "false", "no", "OFF"):
+        assert R.parse_reasoning(off) is False
+    for on in ("on", "true", "yes", "ON"):
+        assert R.parse_reasoning(on) is True
+    assert R.parse_reasoning("Low") == "low"
+    assert R.parse_reasoning("xhigh") == "xhigh"
