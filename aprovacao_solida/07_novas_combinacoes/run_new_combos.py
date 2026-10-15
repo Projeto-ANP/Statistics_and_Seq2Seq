@@ -24,7 +24,9 @@ Uso:
 
 A saida e gravada por dataset, nao acumulada em memoria ate o fim. Com
 `--windows-out` o script tambem salva o score de cada candidato em cada janela
-de validacao, usado nas analises de consistencia entre janelas.
+de validacao, usado nas analises de consistencia entre janelas. Com
+`--ensemble-m` avalia ainda a media (igual e softmax) das top-m candidatas por
+validacao, como o `final_strategy=ensemble` do harness.
 """
 
 from __future__ import annotations
@@ -138,14 +140,23 @@ def main(argv=None):
     p.add_argument("--no-pooled-meta-model", action="store_true")
     p.add_argument("--no-source", action="store_true")
     p.add_argument("--score-preset", default="balanced")
+    p.add_argument("--windows", type=int, default=None,
+                   help="numero de janelas de validacao (default: 3, o protocolo da "
+                        "bateria). O ANP tem 31 origens por serie, entao aceita ate 30; "
+                        "NN5/M4/ETT tem so 4 origens (3 validacao + 1 teste)")
     p.add_argument("--out", default="outputs/resultados/aprovacao_solida/novas_combinacoes.csv")
     p.add_argument("--windows-out", default=None)
+    p.add_argument("--ensemble-m", nargs="+", type=int, default=None,
+                   help="avalia tambem a media (igual e softmax, eta=5) das top-m "
+                        "candidatas por validacao, como o final_strategy=ensemble")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
     models = list(args.models) if args.models else list(DEFAULT_MODELS)
     cfg = v5_config(no_pooled=args.no_pooled_meta_model, name="new_combos")
     cfg.score_preset = args.score_preset
+    if args.windows is not None:
+        cfg.n_validation_windows = int(args.windows)
     for path in [p for p in (args.out, args.windows_out) if p]:
         if os.path.isfile(path):
             os.remove(path)
@@ -188,6 +199,8 @@ def main(argv=None):
 
                 fc, _ = state.apply_to_test(floor.spec)
                 floor_m = compute_metrics(fc, ingested.test_values)
+                fcs = {"floor": np.asarray(fc, dtype=float)}
+                scores = {"floor": float(floor.score)}
                 rows.append({
                     "dataset": dataset, "dataset_index": int(idx), "method": "floor",
                     "val_score": float(floor.score), "beats_floor_validation": 0,
@@ -207,6 +220,8 @@ def main(argv=None):
                 cand_preview = []
                 for name, attempt in candidates:
                     fc, _ = state.apply_to_test(attempt.spec)
+                    fcs[name] = np.asarray(fc, dtype=float)
+                    scores[name] = float(attempt.score)
                     m = compute_metrics(fc, ingested.test_values)
                     rows.append({
                         "dataset": dataset, "dataset_index": int(idx), "method": name,
@@ -225,6 +240,33 @@ def main(argv=None):
                                 "pocid": window.get("POCID"),
                             })
                     cand_preview.append(f"{name}={m['smape']:.4f}")
+
+                for m in (args.ensemble_m or []):
+                    top = sorted(scores, key=lambda k: scores[k])[: max(1, int(m))]
+                    stacked = np.vstack([fcs[k] for k in top])
+                    sc = np.array([scores[k] for k in top], dtype=float)
+                    scale = float(np.median(sc))
+                    if not np.isfinite(scale) or scale <= 0:
+                        scale = 1.0
+                    z = -5.0 * (sc / scale)
+                    z -= z.max()
+                    w = np.exp(z)
+                    w = w / w.sum() if w.sum() > 0 else np.ones(len(top)) / len(top)
+                    for label, forecast in (
+                        ("equal", stacked.mean(axis=0)),
+                        ("softmax", np.tensordot(w, stacked, axes=1)),
+                    ):
+                        em = compute_metrics(forecast, ingested.test_values)
+                        rows.append({
+                            "dataset": dataset, "dataset_index": int(idx),
+                            "method": f"ens_{label}_m{int(m)}",
+                            "val_score": float(np.mean(sc)),
+                            "beats_floor_validation": int(float(np.mean(sc)) < floor.score),
+                            "smape": em["smape"], "pocid": em["pocid"], "rmse": em["rmse"],
+                            "spec": json.dumps({"members": top, "weights": [float(x) for x in w]}
+                                               if label == "softmax" else {"members": top}),
+                        })
+                        cand_preview.append(f"ens_{label}_m{int(m)}={em['smape']:.4f}")
                 if not args.quiet:
                     print(
                         f"[{dataset} {idx:>4}] floor={floor_m['smape']:.4f} | "

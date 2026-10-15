@@ -12,6 +12,7 @@ Contract for every tool here:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -768,6 +769,97 @@ def combine_best_single(state: ReactState, model_id: str) -> Dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+#: Weights method names the agent may pass straight into `evaluate_strategy`,
+#: with the aliases it reaches for in practice (`inverse_error`, `forward`, ...).
+_WEIGHTS_METHOD_TOOLS: Dict[str, Any] = {
+    "inverse": weights_inverse_error,
+    "inverse_error": weights_inverse_error,
+    "weights_inverse_error": weights_inverse_error,
+    "softmax": weights_softmax_neg_error,
+    "softmax_neg_error": weights_softmax_neg_error,
+    "weights_softmax_neg_error": weights_softmax_neg_error,
+    "trend": weights_error_trend,
+    "error_trend": weights_error_trend,
+    "weights_error_trend": weights_error_trend,
+    "ols": weights_ols,
+    "weights_ols": weights_ols,
+    "feature": weights_feature_based,
+    "feature_based": weights_feature_based,
+    "weights_feature_based": weights_feature_based,
+    "pooled": weights_pooled_meta_model,
+    "pooled_meta_model": weights_pooled_meta_model,
+    "weights_pooled_meta_model": weights_pooled_meta_model,
+    "meta": weights_meta_model,
+    "meta_model": weights_meta_model,
+    "weights_meta_model": weights_meta_model,
+    "best_per_horizon": weights_best_per_horizon,
+    "weights_best_per_horizon": weights_best_per_horizon,
+    "topk_mean_per_horizon": weights_topk_per_horizon,
+    "topk_per_horizon": weights_topk_per_horizon,
+    "weights_topk_per_horizon": weights_topk_per_horizon,
+    "forward": weights_forward,
+    "forward_selection": weights_forward,
+    "weights_forward": weights_forward,
+}
+_WEIGHT_METHOD_NAMES = tuple(sorted(_WEIGHTS_METHOD_TOOLS))
+
+
+def _resolve_weights_shorthand(state: ReactState, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Translates the weight shorthands the agent writes into a valid spec.
+
+    Measured on the v2 run: 270 of the failed `evaluate_strategy` calls were one
+    of three near-misses, each costing an iteration and teaching nothing. This
+    tool is already the permissive one, so it accepts what the model meant:
+
+    * `weights` names a METHOD instead of a handle (`"inverse_error"`), computed
+      on the pool the strategy asks for;
+    * `weights` reuses a handle computed on ANOTHER pool: the same recipe is
+      re-registered for the requested pool and re-fit under the protocol;
+    * `combine` is the weights tool itself (`"weights_inverse_error"`,
+      `"weights"`), read as `combine="weighted"` plus that method.
+
+    Unknown names still raise, now listing both the handles and the methods.
+    """
+    combine = str(spec.get("combine", "")).strip()
+    low = combine.lower()
+    if low == "weights":
+        spec["combine"] = "weighted"
+    elif low.startswith("weights_") and low not in _WEIGHTS_METHOD_TOOLS:
+        stripped = low[len("weights_"):]
+        if stripped in _WEIGHTS_METHOD_TOOLS:
+            spec["combine"] = "weighted"
+            spec.setdefault("weights", stripped)
+    elif low in _WEIGHTS_METHOD_TOOLS:
+        spec["combine"] = "weighted"
+        spec.setdefault("weights", low)
+
+    if str(spec.get("combine", "")).lower() != "weighted":
+        return spec
+
+    pool = str(spec.get("pool") or FULL_POOL)
+    raw = spec.get("weights")
+    if raw is None:
+        raise ValueError(
+            "combine='weighted' needs 'weights' as a handle or a method name; "
+            f"valid methods: {list(_WEIGHT_METHOD_NAMES)}"
+        )
+    handle = str(raw).strip()
+    if handle in state.weights:
+        recipe = state.get_weights_recipe(handle)
+        if recipe.pool_handle != pool:
+            spec["weights"] = state.register_weights(replace(recipe, pool_handle=pool))
+        return spec
+
+    tool = _WEIGHTS_METHOD_TOOLS.get(handle.lower())
+    if tool is None:
+        raise ValueError(
+            f"weights {handle!r} is neither a registered handle {sorted(state.weights)} "
+            f"nor a known method; valid methods: {list(_WEIGHT_METHOD_NAMES)}"
+        )
+    spec["weights"] = tool(state, pool=pool)["weights"]
+    return spec
+
+
 def evaluate_strategy(
     state: ReactState,
     strategy: Any = None,
@@ -788,6 +880,11 @@ def evaluate_strategy(
         {"strategy": {"combine": "weighted", "pool": "pool1", ...}} nested
         {"strategy": "weighted", "pool": "pool1", "weights": "w1"}  method + siblings
         {"strategy": <the whole dict combine_weighted returned>}    passthrough
+
+    `weights` accepts the handle from a weights tool, a method name
+    (`"inverse_error"`, `"forward"`, ...) which is computed on the strategy's own
+    pool, or a handle from another pool, which is re-fit for this one; `combine`
+    may also be the weights tool itself (`"weights_inverse_error"`).
 
     So `combine_*` is optional sugar: this one call both assembles and scores.
     The strategy enters the history with its rationale; re-submitting one already
@@ -824,6 +921,7 @@ def evaluate_strategy(
             "no combination method given. Pass either "
             '{"combine": "mean", "pool": "pool_full"} or the object a combine_* tool returned'
         )
+    spec = _resolve_weights_shorthand(state, spec)
     strategy = spec
 
     attempt, is_new = state.evaluate(

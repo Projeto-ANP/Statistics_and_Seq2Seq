@@ -1166,3 +1166,29 @@ def test_parse_reasoning_normalises_booleans_and_keeps_named_levels():
         assert R.parse_reasoning(on) is True
     assert R.parse_reasoning("Low") == "low"
     assert R.parse_reasoning("xhigh") == "xhigh"
+
+
+def test_evaluate_strategy_accepts_weights_method_and_refits_other_pool():
+    s = make_state()
+    out = T.evaluate_strategy(s, combine="weighted", pool=FULL_POOL, weights="inverse_error")
+    h = out["strategy"]["weights"]
+    assert h in s.weights
+    assert s.get_weights_recipe(h).pool_handle == FULL_POOL
+
+    pool_a = T.select_top_k(s, k=3)["pool"]
+    pool_b = T.select_top_k(s, k=4)["pool"]
+    ha = T.evaluate_strategy(s, combine="weighted", pool=pool_a, weights="inverse_error")["strategy"]["weights"]
+    out_b = T.evaluate_strategy(s, combine="weighted", pool=pool_b, weights=ha)
+    hb = out_b["strategy"]["weights"]
+    assert hb != ha
+    assert s.get_weights_recipe(hb).pool_handle == pool_b
+    assert s.get_weights_recipe(ha).pool_handle == pool_a
+
+
+def test_evaluate_strategy_accepts_weights_tool_as_combine_and_rejects_unknown():
+    s = make_state()
+    out = T.evaluate_strategy(s, combine="weights_inverse_error", pool=FULL_POOL)
+    assert s.get_weights_recipe(out["strategy"]["weights"]).pool_handle == FULL_POOL
+
+    with pytest.raises(ValueError, match="valid methods"):
+        T.evaluate_strategy(s, combine="weighted", pool=FULL_POOL, weights="not_a_method")
