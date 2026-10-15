@@ -377,11 +377,12 @@ def exec_dataset_orchestrator(
 
     cfg.combinator = _as_role(combinator_model)
     if combinator_reasoning is not None:
-        # Pass through as-is: the CLI already normalised this to `False` (off) or a
-        # lowercase intensity string ("low"/"medium"/"high"). Do NOT coerce to bool —
-        # `bool("low")` is True, which tells Ollama "reasoning on, default budget"
-        # instead of capping the budget (and keeps the harmony tool-call channel
-        # active, which is the source of the "error parsing tool call" 500s).
+        # Pass through as-is: `parse_reasoning` already normalised on/off to
+        # booleans and lowercased named levels ("low"/"medium"/"xhigh"/...), whose
+        # accepted values are model-defined. Do NOT coerce to bool — `bool("low")`
+        # is True, which tells Ollama "reasoning on, default budget" instead of
+        # capping the budget (and keeps the harmony tool-call channel active, which
+        # is the source of the "error parsing tool call" 500s).
         cfg.combinator.reasoning = combinator_reasoning
     cfg.diagnostician = _as_role(diagnostician_model)
     cfg.reporter = _as_role(reporter_model)
@@ -728,6 +729,26 @@ def _external_summary(outcomes: Sequence[Any]) -> Dict[str, Dict[str, float]]:
     return {name: _summarise(rows) for name, rows in collected.items() if rows}
 
 
+def parse_reasoning(value: Any) -> Any:
+    """CLI `--reasoning` to the value sent as Ollama's `think` field.
+
+    `off/false/no` become the boolean `False` and `on/true/yes` the boolean
+    `True`, which every thinking model understands. Any other string is passed
+    through as a named level (`low`, `medium`, `high`, `xhigh`, `max`, ...);
+    these are model-defined and an unsupported name falls back to the model's
+    own default inside Ollama instead of erroring. Unset stays `None` (Ollama
+    default).
+    """
+    if value is None:
+        return None
+    text = str(value).lower()
+    if text in {"off", "false", "no"}:
+        return False
+    if text in {"on", "true", "yes"}:
+        return True
+    return text
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Forecast combination with a single ReAct agent over deterministic tools.",
@@ -803,11 +824,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "what they add is diversity for the agent to choose per series)")
     p.add_argument("--reasoning", default=None,
                    metavar="LEVEL",
-                   help="gpt-oss reasoning: low|medium|high, or off. Unset = the "
-                        "model's own default, which for gpt-oss is already ON — that "
-                        "is what every run so far used. 'low' caps the reasoning "
-                        "budget (candidate fix for the empty replies); 'off' removes "
-                        "the harmony channel behind the tool-call parse errors")
+                   help="model-defined thinking control: on|off, or a named level "
+                        "the model declares (gpt-oss: low|medium|high, default "
+                        "medium; qwen3.8: low|medium|xhigh, default xhigh; "
+                        "muse-glimmer: low|medium|high|max, default high; gemma4: "
+                        "on|off, default off). Unsupported names fall back to the "
+                        "model default. Unset = model default. Check /api/show. "
+                        "'off' also removes the harmony channel behind the "
+                        "gpt-oss tool-call parse errors")
     p.add_argument("--final-prior-alpha", type=float, default=0.0,
                    help="shrink each attempt's score toward the dataset prior before "
                         "the final pick. 0=off. Measured best on ANP around 0.6-0.8; "
@@ -877,11 +901,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             seed_pooled_meta_model=not args.no_seed_pooled,
             dataset_card=not args.no_dataset_card,
             final_prior_alpha=args.final_prior_alpha,
-            combinator_reasoning=(
-                None if args.reasoning is None
-                else False if str(args.reasoning).lower() in {"off", "false", "no"}
-                else str(args.reasoning).lower()
-            ),
+            combinator_reasoning=parse_reasoning(args.reasoning),
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,
