@@ -178,6 +178,7 @@ def exec_dataset_orchestrator(
     final_top_m: int = 3,
     mcs_alpha: float = 0.10,
     mcs_max_members: Optional[int] = None,
+    mcs_score_margin: float = 0.10,
     seed_stable_pools: bool = True,
     pooled_meta_model: bool = True,
     pooled_meta_model_min_series: int = 20,
@@ -358,6 +359,7 @@ def exec_dataset_orchestrator(
     cfg.final_top_m = int(final_top_m)
     cfg.mcs_alpha = float(mcs_alpha)
     cfg.mcs_max_members = int(mcs_max_members) if mcs_max_members else None
+    cfg.mcs_score_margin = float(mcs_score_margin)
     cfg.seed_stable_pools = bool(seed_stable_pools)
     cfg.pooled_meta_model = bool(pooled_meta_model)
     cfg.pooled_meta_model_min_series = int(pooled_meta_model_min_series)
@@ -792,6 +794,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default 0.10)")
     p.add_argument("--mcs-max-members", type=int, default=None,
                    help="optional cap on the MCS committee size, leader included")
+    p.add_argument("--mcs-score-margin", type=float, default=0.10,
+                   help="practical tie band for the MCS committee, in normalized "
+                        "score units (default 0.10)")
     p.add_argument("--seed-gate-margin", type=float, default=0.01,
                    help="relative validation-score margin the agent must clear over "
                         "the best seed for seed_gate to apply its proposal (default 0.01)")
@@ -908,6 +913,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_top_m=args.final_top_m,
             mcs_alpha=args.mcs_alpha,
             mcs_max_members=args.mcs_max_members,
+            mcs_score_margin=args.mcs_score_margin,
             seed_stable_pools=not args.no_stable_seeds,
             pooled_meta_model=not args.no_pooled_meta_model,
             pooled_meta_model_min_series=args.pooled_meta_model_min_series,

@@ -949,7 +949,10 @@ class ReactState:
         return combined, debug
 
     def apply_mcs(
-        self, alpha: float = 0.10, max_members: Optional[int] = None
+        self,
+        alpha: float = 0.10,
+        max_members: Optional[int] = None,
+        score_margin: float = 0.10,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Phase 4 alternative: average the confidence set instead of its best.
 
@@ -959,6 +962,16 @@ class ReactState:
         concatenated window residuals. Numeric twins vote once. Members get equal
         weights, because the point is not to weight a ranking we distrust, it is to
         stop betting on its top entry.
+
+        Two guards keep the committee honest, both measured on real runs. The DM
+        test alone has no power against heavy tails: on ETTM2 the `dba` seed scored
+        0.80 against a leader at -0.09 and the squared-loss test still returned
+        p=0.24, because the standard error scales with the same outliers (absolute
+        loss only reached p=0.11). So a member must also sit within
+        `score_margin` of the leader on the same normalized score the ranking uses,
+        and its test forecast must not be off-scale (the same seed's final refit
+        produced ~7e7 on a series whose level is ~30). A failed guard is recorded
+        in `rejected` with its reason.
 
         Reads only validation data for the decision; the test actuals enter solely
         through `apply_to_test`, exactly as in the single-strategy path.
@@ -973,15 +986,26 @@ class ReactState:
             diebold_mariano = None
 
         leader = ranked[0]
+        leader_fc, _ = self.apply_to_test(leader.spec)
+        leader_fc = np.asarray(leader_fc, dtype=float)
+        scale = float(np.nanmax(np.abs(leader_fc))) if np.any(np.isfinite(leader_fc)) else 0.0
+        scale_limit = 1e3 * max(scale, 1.0)
+
         members: List[Attempt] = [leader]
+        member_forecasts: List[np.ndarray] = [leader_fc]
         rejected: List[Dict[str, Any]] = []
         cap = int(max_members) if max_members else 0
         for candidate in ranked[1:]:
             if cap and len(members) >= cap:
                 break
-            if diebold_mariano is None or not candidate.residuals or not leader.residuals:
+            if float(candidate.score) - float(leader.score) > float(score_margin):
+                rejected.append({"attempt_id": candidate.attempt_id, "reason": "score_margin"})
+                continue
+            if candidate.residuals is None or leader.residuals is None:
                 continue
             if any(_numerically_identical(candidate.residuals, m.residuals) for m in members):
+                continue
+            if diebold_mariano is None:
                 continue
             try:
                 dm = diebold_mariano(
@@ -993,21 +1017,29 @@ class ReactState:
                 continue
             if not np.isfinite(p):
                 continue
-            if p >= float(alpha):
-                members.append(candidate)
-            else:
-                rejected.append({"attempt_id": candidate.attempt_id, "p_value": round(p, 4)})
+            if p < float(alpha):
+                rejected.append({
+                    "attempt_id": candidate.attempt_id,
+                    "reason": "dm", "p_value": round(p, 4),
+                })
+                continue
+            fc, _ = self.apply_to_test(candidate.spec)
+            fc = np.asarray(fc, dtype=float)
+            if not np.all(np.isfinite(fc)) or float(np.nanmax(np.abs(fc))) > scale_limit:
+                rejected.append({"attempt_id": candidate.attempt_id, "reason": "degenerate_forecast"})
+                continue
+            members.append(candidate)
+            member_forecasts.append(fc)
 
-        forecasts = []
-        for member in members:
-            fc, _ = self.apply_to_test(member.spec)
-            forecasts.append(np.asarray(fc, dtype=float))
-        stacked = np.vstack(forecasts)
-        combined = stacked.mean(axis=0) if len(members) > 1 else stacked[0]
+        if len(members) > 1:
+            combined = np.vstack(member_forecasts).mean(axis=0)
+        else:
+            combined = member_forecasts[0]
 
         debug: Dict[str, Any] = {
             "method": "mcs",
             "alpha": float(alpha),
+            "score_margin": float(score_margin),
             "n_members": len(members),
             "members": [
                 {

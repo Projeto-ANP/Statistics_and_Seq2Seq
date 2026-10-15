@@ -153,6 +153,7 @@ def main(argv=None):
                    help="avalia tambem o comite MCS (DM do lider contra cada tentativa, "
                         "p >= alpha fica no conjunto, media igual das previsoes)")
     p.add_argument("--mcs-max-members", type=int, default=None)
+    p.add_argument("--mcs-score-margin", type=float, default=0.10)
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
@@ -273,7 +274,8 @@ def main(argv=None):
                         cand_preview.append(f"ens_{label}_m{int(m)}={em['smape']:.4f}")
                 if args.mcs_alpha is not None:
                     fc_m, dbg_m = state.apply_mcs(
-                        alpha=float(args.mcs_alpha), max_members=args.mcs_max_members
+                        alpha=float(args.mcs_alpha), max_members=args.mcs_max_members,
+                        score_margin=float(args.mcs_score_margin),
                     )
                     mcs_m = compute_metrics(fc_m, ingested.test_values)
                     leader = state.best_attempt()

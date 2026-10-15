@@ -1204,14 +1204,14 @@ def test_apply_mcs_committee_follows_the_dm_test(monkeypatch):
     ranked = [a for a in s.ranked_attempts() if np.isfinite(a.score)]
 
     monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.5})
-    fc_all, dbg_all = s.apply_mcs(alpha=0.10)
+    fc_all, dbg_all = s.apply_mcs(alpha=0.10, score_margin=1e9)
     assert dbg_all["method"] == "mcs"
     assert dbg_all["n_members"] == len(ranked)
     stacked = [s.apply_to_test(a.spec)[0] for a in ranked]
     assert np.allclose(fc_all, np.vstack(stacked).mean(axis=0))
 
     monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.01})
-    fc_one, dbg_one = s.apply_mcs(alpha=0.10)
+    fc_one, dbg_one = s.apply_mcs(alpha=0.10, score_margin=1e9)
     assert dbg_one["n_members"] == 1
     leader_fc, _ = s.apply_to_test(ranked[0].spec)
     assert np.allclose(fc_one, leader_fc)
@@ -1225,7 +1225,7 @@ def test_apply_mcs_max_members_caps_the_committee(monkeypatch):
     s.evaluate({"combine": "mean", "pool": FULL_POOL})
     s.evaluate({"combine": "median", "pool": FULL_POOL})
     monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.5})
-    fc, dbg = s.apply_mcs(alpha=0.10, max_members=2)
+    fc, dbg = s.apply_mcs(alpha=0.10, max_members=2, score_margin=1e9)
     assert dbg["n_members"] == 2
 
 
@@ -1234,8 +1234,47 @@ def test_cli_accepts_mcs_strategy():
 
     args = R.build_parser().parse_args(
         ["--dataset", "X", "--final-strategy", "mcs", "--mcs-alpha", "0.2",
-         "--mcs-max-members", "4"]
+         "--mcs-max-members", "4", "--mcs-score-margin", "0.3"]
     )
     assert args.final_strategy == "mcs"
     assert args.mcs_alpha == 0.2
     assert args.mcs_max_members == 4
+    assert args.mcs_score_margin == 0.3
+
+
+def test_apply_mcs_score_margin_keeps_distant_candidates_out(monkeypatch):
+    import orchestrator.diagnostics as diag
+
+    s = make_state()
+    s.evaluate({"combine": "mean", "pool": FULL_POOL})
+    s.evaluate({"combine": "best_single", "model": "bad"})
+    monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.5})
+    fc, dbg = s.apply_mcs(alpha=0.10, score_margin=0.01)
+    assert dbg["n_members"] == 1
+    reasons = [r.get("reason") for r in dbg["rejected"]]
+    assert "score_margin" in reasons
+
+
+def test_apply_mcs_drops_degenerate_member_forecast(monkeypatch):
+    import orchestrator.diagnostics as diag
+
+    s = make_state()
+    s.evaluate({"combine": "mean", "pool": FULL_POOL})
+    s.evaluate({"combine": "median", "pool": FULL_POOL})
+    ranked = [a for a in s.ranked_attempts() if np.isfinite(a.score)]
+    leader_spec = ranked[0].spec
+    runner_spec = ranked[1].spec
+    monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.5})
+    good = np.ones(s.horizon)
+
+    def fake_apply(spec):
+        if spec == runner_spec:
+            return np.full(s.horizon, 1e12), {"method": "degenerate"}
+        return good.copy(), {"method": "ok"}
+
+    monkeypatch.setattr(s, "apply_to_test", fake_apply)
+    fc, dbg = s.apply_mcs(alpha=0.10, score_margin=1e9)
+    assert dbg["n_members"] == 1
+    assert any(r.get("reason") == "degenerate_forecast" for r in dbg["rejected"])
+    assert np.allclose(fc, good)
+    assert leader_spec != runner_spec

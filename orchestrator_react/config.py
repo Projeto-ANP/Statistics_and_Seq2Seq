@@ -215,6 +215,10 @@ class ReactConfig:
     #: Optional cap on the committee size (leader included). None keeps every
     #: attempt the test could not separate.
     mcs_max_members: Optional[int] = None
+    #: Practical tie band, in normalized score units: a candidate more than this
+    #: far behind the leader stays out of the committee even when the DM test has
+    #: no power against heavy-tailed residuals (measured on the ETTM2 `dba` seed).
+    mcs_score_margin: float = 0.10
     #: Seed stability-selected combinations alongside the three full-pool
     #: baselines. The seeded set is the floor the whole run inherits whenever the
     #: agent finds nothing better — which was 68 of 111 series on the v2 NN5 run —

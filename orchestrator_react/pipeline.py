@@ -537,7 +537,8 @@ def run_series(
         )
     elif config.final_strategy == "mcs":
         forecast, debug = state.apply_mcs(
-            alpha=config.mcs_alpha, max_members=config.mcs_max_members
+            alpha=config.mcs_alpha, max_members=config.mcs_max_members,
+            score_margin=config.mcs_score_margin,
         )
     else:
         forecast, debug = state.apply_to_test(attempt.spec)
