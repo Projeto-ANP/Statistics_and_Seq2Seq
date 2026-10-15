@@ -149,6 +149,10 @@ def main(argv=None):
     p.add_argument("--ensemble-m", nargs="+", type=int, default=None,
                    help="avalia tambem a media (igual e softmax, eta=5) das top-m "
                         "candidatas por validacao, como o final_strategy=ensemble")
+    p.add_argument("--mcs-alpha", type=float, default=None,
+                   help="avalia tambem o comite MCS (DM do lider contra cada tentativa, "
+                        "p >= alpha fica no conjunto, media igual das previsoes)")
+    p.add_argument("--mcs-max-members", type=int, default=None)
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args(argv)
 
@@ -267,6 +271,25 @@ def main(argv=None):
                                                if label == "softmax" else {"members": top}),
                         })
                         cand_preview.append(f"ens_{label}_m{int(m)}={em['smape']:.4f}")
+                if args.mcs_alpha is not None:
+                    fc_m, dbg_m = state.apply_mcs(
+                        alpha=float(args.mcs_alpha), max_members=args.mcs_max_members
+                    )
+                    mcs_m = compute_metrics(fc_m, ingested.test_values)
+                    leader = state.best_attempt()
+                    rows.append({
+                        "dataset": dataset, "dataset_index": int(idx),
+                        "method": f"mcs_a{args.mcs_alpha}",
+                        "val_score": float(leader.score),
+                        "beats_floor_validation": int(leader.score < floor.score),
+                        "smape": mcs_m["smape"], "pocid": mcs_m["pocid"], "rmse": mcs_m["rmse"],
+                        "spec": json.dumps(
+                            {"members": [m["attempt_id"] for m in dbg_m["members"]],
+                             "n_members": dbg_m["n_members"]},
+                            ensure_ascii=False,
+                        ),
+                    })
+                    cand_preview.append(f"mcs={mcs_m['smape']:.4f}")
                 if not args.quiet:
                     print(
                         f"[{dataset} {idx:>4}] floor={floor_m['smape']:.4f} | "

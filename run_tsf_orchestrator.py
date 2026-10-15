@@ -176,6 +176,8 @@ def exec_dataset_orchestrator(
     final_strategy: str = "argmin",
     seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
+    mcs_alpha: float = 0.10,
+    mcs_max_members: Optional[int] = None,
     seed_stable_pools: bool = True,
     pooled_meta_model: bool = True,
     pooled_meta_model_min_series: int = 20,
@@ -354,6 +356,8 @@ def exec_dataset_orchestrator(
     cfg.final_strategy = final_strategy
     cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
+    cfg.mcs_alpha = float(mcs_alpha)
+    cfg.mcs_max_members = int(mcs_max_members) if mcs_max_members else None
     cfg.seed_stable_pools = bool(seed_stable_pools)
     cfg.pooled_meta_model = bool(pooled_meta_model)
     cfg.pooled_meta_model_min_series = int(pooled_meta_model_min_series)
@@ -425,6 +429,7 @@ def exec_dataset_orchestrator(
     log(
         f"final        : {cfg.final_strategy}"
         f"{' top_m=' + str(cfg.final_top_m) if cfg.final_strategy == 'ensemble' else ''}"
+        f"{' alpha=' + str(cfg.mcs_alpha) if cfg.final_strategy == 'mcs' else ''}"
         f" | stable seeds: {cfg.seed_stable_pools}"
         f" | pooled: {cfg.pooled_meta_model}"
         f"{'/' + cfg.pooled_meta_model_objective if cfg.pooled_meta_model else ''}"
@@ -774,12 +779,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "validation windows (default 5; --windows 3 withholds it)")
     p.add_argument("--max-iterations", type=int, default=12)
     p.add_argument("--early-stop-patience", type=int, default=4)
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate"],
+    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
-                        "averages the top --final-top-m (ablation arm); seed_gate "
-                        "keeps the best seeded baseline unless an agent attempt "
-                        "improves on it by --seed-gate-margin (anti winner's curse)")
+                        "averages the top --final-top-m; mcs averages the confidence "
+                        "set the validation cannot separate from the leader "
+                        "(--mcs-alpha); seed_gate keeps the best seeded baseline "
+                        "unless an agent attempt improves on it by --seed-gate-margin")
+    p.add_argument("--mcs-alpha", type=float, default=0.10,
+                   help="rejection level of the Diebold-Mariano test that builds the "
+                        "MCS committee: p < alpha against the leader leaves the set "
+                        "(default 0.10)")
+    p.add_argument("--mcs-max-members", type=int, default=None,
+                   help="optional cap on the MCS committee size, leader included")
     p.add_argument("--seed-gate-margin", type=float, default=0.01,
                    help="relative validation-score margin the agent must clear over "
                         "the best seed for seed_gate to apply its proposal (default 0.01)")
@@ -894,6 +906,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_strategy=args.final_strategy,
             seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,
+            mcs_alpha=args.mcs_alpha,
+            mcs_max_members=args.mcs_max_members,
             seed_stable_pools=not args.no_stable_seeds,
             pooled_meta_model=not args.no_pooled_meta_model,
             pooled_meta_model_min_series=args.pooled_meta_model_min_series,

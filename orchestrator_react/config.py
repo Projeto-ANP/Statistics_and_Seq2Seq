@@ -195,7 +195,12 @@ class ReactConfig:
     #: tried, so more agent iterations also mean more chances to fit validation
     #: noise. A margin small enough to be real (1% by default) keeps the seed
     #: unless the agent's gain is larger than the 3-window noise usually is.
-    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate"] = "argmin"
+    #: "mcs" (Model Confidence Set, trimmed to the members the validation cannot
+    #: separate from the leader by Diebold-Mariano) averages the confidence set
+    #: instead of picking its top entry. It exists for the measured failure mode:
+    #: first and second place are indistinguishable in most series, and betting on
+    #: the top one keeps losing to the deterministic floor. See `ReactState.apply_mcs`.
+    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the
@@ -203,6 +208,13 @@ class ReactConfig:
     seed_gate_margin: float = 0.01
     final_top_m: int = 3
     final_eta: float = 5.0
+    #: Significance level of the Diebold-Mariano test that decides MCS membership:
+    #: an attempt with p < `mcs_alpha` against the leader is rejected from the
+    #: committee. 0.10 matches the verdict threshold used everywhere else.
+    mcs_alpha: float = 0.10
+    #: Optional cap on the committee size (leader included). None keeps every
+    #: attempt the test could not separate.
+    mcs_max_members: Optional[int] = None
     #: Seed stability-selected combinations alongside the three full-pool
     #: baselines. The seeded set is the floor the whole run inherits whenever the
     #: agent finds nothing better — which was 68 of 111 series on the v2 NN5 run —

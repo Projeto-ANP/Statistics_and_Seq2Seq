@@ -535,6 +535,10 @@ def run_series(
         forecast, debug = state.apply_ensemble(
             top_m=config.final_top_m, eta=config.final_eta
         )
+    elif config.final_strategy == "mcs":
+        forecast, debug = state.apply_mcs(
+            alpha=config.mcs_alpha, max_members=config.mcs_max_members
+        )
     else:
         forecast, debug = state.apply_to_test(attempt.spec)
     if forecast.size != state.horizon or not np.all(np.isfinite(forecast)):

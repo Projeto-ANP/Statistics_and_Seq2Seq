@@ -948,6 +948,80 @@ class ReactState:
         }
         return combined, debug
 
+    def apply_mcs(
+        self, alpha: float = 0.10, max_members: Optional[int] = None
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """Phase 4 alternative: average the confidence set instead of its best.
+
+        The committee is the leader plus every attempt that the validation data
+        cannot separate from it: the same Diebold-Mariano test `selection_confidence`
+        uses between the top two, applied leader against each other attempt over the
+        concatenated window residuals. Numeric twins vote once. Members get equal
+        weights, because the point is not to weight a ranking we distrust, it is to
+        stop betting on its top entry.
+
+        Reads only validation data for the decision; the test actuals enter solely
+        through `apply_to_test`, exactly as in the single-strategy path.
+        """
+        ranked = [a for a in self.ranked_attempts() if np.isfinite(a.score)]
+        if not ranked:
+            raise ValueError("no finite-scoring attempt to apply")
+
+        try:
+            from orchestrator.diagnostics import diebold_mariano
+        except Exception:  # pragma: no cover - the module is pure numpy
+            diebold_mariano = None
+
+        leader = ranked[0]
+        members: List[Attempt] = [leader]
+        rejected: List[Dict[str, Any]] = []
+        cap = int(max_members) if max_members else 0
+        for candidate in ranked[1:]:
+            if cap and len(members) >= cap:
+                break
+            if diebold_mariano is None or not candidate.residuals or not leader.residuals:
+                continue
+            if any(_numerically_identical(candidate.residuals, m.residuals) for m in members):
+                continue
+            try:
+                dm = diebold_mariano(
+                    np.asarray(leader.residuals), np.asarray(candidate.residuals),
+                    loss="squared", h=1,
+                )
+                p = float(dm.get("p_value"))
+            except Exception:
+                continue
+            if not np.isfinite(p):
+                continue
+            if p >= float(alpha):
+                members.append(candidate)
+            else:
+                rejected.append({"attempt_id": candidate.attempt_id, "p_value": round(p, 4)})
+
+        forecasts = []
+        for member in members:
+            fc, _ = self.apply_to_test(member.spec)
+            forecasts.append(np.asarray(fc, dtype=float))
+        stacked = np.vstack(forecasts)
+        combined = stacked.mean(axis=0) if len(members) > 1 else stacked[0]
+
+        debug: Dict[str, Any] = {
+            "method": "mcs",
+            "alpha": float(alpha),
+            "n_members": len(members),
+            "members": [
+                {
+                    "attempt_id": a.attempt_id,
+                    "strategy": _spec_label(a.spec),
+                    "origin": a.origin,
+                    "score": round(float(a.score), 5),
+                }
+                for a in members
+            ],
+            "rejected": rejected,
+        }
+        return combined, debug
+
     # ── is the winner actually separable from the runner-up? ────────────────
 
     def selection_confidence(self) -> Dict[str, Any]:

@@ -1192,3 +1192,50 @@ def test_evaluate_strategy_accepts_weights_tool_as_combine_and_rejects_unknown()
 
     with pytest.raises(ValueError, match="valid methods"):
         T.evaluate_strategy(s, combine="weighted", pool=FULL_POOL, weights="not_a_method")
+
+
+def test_apply_mcs_committee_follows_the_dm_test(monkeypatch):
+    import orchestrator.diagnostics as diag
+
+    s = make_state()
+    s.evaluate({"combine": "mean", "pool": FULL_POOL})
+    s.evaluate({"combine": "median", "pool": FULL_POOL})
+    s.evaluate({"combine": "best_single", "model": "bad"})
+    ranked = [a for a in s.ranked_attempts() if np.isfinite(a.score)]
+
+    monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.5})
+    fc_all, dbg_all = s.apply_mcs(alpha=0.10)
+    assert dbg_all["method"] == "mcs"
+    assert dbg_all["n_members"] == len(ranked)
+    stacked = [s.apply_to_test(a.spec)[0] for a in ranked]
+    assert np.allclose(fc_all, np.vstack(stacked).mean(axis=0))
+
+    monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.01})
+    fc_one, dbg_one = s.apply_mcs(alpha=0.10)
+    assert dbg_one["n_members"] == 1
+    leader_fc, _ = s.apply_to_test(ranked[0].spec)
+    assert np.allclose(fc_one, leader_fc)
+    assert len(dbg_one["rejected"]) == len(ranked) - 1
+
+
+def test_apply_mcs_max_members_caps_the_committee(monkeypatch):
+    import orchestrator.diagnostics as diag
+
+    s = make_state()
+    s.evaluate({"combine": "mean", "pool": FULL_POOL})
+    s.evaluate({"combine": "median", "pool": FULL_POOL})
+    monkeypatch.setattr(diag, "diebold_mariano", lambda *a, **k: {"p_value": 0.5})
+    fc, dbg = s.apply_mcs(alpha=0.10, max_members=2)
+    assert dbg["n_members"] == 2
+
+
+def test_cli_accepts_mcs_strategy():
+    import run_tsf_orchestrator as R
+
+    args = R.build_parser().parse_args(
+        ["--dataset", "X", "--final-strategy", "mcs", "--mcs-alpha", "0.2",
+         "--mcs-max-members", "4"]
+    )
+    assert args.final_strategy == "mcs"
+    assert args.mcs_alpha == 0.2
+    assert args.mcs_max_members == 4
