@@ -1,0 +1,894 @@
+% agora que estamos usando LLMs, precisamos explicar como esses modelos funcionam. Preferencialmente, com foco naqueles modelos avaliados.
+\chapter{Fundamentação Teórica}\label{chp:background}
+\section{Considerações iniciais}
+
+Este capítulo apresenta os conceitos fundamentais empregados ao longo deste trabalho, organizados em três partes. A primeira parte introduz os conceitos de séries temporais, como a sua composição em componentes (tendência, sazonalidade, ciclo e ruído), as técnicas de decomposição clássica e via STL, as transformações de dados empregadas para obter representações alternativas das séries (logarítmica, de Fourier, e \textit{wavelet} contínua e discreta), os principais métodos estatísticos e de aprendizagem de máquina para a previsão de valores, e o \textit{Dynamic Time Warping Averaging}, uma técnica para geração de protótipos que foi empregada neste trabalho como alternativa às formas tradicionais de agregação entre predições. A segunda parte estabelece a fundamentação necessária para a proposta central deste trabalho, o CREST, descrito no Capítulo~\ref{chp:proposta}, sendo discutida a arquitetura Transformer e seus principais componentes, as propriedades que distinguem um modelo de linguagem de grande escala (LLM) de um Transformer de pesquisa comum, e o conceito de agente baseado em LLM, incluindo o paradigma ReAct, a restrição do espaço de ações a um catálogo fechado de ferramentas como forma de mitigar alucinações, e arquiteturas multiagente. Por fim, a terceira parte apresenta os procedimentos e as métricas empregados na avaliação experimental deste trabalho.
+
+
+\section{Séries temporais} 
+Uma série temporal $X$ é uma sequência de observações medidas ao longo do tempo, podendo ser representada como $X = \{ Y_1, Y_2, \ldots, Y_t, Y_n \}$, onde $t$ representa o instante de tempo de cada observação $Y$ de uma série com $n$ observações \citep{cochrane1997}.
+Uma série temporal pode conter informações de uma ou mais variáveis. Se contém apenas uma variável ao longo do tempo, é uma série univariada; caso tenha mais variáveis, será uma série multivariada. Um exemplo de série temporal multivariada é a medição da frequência cardíaca, pressão arterial e níveis de glicose de um paciente ao longo do tempo. Neste trabalho, serão consideradas somente séries univariadas. No entanto, nota-se que boa parte dos métodos para séries univariadas podem ser empregados de maneira individual, em cada variável de uma série multivariada. Por isso, esses métodos são considerados mais flexíveis.
+
+Esse tipo de dado pode ser utilizado em diversos contextos, como em finanças, para a previsão de preços de ações, ajudando a melhorar as decisões dos investidores na compra e venda. Na meteorologia, a coleta de dados sobre temperatura, precipitação e umidade forma uma série temporal que permite prever condições climáticas e identificar padrões sazonais. No contexto de derivados de petróleo, os valores de vendas mensais ao longo dos anos formam uma série temporal que possibilita realizar previsões sobre futuras vendas dos derivados. Na Figura \ref{fig:serie_temporal} é possível visualizar as vendas de óleo diesel ao longo do período de janeiro de 1990 a novembro de 2024 no estado de São Paulo. %Como os dados são obtidos mensalmente, há um total de 419 observações durante esse intervalo de tempo.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/example_timeseries.png}
+    \caption{Série temporal univariada representando o histórico de vendas mensais de óleo diesel no estado de São Paulo.}
+    \label{fig:serie_temporal}
+\end{figure}
+
+No contexto deste projeto, os modelos dinâmicos de predição de valores serão aplicados em conjuntos de dados compostos por múltiplas séries temporais univariadas, de modo que cada série temporal do conjunto pode ter uma combinação composta por diferentes modelos. Estes modelos podem ser treinados a partir da representação original dos dados no domínio do tempo, conforme ilustrado na Figura~\ref{fig:serie_temporal}, ou a partir de representações alternativas. Entre as possíveis representações de séries temporais, pode-se considerar as suas componentes ou representações obtidas a partir de transformações dos dados. A seguir, essas representações são introduzidas.
+
+%Neste projeto, serão explorados dados semelhantes aos apresentados, com o objetivo de extrair informações relevantes das séries temporais. Buscaremos identificar formas de aprimorar e combinar esses resultados, aplicando técnicas e modelos que visam melhorar a precisão das previsões.
+
+\section{Decomposição em componentes}
+% - Aditiva/multiplicativa
+Séries temporais podem ser decompostas em quatro componentes principais: tendência, ciclo, sazonalidade e ruído. Esses componentes podem ser separados e analisados individualmente para melhor compreensão do comportamento da série. Em alguns casos, o treinamento de modelos preditivos considerando cada um dos componentes separadamente pode levar a modelos precisos~\citep{theodosiou2011forecasting}.
+
+A tendência, que representa a direção geral da série ao longo do tempo, e a sazonalidade, que captura padrões repetitivos em intervalos regulares, são frequentemente estimadas por métodos como média móvel e suavização exponencial \citep{brockwell2016}. O ciclo, que descreve variações de médio prazo sem periodicidade fixa, é comumente analisado por meio de diferenciação repetida, técnica que torna a série estacionária e ajuda a isolar padrões cíclicos \citep{box1976}. Por fim, o ruído corresponde ao componente aleatório não explicado, obtido a partir dos resíduos após a remoção da tendência, sazonalidade e ciclo.
+
+\subsection{Decomposição clássica}
+
+Técnicas clássicas para decomposição de séries temporais em componentes considera dois tipos de modelos, o aditivo e o multiplicativo \citep{bruni2007}, conforme discutido a seguir.
+
+No modelo aditivo, como descrito por \cite{ratnadip2013}, a série temporal \( Y_t \) é representada como a soma dos seus componentes, assumindo que os componentes de tendência, sazonalidade e ruído são independentes entre si. Este modelo é representado conforme a Equação~\eqref{eq:aditivo}.
+
+\begin{equation}
+Y_t = T_t + S_t + R_t
+\label{eq:aditivo}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( T_t \) é a tendência,
+    \item \( S_t \) é a sazonalidade,
+    \item \( R_t \) é o ruído.
+\end{itemize}
+
+No modelo multiplicativo, também segundo \cite{ratnadip2013}, a série temporal \( Y_t \) é representada como o produto dos seus componentes, considerando que esses componentes podem interagir e não são necessariamente independentes. Neste caso, o modelo é representado de acordo com a Equação~\eqref{eq:multiplicativo}
+
+\begin{equation}
+Y_t = T_t \times S_t \times R_t
+\label{eq:multiplicativo}
+\end{equation}
+
+
+% - Tendência
+
+A tendência pode ser definida como uma mudança ao longo de um prazo, geralmente refletindo um crescimento, decrescimento ou estagnação. No entanto, há uma dificuldade na definição de ``longo prazo'', podendo variar de acordo com o domínio e frequência de coleta dos dados. Assim, uma tendência considerada crescente em um determinado intervalo pode passar a registrar um ciclo ao considerar um intervalo maior. Por isso, esse conceito é por vezes denominado \textit{trend-cycle} \citep{ratnadip2013, chatfield2003}.
+% Por exemplo, uma tendência observada no intervalo de 20 anos pode representar uma variação cíclica ao considerar um intervalo maior de 50 anos 
+%Por exemplo, um longo período, como 50 anos, pode parecer uma variação cíclica, enquanto em um período mais curto, como 20 anos, pode ser identificado como somente uma tendência \citep{ratnadip2013, chatfield2003}.  
+Como exemplo de representação desse componente, na Figura \ref{fig:trend_timeseries} é possível visualizar uma tendência crescente em relação à venda dos derivados de petróleo no estado de São Paulo ao longo do tempo, sem uma característica de ciclo.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/trend_example.png}
+    \caption{Tendência crescente na venda de óleo diesel no estado de São Paulo.}
+    \label{fig:trend_timeseries}
+\end{figure}
+% - 
+
+A sazonalidade é representada por uma variação em períodos determinados, como em um ano. Essa variação é causada por fatores que podem envolver costumes, clima, entre outros. Um exemplo pode ser o período de Carnaval no Brasil, onde, geralmente entre fevereiro e março, as vendas de fantasias, bebidas, alimentos e viagens para destinos turísticos populares aumentam nessa época do ano. A Figura~\ref{fig:seasonality_timeseries} ilustra a sazonalidade observada na venda de óleo diesel. Por ser um produto amplamente utilizado no transporte rodoviário e em máquinas agrícolas, períodos de férias e safras agrícolas contribuem para oscilações sazonais na venda de óleo diesel ao longo do ano \citep{de2021analise}. 
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/seasonality_example.png}
+    \caption{Sazonalidade na venda de óleo diesel no estado de São Paulo.}
+    \label{fig:seasonality_timeseries}
+\end{figure}
+
+% - Ruído
+
+O ruído, também chamado de variações aleatórias, é causado por influências imprevisíveis nos valores da série temporal, ou seja, eventos que não se repetem e não apresentam padrões bem definidos. Por conta disso, não há nenhuma técnica estatística para medir essas variações aleatórias e a sua modelagem por meio de métodos de Aprendizagem de Máquina é um desafio \citep{ratnadip2013}. Na Figura \ref{fig:noise_timeseries}, é apresentado o componente de ruído após a decomposição da série representando a venda de óleo diesel no estado de São Paulo. Diferente das demais componentes, não é possível identificar um padrão nos valores da série de ruído.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resid_example.png}
+     \caption{Componente de ruído na série temporal representando a venda de óleo diesel no estado de São Paulo.}
+    \label{fig:noise_timeseries}
+\end{figure}
+
+% - STL Decomposição de Tendência Sazonal Baseada em Loess ?
+\subsection{Seasonal-Trend Decomposition Based on Loess (STL)}
+Descrito por \cite{cleveland1990stl}, o método Seasonal-Trend Decomposition Based on Loess (STL) decompõe séries temporais em componentes de sazonalidade, tendência e ruído. O método foi projetado para ser computacionalmente eficiente na decomposição de séries com alta dimensionalidade, sendo também flexível ao especificar variações na tendência e sazonalidade. O método permite especificar ciclos sazonais com períodos maiores que 1 e pode lidar com séries temporais com dados ausentes.
+
+% Regressão ponderada localmente e suavização de gráficos de dispersão 
+Um dos pontos importantes do algoritmo STL é o uso do \textit{Locally Weighted Regression and Scatterplot Smoothing} (LOESS), esse método foi também desenvolvido por \cite{cleveland1979loess} 
+sendo um procedimento de suavização que aplica uma regressão ponderada local para ajustar curvas aos dados, permitindo que a suavização ocorra em qualquer ponto ao longo do intervalo dos dados. A abordagem consiste em usar diferentes polinômios para modelar a relação entre as variáveis, onde a suavização é baseada em um subconjunto dos dados próximos a um ponto de interesse, atribuindo pesos que diminuem com a distância entre os pontos.
+
+Quando se aplica o LOESS, cada observação possui um peso que reflete sua confiabilidade relativa em relação às outras, permitindo que o método lide com dados que possam incluir variações ou \textit{outliers}. Isso significa que, ao calcular a curva suavizada em um ponto específico, os pontos mais próximos têm uma influência maior sobre o ajuste do que aqueles mais distantes.
+
+Essa regressão local oferece flexibilidade na captura de padrões complexos e não lineares dos dados, sendo especialmente útil para séries temporais que podem apresentar comportamentos não previsíveis. O LOESS ajuda a fornecer estimativas robustas ao reduzir o impacto de comportamentos anômalos, o que é essencial em análises estatísticas em que a precisão nas estimativas é fundamental para a interpretação dos resultados.
+
+Na decomposição STL, existem dois ciclos recursivos denominados \textit{inner loop} e \textit{outer loop}. Durante o \textit{inner loop}, os componentes sazonais e de tendência são atualizados em cada passo, que é composto por \( n_i \) iterações. O primeiro passo do \textit{inner loop} é a remoção da tendência da série temporal, que é feita pela subtração do componente de tendência do valor observado, resultando na série sem tendência, como representado na Equação \eqref{eq:detrending}.
+
+\begin{equation}
+    Y^{(k)}_t = Y_t - T^{(k-1)}_t,
+    \label{eq:detrending}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( Y_t \) é a série temporal observada no tempo \( t \),
+    \item \( T^{(k-1)}_t \) é o componente de tendência da iteração anterior \( k-1 \),
+    \item \( Y^{(k)}_t \) é a série temporal sem tendência na iteração \( k \).
+\end{itemize}
+
+% onde:
+% - \( Y_t \) é a série temporal observada no tempo \( t \);
+% - \( T^{(k-1)}_t \) é o componente de tendência da iteração anterior \( k-1 \);
+% - \( Y^{(k)}_t \) é a série temporal sem tendência na iteração \( k \).
+
+Em seguida, ocorre a suavização sazonal como visto na Equação \eqref{eq:seasonal_smoothing}, onde o componente sazonal é estimado com base na série sem tendência, utilizando uma suavização via LOESS.
+
+\begin{equation}
+    S^{(k)}_t = \text{LOESS}_{\text{seasonal}}(Y^{(k)}_t),
+    \label{eq:seasonal_smoothing}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( S^{(k)}_t \) é o componente sazonal na iteração \( k \),
+    \item \( \text{LOESS}_{\text{seasonal}} \) é a função de suavização LOESS aplicada para estimar o componente sazonal.
+\end{itemize}
+
+No ultimo passo a atualização do componente de tendência é realizada, subtraindo o componente sazonal estimado do valor observado e aplicando novamente o LOESS como visto na Equação \eqref{eq:trend_update}.
+
+\begin{equation}
+    T^{(k)}_t = \text{LOESS}_{\text{trend}}(Y_t - S^{(k)}_t),
+    \label{eq:trend_update}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( T^{(k)}_t \) é o componente de tendência na iteração \( k \),
+    \item \( \text{LOESS}_{\text{trend}} \) é a função de suavização LOESS aplicada para estimar o componente de tendência.
+\end{itemize}
+
+No \textit{outer loop} ocorre a execução de uma iteração do \textit{inner loop} seguida do cálculo de pesos. O objetivo desses pesos é reduzir a influência de comportamentos de \textit{outliers} durante a próxima execução do \textit{inner loop}. No primeiro passo do \textit{outer loop}, todos os pesos são definidos como 1, assegurando que a suavização inicial não seja afetada por \textit{outliers}. O cálculo desses pesos é realizado por uma função que considera os valores observados e os componentes estimados, como visto na Equação \eqref{eq:robust_weights}.
+
+\begin{equation}
+    w_t^{(k)} = \text{RobustWeight}(Y_t, S^{(k)}_t, T^{(k)}_t),
+    \label{eq:robust_weights}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( w_t^{(k)} \) são os pesos na iteração \( k \),
+    \item \( \text{RobustWeight} \) é a função que calcula os pesos com base nos resíduos ou desvios entre os valores observados e os componentes estimados.
+\end{itemize}
+
+Após a determinação dos pesos, realizam-se novas iterações do \textit{inner loop}, desta vez levando em consideração esses pesos na suavização sazonal:
+
+\begin{equation}
+    S^{(k+1)}_t = \text{LOESS}_{\text{seasonal}}(Y^{(k)}_t, w_t^{(k)}),
+    \label{eq:seasonal_smoothing_weights}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( S^{(k+1)}_t \) é o componente sazonal atualizado na iteração \( k+1 \),
+    \item \( w_t^{(k)} \) são os pesos calculados na iteração \( k \).
+\end{itemize}
+
+
+As escolhas de \( n_i \), que é número de iterações do \textit{inner loop} e \( n_o \), o número de iterações do \textit{outer loop}, são fundamentais para a decomposição STL. No caso de séries temporais mensais com um ciclo anual, como a de venda de óleo diesel representada anteriormente, pode-se definir \( n_p = 12 \), o que permite fazer referência às sub-séries de valores em cada posição do ciclo sazonal. No caso de uma série mensal, as sub-séries podem ser representadas da seguinte maneira: a primeira sub-série corresponde aos valores de janeiro, a segunda aos valores de fevereiro, e assim por diante até dezembro. Assim, cada uma dessas \( n_p \) sub-séries é chamada de \textit{cycle subseries}.
+
+
+% Para a decomposição da série temporal usando o algoritmo STL é realizada uma suavização na série temporal utilizando LOESS em dois ciclos. O primeiro ciclo, chamado de ciclo interno, alterna entre a suavização sazonal e a suavização de tendência. No ciclo interno, o componente sazonal é calculado e removido para que o componente de tendência possa ser estimado. Podemos visualizar na Equação \eqref{eq:loess_sazonal}.
+
+% \begin{equation}
+%     S_t = \text{LOESS}_{\text{seasonal}}(Y_t)
+%     \label{eq:loess_sazonal}
+% \end{equation}
+
+% Na Equação \eqref{eq:loess_trend}, remove-se o componente sazonal e aplicamos \textit{LOESS} novamente para estimar o componente de tendência \(T_t\):
+% \begin{equation}
+%     T_t = \text{LOESS}_{\text{trend}}(Y_t - S_t)
+%     \label{eq:loess_trend}
+% \end{equation}
+
+% Por fim, na Equação \eqref{eq:loess_ruido} é representada a diferença entre a série temporal original e os componentes sazonal e de tendência é calculada, resultando no componente de ruído.
+% \begin{equation}
+%     R_t = Y_t - S_t - T_t
+%     \label{eq:loess_ruido}
+% \end{equation}
+
+% O segundo ciclo, chamado de ciclo externo, tem como objetivo minimizar o efeito de valores atípicos. Este ciclo ajusta as estimativas das componentes sazonal e de tendência para reduzir o impacto dos valores atípicos na decomposição.
+
+
+
+\section{Transformações de dados}
+A seguir, são discutidas transformações que podem ser aplicadas em  séries temporais que visam alterar a representação original dos dados no domínio do tempo com o objetivo de evidenciar características importantes ou remover características pouco relevantes que podem impactar no treinamento de modelos preditivos.
+
+\subsection{Log transform}
+
+A aplicação de transformações em séries temporais é frequentemente necessária para lidar com flutuações ou inconsistências ao longo da série, sendo uma etapa de pré-processamento essencial para muitos modelos preditivos. De acordo com \citet{hyndman2014}, quando uma série temporal apresenta variações que dependem do seu nível (por exemplo, flutuações maiores em valores mais altos), uma transformação pode ser útil para estabilizar o comportamento dos dados. A transformação logarítmica, por exemplo, é recomendada quando a série apresenta um desvio padrão que aumenta linearmente com a média, ou seja, quando a variabilidade dos dados cresce com o nível da série \citep{brockwell2016}. Essa transformação ajuda a estabilizar a variância, tornando os dados mais adequados para modelos estatísticos que assumem variância constante. Essa transformação é definida conforme a Equação \eqref{eq:log}, em que $Y_{t}'$ representa o valor da série transformado e $Y_{t}$ o valor original.
+
+\begin{equation}
+    Y_{t}' = \log({Y_t})
+    \label{eq:log}
+\end{equation}
+
+Outra abordagem para estabilizar a variância e tornar os dados mais próximos de uma distribuição normal é transformação Box-Cox, definida de acordo com a Equação \eqref{eq:boxcox} \citep{boxcox1964}.
+
+
+\begin{equation}
+Y_{t}' = 
+\begin{cases} 
+\frac{Y_{t}^\lambda - 1}{\lambda}, & \text{se } \lambda \neq 0 \\
+\log(Y_t), & \text{se } \lambda = 0 
+\end{cases}
+\label{eq:boxcox}
+\end{equation}
+
+Nessa equação, um parâmetro $\lambda$ é utilizado para ajustar a forma da transformação. Quando $\lambda = 1$, a transformação equivale a uma simples transformação linear, enquanto $\lambda = 0$ corresponde à transformação logarítmica, apresentada anteriormente. Valores intermediários e negativos de $\lambda$ oferecem flexibilidade para ajustar os dados. À medida que $\lambda$ se aproxima de zero, a variabilidade dos dados é suavizada, possibilitando transformações específicas, como a raiz quadrada ($\lambda = \frac{1}{2}$) ou a transformação recíproca ($\lambda = -1$). Contudo, essa transformação é definida apenas para valores positivos. Caso haja valores nulos ou negativos, é necessário adicionar uma constante positiva a todos os dados antes da aplicação da transformação \citep{cryer2008}.
+
+
+\subsection{Transformada de Fourier}
+
+A Transformada de Fourier, do inglês, \textit{Fourier Transform} (FT), é uma técnica matemática que permite representar um sinal (ou série temporal), originalmente representado no domínio do tempo, no domínio das frequências \citep{cooley1969fast}. Essa representação é obtida por meio da decomposição do sinal em seus componentes periódicos. Especificamente, a Transformada de Fourier decompõe o sinal em uma soma ponderada de funções senoidais e cossenoidais com diferentes frequências, amplitudes e fases, permitindo identificar quais frequências estão presentes no sinal e qual a intensidade de cada uma delas. Nas Figuras \ref{fig:fourier}-a) e \ref{fig:fourier}-b) é possível observar as duas representações de um sinal de fala humana no domínio de tempo e das frequências, respectivamente.
+
+\begin{figure}[H]
+    \centering
+    \subfigure[Domínio do tempo]{
+        \includegraphics[scale=0.30]{images/speech_example.png}
+    }
+    \subfigure[Domínio das frequências]{
+        \includegraphics[scale=0.30]{images/fourier_speech_example.png}      
+    }
+    \caption{Sinal de fala representado no domínio do tempo e  das frequências.}
+    \label{fig:fourier}
+\end{figure}
+
+
+%\begin{figure}[H]
+%    \centering
+%    \begin{minipage}[b]{0.45\linewidth}
+%        \centering
+%        \includegraphics[width=\linewidth]{images/time_fourier.png}
+%        \caption{Representação de fala humana no domínio de tempo}
+%        \label{fig:time_fourier}
+%    \end{minipage}
+%    \hspace{0.05\linewidth}
+%    \begin{minipage}[b]{0.45\linewidth}
+%        \centering
+%        \includegraphics[width=\linewidth]{images/frequency_fourier.png}
+%        \caption{Representação da fala humana no domínio de frequência}
+%        \label{fig:frequency_fourier}
+%    \end{minipage}
+%\end{figure}
+
+Na Figura \ref{fig:fourier}-a), o eixo horizontal representa o tempo, enquanto o eixo vertical mostra a amplitude do sinal observado, indicando as variações ao longo do tempo. Por outro lado, a Figura \ref{fig:fourier}-b) apresenta o sinal transformado para o domínio das frequências, em que o eixo horizontal representa as frequências e o eixo vertical exibe a potência associada a cada uma delas, evidenciando quais frequências predominam no sinal original.
+
+%Na Figura \ref{fig:frequency_fourier} tem o eixo $x$, que representa a frequência capturada da fala humana, enquanto no eixo $y$, é a amplitude ou potência dessa fala. Já na Figura \ref{fig:time_fourier} o eixo $x$ representa o domínio de tempo do acontecimento dessa fala, sendo representada pela forma da onda no eixo $y$.
+
+De acordo com \citet{osgood1999}, a Transformada de Fourier pode ser definida de acordo com a Equação \eqref{eq:fourier}, dado um sinal $f(t)$ no domínio do tempo:
+
+\begin{equation}
+\hat{f}(s) = \int_{-\infty}^{\infty}  e^{-2 \pi i s t} \, f(t)dt
+\label{eq:fourier}
+\end{equation}
+
+A transformação de Fourier é definida como uma ferramenta matemática fundamental para a análise de sinais, especialmente em relação ao seu espectro contínuo, diferentemente dos sinais periódicos, que possuem um conjunto discreto de frequências. \cite{osgood1999} explica que, ao integrar $f(t)$ contra \(e^{-2\pi ist}\) para qualquer \(s \in \mathbb{R}\), obtém-se uma função complexa $\hat{f}(s)$, representando a transformada de Fourier. Além disso, a síntese de sinais usando a inversa da transformada de Fourier ainda é um aspecto complexo, exigindo o domínio das frequências para recuperar $f(t)$ a partir de $\hat{f}(s)$ \citep{osgood1999}.
+
+Esse tipo de transformação tem desempenhado um papel crucial em diversas áreas como engenharia, física e matemática aplicada. A decomposição proporcionada pela FT é fundamental para a análise de sinais complexos, permitindo a análise detalhada de características como amplitude, fase e frequência. \cite{bracewell1978} descreve como qualquer sinal discreto arbitrário pode ser expresso em termos de uma série de complexos, onde cada componente representa uma combinação única de amplitude e fase. Esse processo permite a extração de informações detalhadas sobre a presença de diferentes frequências, podendo ser usados como \textit{features} para modelos supervisionados de previsão de valores futuros em séries temporais.
+
+\subsection{Continuous Wavelet Transform}
+
+Diferentemente da transformação usando FT, que decompõe os sinais em funções senoidais e cossenoidais e os representa como uma soma dessas funções, a transformada \textit{wavelet} utiliza funções especializadas chamadas \textit{wavelets} para analisar o sinal \citep{bentley1994wavelet}. A principal característica dessas \textit{wavelets} é a duração finita da função, ou seja, tem um início e fim e também sua localização temporal, o que permite manter uma oscilação fundamental necessária para a representação em frequência. Além disso, possibilita uma análise simultânea nos domínios do tempo e da frequência, superando a limitação da FT.
+
+
+Na CWT a função de análise wavelet \( \psi \) realiza a comparação dos sinais com versões deslocadas, comprimidas ou esticadas de uma \textit{wavelet} \citep{fourierwavelet}. Esse processo, conhecido como dilatação ou escalonamento, permite ajustar a \textit{wavelet} para identificar padrões em diferentes escalas temporais e níveis de frequência no sinal analisado. A dilatação amplia a \textit{wavelet}, tornando-a mais sensível a componentes de baixa frequência e capturando variações mais amplas no tempo. Por outro lado, a compressão reduz a escala da \textit{wavelet}, permitindo que ela detecte componentes de alta frequência e variações rápidas, ou seja pequenos detalhes no sinal. Há uma variedade de funções wavelet que podem ser utilizadas na CWT, como Haar, Daubechies, Morlet, Mexican Hat, Meyer, entre outras.  Uma das famílias de wavelets mais utilizadas na CWT é a \textit{wavelet} de Morlet, que é o produto de uma função sinusoidal real e uma função gaussiana. A \textit{wavelet} de Morlet é simétrica e é utilizada na transformada contínua real. Essa transformada \textit{wavelet} é descrita pela Equação \eqref{eq:morlet_wavelet}, onde 
+$t$ representa a localização no tempo.
+
+\begin{equation} \psi(t) = \exp\left(-\frac{t^2}{2}\right) \cos(5t) \label{eq:morlet_wavelet} \end{equation}
+
+
+Na Figura \ref{fig:wavelet}-a) é possível visualizar uma \textit{wavelet} (em vermelho) da família Morlet em escala comprimida para extração de características mais detalhadas em um sinal, enquanto na Figura \ref{fig:wavelet}-b) a escala da \textit{wavelet} está expandida, permitindo detectar variações em períodos maiores no sinal.
+
+\begin{figure}[H]
+    \centering
+    \subfigure[Wavelet de escala curta]{
+    \includegraphics[scale=0.15]{images/wavelet_scale_short.png}
+    }
+    \hspace{-0.6cm}
+    \subfigure[Wavelet de escala longa]{
+    \includegraphics[scale=0.15]{images/wavelet_scale_long.png}
+    }
+    \caption{Ilustração de ondas \textit{wavelets} aplicadas em um sinal.}
+    \label{fig:wavelet}
+\end{figure}
+
+Além disso, ao deslocar a \textit{wavelet} ao longo do tempo, é possível identificar as posições exatas onde certas características do sinal ocorrem. Essa combinação de deslocamento e escalonamento gera uma análise detalhada que fornece informações simultâneas sobre o comportamento temporal e espectral do sinal, o que é uma vantagem significativa em relação às transformações tradicionais, como a FT citada anteriormente. 
+
+O processo de convolução de uma \textit{wavelet} resulta em uma representação de tempo-frequência que é conhecida como escalograma. Sendo o eixo $ x $ a representação do tempo, e o eixo $ y $ a representação da escala, e a intensidade da cor indicando a amplitude dos coeficientes da transformada \textit{wavelet}. As cores mais intensas com brilhos destacam a presença de determinados componentes de frequência em momentos específicos. Na Figura \ref{fig:example_cwt} é possível visualizar o resultado dessa convolução.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{images/example_cwt.png}
+    \caption{Resultado de uma CWT com \textit{wavelet} Morlet.}
+    \label{fig:example_cwt}
+\end{figure}
+
+Na Figura \ref{fig:wavelet_fourier}, é possível observar uma das principais características da CWT em comparação com a FT. Enquanto a FT transforma o domínio do tempo exclusivamente para o domínio da frequência, conforme ilustrado na imagem ao centro, a CWT permite preservar simultaneamente partes das informações tanto no domínio do tempo quanto no domínio da frequência, conforme ilustrado na imagem à direita.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{images/wavelet_fourier.png}
+    \caption{Comparação de resultado de uma CWT e FT.}
+    \label{fig:wavelet_fourier}
+\end{figure}
+
+% \cite{daube1990}
+% \cite{kchui1992}
+
+% \cite{fourierwavelet}
+\subsection{Discrete Wavelet Transform}
+
+A \textit{Discrete Wavelet Transform} (DWT) é uma forma discreta da transformada \textit{wavelet}, usando um conjunto definido de escalas e translações de \textit{wavelets}. Essa transformação divide o sinal em conjuntos ortogonais de \textit{wavelets}, o que a diferencia da CWT. Enquanto a CWT mantém informações contínuas tanto no domínio temporal quanto no de escala, a DWT trabalha com uma representação discreta, dividindo o sinal em partes discretas, reduzindo o custo computacional do processamento do sinal.
+
+A \textit{wavelet} é construída a partir de uma função de escala, que define suas propriedades de escalonamento. A condição de que as funções de escala sejam ortogonais às suas traduções discretas impõe certas restrições matemáticas, como a equação de dilatação, garantindo que a decomposição seja precisa e conforme os padrões discretos.
+
+Assim como na CWT, onde a análise ocorre ao longo de diferentes escalas e posições contínuas, na DWT a decomposição é feita discretamente, permitindo uma análise mais detalhada de componentes individuais em diferentes níveis de granularidade. A decomposição gerada pelo sinal usando DWT, operada pelo princípio da convolução, gera dois componentes sendo o coeficiente de aproximação, que captura as informações de baixa frequência do sinal, e o coeficiente de detalhe, que representa as informações de alta frequência.
+
+O coeficiente de aproximação reflete as informações de baixa frequência do sinal, fornecendo uma visão geral da tendência geral do sinal. Esse componente captura os padrões mais lentos e suaves, eliminando variações rápidas e de alta frequência. Por outro lado, o coeficiente de detalhe representa as informações de alta frequência do sinal, ou seja, captura as variações rápidas e detalhadas. Este coeficiente é capaz de representar as flutuações e os padrões mais intricados que não são abordados no componente de aproximação, refletindo as oscilações e as características mais complexas do sinal.
+
+Existem diversos tipos de \textit{wavelets} para o uso de \textit{Discrete Wavelet Transform}, cada um com características específicas que os tornam adequados para diferentes aplicações, como compressão de imagem, \textit{denoising} e análise de sinais. Entre esses tipos, as funções \textit{wavelet} projetadas por \citeauthor{daubechies1992ten} são particularmente notáveis. Seus trabalhos têm sido fundamentais para o desenvolvimento da teoria das \textit{wavelets}, fornecendo uma base matemática sólida que impulsionou o uso prático dessas funções. Um de seus trabalhos mais influentes, o livro \textit{Ten Lectures on Wavelets} \cite{daubechies1992ten}, apresenta de maneira acessível os conceitos fundamentais das funções \textit{wavelet}, incluindo a construção de diferentes \textit{wavelets}, suas propriedades e aplicações. Neste livro, \citeauthor{daubechies1992ten} detalha exemplos práticos de \textit{wavelets}, sublinhando sua relevância em campos como compressão de imagem e análise de sinais.
+
+% \subsection{Stationary Wavelet Transform}
+% \cite{stationary2010}
+% - Vantagens/justificativa de realizar transformações, discutir tipos de transformações
+
+\section{Previsão de valores}
+A tarefa de previsão de valores, também conhecida como \textit{forecasting}, é possivelmente uma das mais populares na área de séries temporais. Nessa tarefa, um modelo supervisionado é responsável por aprender padrões históricos dos dados para prever valores futuros \citep{parmezan2019evaluation}. Esse processo envolve a identificação características dos dados como tendências, padrões recorrentes, comportamentos sazonais e possíveis efeitos cíclicos. Diferentes abordagens podem ser consideradas para a construção destes modelos preditivos. Neste projeto, serão consideradas três categorias principais, visando a combinação entre elas, sendo: $i)$ métodos estatísticos, $ii)$ aprendizagem de máquina, e $iii)$ aprendizagem profunda. A seguir, é apresentada uma visão geral dos principais métodos de cada categoria e que serão explorados na avaliação experimental deste trabalho.
+
+\subsection{Métodos estatísticos}
+Os métodos estatísticos de \textit{forecasting} são, em sua maioria, paramétricos, ou seja, assumem que os dados seguem uma determinada distribuição e que há uma estrutura composta por componentes como tendência, sazonalidade e ruído aleatório~\citep{parmezan2019evaluation}. Por serem fundamentados em suposições explícitas sobre o comportamento dos dados, esses métodos oferecem maior interpretabilidade, mas também são sensíveis a violações dessas premissas. A seguir, são discutidos os métodos ARIMA e ETS, dois métodos estatísticos amplamente utilizados na literatura e empreganos na avaliação experimental.
+
+\textbf{ARIMA}
+
+O modelo \textit{Autoregressive Integrated Moving Average} (ARIMA) foi proposto por \cite{box1976} para modelar e prever séries temporais univariadas que apresentam dependência de valores passados e de seus erros. O modelo combina três componentes: o Autoregressivo (AR), que prevê valores com base em observações anteriores; a Média Móvel (MA), que ajusta o modelo considerando erros passados; e a Integração (I), que aplica diferenciações para tornar a série estacionária antes da modelagem. O ARIMA é amplamente utilizado em diversos domínios, especialmente no setor financeiro, onde séries temporais frequentemente exibem tendências e sazonalidades, tornando-o uma ferramenta fundamental para prever preços de ativos e auxiliar na tomada de decisões estratégicas.
+
+O modelo AR assume que o valor de uma variável no futuro depende linearmente de seus valores passados, mas com um nível de incerteza. Essa incerteza é representada por um termo aleatório. Além disso, uma constante é adicionada à equação para garantir um ajuste mais preciso. A expressão matemática desse modelo é apresentada na Equação \eqref{eq:AR} \citep{ratnadip2013, box1976}:
+
+\begin{equation}
+Y_t = \phi_1 Y_{t-1} + \phi_2 Y_{t-2} + \dots + \phi_p Y_{t-p} + \epsilon_t
+\label{eq:AR}
+\end{equation}
+onde:
+
+\begin{itemize}
+    \item \( Y_t \) é o valor da série temporal no tempo \( t \),
+    \item \( \phi_1, \phi_2, \dots, \phi_p \) são os parâmetros do modelo AR,
+    \item \( Y_{t-1}, Y_{t-2}, \dots, Y_{t-p} \) são as observações passadas da série temporal,
+    \item \( \epsilon_t \) é o erro aleatório no tempo \( t \).
+\end{itemize}
+
+O modelo MA é similar ao modelo AR no sentido de utilizar erros passados da série. No entanto, no modelo MA, os erros passados são usados como variáveis explicativas, conforme a Equação \eqref{eq:MA}:
+
+\begin{equation}
+Y_t = \mu + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \dots + \theta_q \epsilon_{t-q}+ \epsilon_{t},
+\label{eq:MA}
+\end{equation}
+sendo:
+\begin{itemize}
+    \item \( \mu \) é a média da série temporal,
+    \item \( \epsilon_t \) é o erro aleatório no tempo \( t \),
+    \item \( \theta_1, \theta_2, \dots, \theta_q \) são os parâmetros do modelo MA,
+    \item \( \epsilon_{t-1}, \epsilon_{t-2}, \dots, \epsilon_{t-q} \) são os erros passados da série temporal.
+\end{itemize}
+
+
+As representações de modelos AR e MA podem ser combinadas para formar o modelo \textit{Autoregressive Moving Average} (ARMA), que é apropriado para séries temporais estacionárias. A combinação dos modelos AR e MA é expressa pela Equação \eqref{eq:ARMA}:
+
+\begin{equation}
+Y_t = \phi_1 Y_{t-1} + \phi_2 Y_{t-2} + \dots + \phi_p Y_{t-p} +  \mu  + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \dots + \theta_q \epsilon_{t-q}.
+\label{eq:ARMA}
+\end{equation}
+
+O modelo ARMA pressupõe que os dados sejam estacionários, uma condição necessária para garantir previsões confiáveis e estáveis. No entanto, muitas séries temporais não atendem a essa exigência. Para lidar com essa limitação, o modelo \textit{Autoregressive Integrated Moving Average} (ARIMA) foi proposto como uma generalização do ARMA. O ARIMA adiciona uma etapa preliminar de diferenciação finita para transformar séries não estacionárias em estacionárias antes da aplicação do modelo \citep{ratnadip2013}.
+
+\textbf{ETS}
+
+O modelo ETS (Error, Trend, Seasonality) foi desenvolvido por \cite{hyndmanETS2008}, que incorporou a família de modelos de suavização exponencial em um \textit{framework} capaz de identificar automaticamente os três componentes principais de uma série temporal: erro, tendência e sazonalidade.
+
+Esse modelo foi construído com base nos trabalhos de \cite{brownETS}, \cite{holtETS} e \cite{wintersETS}, que propuseram métodos de suavização exponencial. Esses métodos são, basicamente, baseados em médias ponderadas das observações passadas, atribuindo pesos às observações de acordo com o tempo, sendo as mais recentes com peso maior.
+
+O método de suavização exponencial simples é o proposto por \cite{brownETS} que é dada por:
+\begin{equation}
+s_t = \alpha Y_t + (1 - \alpha) s_{t-1}
+\end{equation}
+
+Um dos problemas do modelo \textit{Exponentially Weighted Moving Average} (EWMA) é sua dificuldade em capturar padrões de séries temporais com tendência. Como a previsão é baseada na média ponderada das observações passadas, o modelo assume que a série é estática. Quando há uma tendência, essa suposição leva a uma inadequação no ajuste às mudanças contínuas, resultando em previsões imprecisas.
+
+Para resolver isso, \cite{holtETS} modificou o modelo EWMA para levar em conta uma tendência linear, conseguindo se tornar mais eficiente por envolver uma EWMA para 
+os valores suavizados de $Y_t$, e outra para sua inclinação como visto na Equação \eqref{eq:ewma_holt}.
+\begin{equation}
+s_t = \alpha Y_t + (1 - \alpha) (s_{t-1} + b_{t-1}),
+\label{eq:ewma_holt}
+\end{equation}
+onde \( s_t \) representa o valor suavizado no tempo \( t \), que é uma combinação ponderada do valor observado \( Y_t \) e do valor suavizado anterior \( s_{t-1} \), ajustado pela estimativa da tendência \( b_{t-1} \). O parâmetro \( \alpha \) controla o peso dado ao valor observado atual, sendo definido de acordo com a Equação \eqref{eq:estimatica_trend}.
+\begin{equation}
+b_t = \beta (s_t - s_{t-1}) + (1 - \beta) b_{t-1}
+\label{eq:estimatica_trend}
+\end{equation}
+
+A Equação \eqref{eq:estimatica_trend} descreve a estimativa da tendência \( b_t \) no tempo \( t \), que é ajustada pela diferença entre os valores suavizados \( s_t \) e \( s_{t-1} \), ponderada pelo parâmetro \( \beta \), que controla o quanto a tendência anterior \( b_{t-1} \) influencia a tendência atual. Juntas, essas equações ajustam a previsão do valor da série temporal considerando tanto o nível atual quanto a tendência ao longo do tempo.
+
+No modelo ETS, os componentes podem ser identificados como aditivos ou multiplicativos para erro e sazonalidade, e a tendência pode ser atenuada ou não. Para selecionar as formas apropriadas, o modelo utiliza critérios de informação que são utilizados para avaliar e comparar modelos estatísticos, levando em consideração a qualidade do ajuste e a complexidade do modelo, como o AIC (Critério de Informação de Akaike), AICc (Critério de Informação de Akaike corrigido) e BIC (Critério de Informação Bayesiano).
+
+No critério AIC é calculada a penalização pela complexidade do modelo, com base no número de parâmetros \( k \) e no valor da função de verossimilhança \( \hat{L} \):
+
+\begin{equation}
+AIC = 2k - 2\ln(\hat{L})
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( k \) é o número de parâmetros estimados no modelo,
+    \item \( \hat{L} \) é o valor máximo da função de verossimilhança do modelo.
+\end{itemize}
+
+
+O AICc é a versão adaptada do AIC que adiciona uma penalização extra para corrigir a subestimação do erro que o AIC normal poderia gerar quando o número de observações é pequeno em relação aos parâmetros \( k \), sendo definida por:
+
+\begin{equation}
+AICc = AIC + \frac{2k(k+1)}{n-k-1}
+\end{equation}
+onde \( n \) é o número de observações.
+
+No BIC, a penalização ocorre de forma mais acentuada em modelos mais complexos, dando maior importância a modelos mais simples, dada pela Equação \eqref{eq:bic}:
+
+
+\begin{equation}
+BIC = k\ln(n) - 2\ln(\hat{L})
+\label{eq:bic}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \( n \) é o número de observações.
+    \item \( k \) é o número de parâmetros.
+    \item \( \hat{L} \) é o valor máximo da função de verossimilhança do modelo.
+\end{itemize}
+
+
+\textbf{Theta}
+
+O modelo Theta, proposto por \cite{theta_model}, é uma abordagem simples e eficaz para a previsão de séries temporais. Inicialmente, é ajustado duas linhas de tendência aos dados: uma linha de tendência linear e outra mais flexível, capaz de capturar comportamentos não lineares. O modelo utiliza um \textit{Simple Exponential Smoother} (SES) que é um método de suavização de séries temporais que estima o valor futuro de uma série com base na média ponderada dos valores passados, onde os valores mais recentes recebem maior peso.
+O SES é utilizado para prever essas duas linhas de tendência, com o objetivo de combinar as previsões obtidas de ambas as linhas para gerar a previsão final. Essa combinação permite que o modelo seja mais robusto, sendo eficaz tanto para séries com tendências lineares quanto para aquelas com padrões mais complexos.
+
+A implementação do Modelo Theta segue um processo em etapas. Primeiramente, é realizado um teste de sazonalidade na série temporal, e, caso a sazonalidade seja detectada, ela é removida por meio de uma decomposição clássica. A série, agora dessazonalizada, tem seus parâmetros de tendência ajustados por meio de uma regressão, enquanto a suavização é aplicada usando o SES. Se a sazonalidade foi removida inicialmente, ela é reincorporada no final do processo para restaurar o comportamento sazonal da série. Este modelo é especialmente útil para séries temporais com padrões sazonais e tendências não lineares, sendo amplamente reconhecido por seu desempenho altamente competitivo em competições de previsão de valores, como a M3 \citep{makridakis2000m3}.
+
+
+\subsection{Métodos de Aprendizagem de Máquina}
+
+Uma das maneiras mais simples de construir um modelo de \textit{forecasting} utilizando Aprendizagem de Máquina, é a partir do uso de métodos de regressão. As técnicas de regressão têm como objetivo modelar as relações entre variáveis dependentes e independentes. Esses modelos buscam prever valores contínuos ou numéricos da variável dependente a partir das variáveis independentes, explorando padrões nos dados.
+
+As relações entre as variáveis dependentes e independentes são normalmente avaliadas por meio do uso de coeficientes de correlação. Um dos mais usados é o coeficiente de Pearson, que quantifica a força e a direção da associação linear entre duas variáveis $A$ e $B$ \citep{kirchgassner2007}, como apresentado na Equação \eqref{eq:pearson_eq}.
+
+\begin{equation}
+r_{AB} = \frac{\sum_{i=1}^{n} (a_i - \bar{a})(b_i - \bar{b})}{\sqrt{\sum_{i=1}^{n} (a_i - \bar{a})^2 (b_i - \bar{b})^2}},
+\label{eq:pearson_eq}
+\end{equation}
+em que:
+\begin{itemize}
+    \item \( a_i \): valor individual da variável \( A \).
+    \item \( b_i \): valor individual da variável \( B \).
+    \item \( \bar{a} \): média dos valores da variável \( A \).
+    \item \( \bar{b} \): média dos valores da variável \( B \).
+    \item \( n \): número total de amostras.
+\end{itemize}
+
+
+Para que seja possível treinar um modelo de regressão a partir de dados de séries temporais, pode-se utilizar uma abordagem baseada na aplicação de janelas deslizantes ao longo da série para a transformação dos dados no formato tabular (i.e., atributo-valor). O funcionamento dessa técnica se baseia em dividir a série temporal em janelas de tamanho fixo, sendo que cada janela contém um número predefinido de observações consecutivas. 
+
+A ideia da janela deslizante é percorrer toda a série temporal e extrair, a cada passo, as observações que servirão como \textit{features} (características), enquanto o valor futuro será o \textit{target} (alvo). Em cada iteração, a janela se desloca uma observação para capturar os \(X\) pontos temporais anteriores, que são usados para prever o valor no horizonte de previsão \(h\), ou seja, o número de passos à frente para o qual a previsão será feita. Na Figura \ref{fig:sliding_window}, \(h\) representa o horizonte de previsão, indicando quantos passos à frente será previsto.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/sliding_window.png} 
+    \caption{Funcionamento de uma janela deslizante \citep{parmezan2019evaluation}.}
+    \label{fig:sliding_window}
+\end{figure}
+
+Na figura acima, a previsão \textit{target} que o modelo irá realizar é 1 passo à frente. Se for necessário prever \(h\) pontos, realiza-se a predição de maneira recursiva $h$ vezes, de modo que a última previsão é utilizada como \textit{feature} de entrada para o modelo~\citep{krauseicmla}. Nessa abordagem, eventualmente ocorre a propagação de erro em cada predição, visto que, se a primeira previsão tem erros, a segunda previsão, que usará informação da primeira como \textit{feature}, irá propagar os erros. Essa propagação pode ser representada na Equação \eqref{eq:forecast_multi}:
+
+\begin{equation}
+p_{t+h} = f\left( p_{t+h-1}, p_{t+h-2}, \dots, p_{t+1}, x_t, x_{t-1}, \dots \right)
+\label{eq:forecast_multi}
+\end{equation}
+onde:
+\begin{itemize}
+    \item \(p_{t+h}\) é a previsão do valor no tempo \(t+h\),
+    \item \(f\) é a função do modelo,
+    \item \(x_t, x_{t-1}, \dots\) são as variáveis independentes,
+    \item \(p_{t+1}, p_{t+2}, \dots\) são as previsões anteriores, que começam a propagar o erro.
+\end{itemize}
+
+Na literatura, essa forma de previsão com a janela deslizante é chamada de \textit{previsão recursiva} ou \textit{previsão iterativa}. Uma abordagem para evitar a propagação de erros anteriores para os valores futuros a cada iteração é o uso da técnica chamada \textit{previsão direta}, em que a previsão de $h$ passos é realizado em uma única chamada, desde que o modelo seja capaz de gerar múltiplas saídas (\textit{multi-output}), considerando dados de entrada em que o atributo-alvo também seja composto por múltiplos valores. O uso da abordagem direta ou recursiva depende de características dos dados, tamanho do conjunto de dados, horizonte de predição, entre outros fatores que podem influenciar o desempenho do modelo. Em \citet{krauseicmla}, é realizada uma comparação entre ambas as estratégias.
+
+Uma das vantagens do uso de janelas deslizantes em séries temporais para o treinamento de modelos de regressão utilizando aprendizagem de máquina, é a sua flexibilidade em relação a escolha dos algoritmos. Neste projeto, pretende-se explorar algoritmos de diferentes abordagens de aprendizagem de máquina para o treinamento dos modelos, como k-\textit{Nearest Neighbors} (kNN), árvores de decisão e  \textit{boosting}.
+
+% - explicar como funciona a modelagem dos dados (janelas) para ml
+
+% \subsection{Métodos de Aprendizagem Profunda}
+
+% Em geral, algoritmos de aprendizagem profunda superam os algoritmos tradicionais de aprendizagem de máquina na identificação de padrões complexos nos dados. Essa superioridade se deve ao uso de redes neurais compostas por múltiplas camadas hierárquicas, em que cada camada é responsável por aprender representações progressivamente mais abstratas, permitindo ao modelo capturar interações não lineares e características difíceis de serem detectadas por algoritmos convencionais. A seguir, é apresentada uma visão geral de um algoritmo de aprendizagem de máquina com resultados que superam o estado-da-arte na tarefa de \textit{forecasting}.
+
+% \subsubsection{N-BEATS: \textit{Neural Basis Expansion Analysis for Interpretable Time Series Forecasting}}
+
+% O modelo \textit{Neural Basis Expansion Analysis for Interpretable Time Series Forecasting} (N-BEATS) foi proposto com o objetivo de resolver problemas de previsão de séries temporais univariadas utilizando \textit{Deep Learning}. Sua arquitetura é baseada em links residuais \textit{backward} e \textit{forward}, além de uma pilha profunda de camadas totalmente conectadas.
+
+% A arquitetura criada por \cite{nbeats} foi projetada para ser simples e genérica, trabalhando com os dados sem as necessidades de ajustes adicionais, como transformações ou manipulação nos dados de entrada. A partir disso, se tem a construção de blocos de processamento repetitivos, e a estrutura de cada um é simples, mas eficiente, permitindo a modelagem de padrões complexos nas séries temporais. 
+% Sendo os blocos uma configuração de \textit{multi-layer} com rede totalmente conectada e não linearidades ReLU.
+
+% Uma rede totalmente conectada é um tipo de rede neural onde cada neurônio em uma camada está diretamente conectada a todos os neurônios da camada seguinte. Essa estrutura é composta por várias camadas, sendo que cada camada é vista como um conjunto de neurônios que realizam cálculos com base nas entradas que recebem e a saída de uma camada é passada como entrada da próxima camada. Cada camada totalmente conectada é uma função de \( \mathbb{R}^m \) para \( \mathbb{R}^n \), onde cada saída depende de todas as entradas. Na Figura \ref{fig:fully_connected}, temos a representação de uma camada totalmente conectada.
+
+% \begin{figure}[H]
+%     \centering
+%     \includegraphics[scale=0.7]{images/fully_connected.png} 
+%     \caption{Camada totalmente conectada em uma rede profunda.}
+%     \label{fig:fully_connected}
+% \end{figure}
+
+% Se \( \mathbf{x} \in \mathbb{R}^m \) for a entrada de uma camada totalmente conectada, e \( y_i \in \mathbb{R} \) for a saída \( i \)-ésima dessa camada, então \( y_i \in \mathbb{R} \) é computado da seguinte forma:
+
+% \[
+% y_i = \sigma \left( w_1 x_1 + \dots + w_m x_m \right)
+% \]
+
+% Sendo \( \sigma \) uma função não-linear, \( w_{i} \) são os parâmetros aprendíveis da rede (pesos). A saída final se dá por: 
+
+
+% \[
+% \mathbf{y} = \begin{bmatrix}
+% \sigma \left(  w_{1,1} x_1 + w_{1,m} x_{m} \right) \\
+% \sigma \left(  w_{2,1} x_1 + w_{2,m} x_{m} \right) \\
+% \vdots \\
+% \sigma \left( w_{n,1} x_1 + w_{n,m} x_{m} \right)
+% \end{bmatrix}
+% \]
+
+% A arquitetura proposta por \cite{nbeats} utiliza uma rede totalmente conectada com 4 camadas, sendo os blocos organizados em pilhas usando o princípio de empilhamento \textit{doubly residual}
+
+% Esse princípio de empilhamento pode ser considerado uma arquitetura de redes neurais que permite que dois ramos residuais trabalhem juntos em uma estrutura residual dupla para o processamento eficaz e interpretável dos dados. Em comparação com a arquitetura residual clássica, onde a entrada de um bloco de camadas é somada à sua saída para passar o resultado a outro bloco subsequente, a arquitetura \textit{doubly residual} adota uma abordagem mais sofisticada com dois ramos principais: \textit{backcast} e \textit{forecast}.
+
+% O ramo de \textit{backcast} é responsável por analisar e remover progressivamente as partes aproximáveis do sinal de entrada. Cada camada subtrai a parte do sinal que consegue modelar, simplificando a tarefa para as camadas seguintes e permitindo uma decomposição progressiva do sinal de entrada. O ramo de \textit{forecast}, por outro lado, concentra-se na previsão do sinal futuro. Cada camada calcula uma previsão parcial, que é somada em dois níveis: primeiro, internamente dentro dos blocos de camadas, onde as previsões parciais das camadas são combinadas; depois, no nível da rede, onde as previsões de todos os blocos são somadas para gerar a previsão final. A representação da arquitetura do N-BEATS é mostrada na Figura \ref{fig:nbeats_arch}.
+
+
+% \begin{figure}[H]
+%     \centering
+%     \includegraphics[width=0.8\textwidth, height=0.4\textheight]{images/nbeats_arch.png} 
+%     \caption{Arquitetura proposta do N-BEATS \citep{nbeats}.}
+%     \label{fig:nbeats_arch}
+% \end{figure}
+
+% Sendo o $\theta f$ (\textit{backcast}) a previsão retroativa que tenta reconstruir os dados de entrada, ou seja, prever os valores passados ou intermediários, ajudando o modelo a entender a relação temporal entre os dados. E a parte $\theta b$ (\textit{forecast}) responsável pela previsão direta dos valores futuros da série, especificamente para o horizonte de previsão \(H\). Essa parte é chamada de \textit{Fork Architecture}, pois possui esses dois caminhos de saída.
+
+
+% Em termos práticos, a arquitetura do N-BEATS utiliza duas abordagens principais: a previsão direta (\( \theta_f \)) e a reconstrução dos dados passados (\( \theta_b \)). A ideia central é que, ao combinar essas duas saídas, o modelo consegue, ao mesmo tempo, capturar as dinâmicas temporais passadas e fornecer previsões mais precisas para os valores futuros. Cada bloco é projetado para prever o futuro com base em diferentes aspectos da entrada, e a combinação de todas essas previsões ao longo da rede resulta em um modelo robusto, capaz de lidar com séries temporais complexas.
+
+% % \subsection{Métodos de Large Language Modelsx}
+
+\section{Dynamic Time Warping Averaging}
+
+Entre as propostas deste projeto, destaca-se a combinação das predições emitidas por modelos lineares e não-lineares. Para isso, podem ser consideradas estratégias simples, como a média aritmética ou a mediana das séries temporais que representam as $h$ predições geradas por esses modelos. Embora seja uma abordagem computacionalmente eficiente, pode ser problemática no contexto de séries temporais, sendo possível a geração de séries pouco representativas ou inapropriadas, especialmente quando há distorções de alinhamento entre as séries ou variações significativas.
+
+Para contornar essa limitação, uma alternativa promissora é o uso do Dynamic Time Warping Averaging (DBA) \citep{petitjean2011global}. O DBA foi originalmente proposto para a tarefa de agrupamento de séries temporais, mas também empregado em classificação \citep{Petitjean2014-ICDM-2} e aumento de dados \citep{Forestier2017-ICDM}. No entanto, a técnica ainda não foi empregada no contexto de \textit{forecasting} e será investigada neste projeto.
+
+O DBA permite calcular uma média prototípica de séries temporais ao alinhar seus pontos no tempo de maneira não linear utilizando a medida de distância Dynamic Time Warping, preservando assim padrões característicos das séries de entrada, ainda que esteja deslocados no tempo entre as séries. Na Figura \ref{fig:dba_rep}, é ilustrada a geração do protótipo a partir de um conjunto de séries de entrada, considerando a média aritmética e DBA.
+
+\begin{figure}[H]
+    \centering
+    \subfigure[Média aritmética entre as séries]{
+        \includegraphics[scale=0.20]{images/media_representation.png}
+    }
+    \subfigure[DBA entre as séries]{
+        \includegraphics[scale=0.20]{images/dba_representation.png}      
+    }
+    \caption{Geração de uma série prototípica a partir de um conjunto de séries temporais de entrada utilizando média e DBA \citep{petitjean2011global}.}
+    \label{fig:dba_rep}
+\end{figure}
+
+Na Figura \ref{fig:dba_rep}-a), nota-se que o uso da média resulta em uma série dissimilar às séries de entrada, sendo pouco representativa do conjunto. Enquanto na Figura \ref{fig:dba_rep}-b), a técnica DBA ajusta a média levando em conta distorções temporais, produzindo uma representação mais fiel à estrutura subjacente das séries. Visualmente, percebe-se que a média aritmética pode perder padrões importantes devido ao alinhamento rígido, enquanto o DBA preserva melhor as variações da série ao longo do tempo.
+
+
+\section{Arquitetura Transformer e o mecanismo de atenção}
+\label{sec:llms-transformer}
+
+Embora o problema investigado neste trabalho esteja inserido no domínio de \textit{forecasting}, a solução proposta emprega agentes baseados em grandes modelos de linguagem para combinar as predições de diferentes modelos preditivos. Dessa forma, a compreensão dos modelos de linguagem que fundamentam esses agentes requer a apresentação da arquitetura \textit{Transformer}, predominante entre os modelos de linguagem empregados nesse trabalho. Esta seção introduz os principais componentes dessa
+arquitetura, com ênfase no mecanismo de atenção, que permite ao modelo
+construir representações contextualizadas e relacionar diferentes elementos
+da sequência de entrada.
+
+Antes da introdução do \textit{Transformer}, o processamento de
+sequências textuais era realizado predominantemente por \textit{Recurrent Neural
+Networks} (RNNs) e por variantes como a \textit{Long Short-Term Memory} (LSTM)
+\citep{hochreiter1997lstm}. Essas arquiteturas processam os elementos da
+sequência sucessivamente, atualizando, a cada passo, um estado interno que
+representa as informações observadas até aquele momento. Essa natureza
+recorrente cria uma dependência entre as etapas de processamento, limitando
+sua paralelização. Além disso, RNNs convencionais apresentam dificuldades para
+aprender dependências de longo alcance, especialmente em razão dos problemas
+de desaparecimento e explosão dos gradientes. Embora as LSTMs reduzam essas
+limitações por meio de mecanismos de controle do fluxo de informação, seu
+processamento permanece essencialmente sequencial.
+
+Um avanço importante foi apresentado por \citet{bahdanau2014neural}, que introduziram um mecanismo de atenção no contexto da tradução automática. Em vez de representar toda a sequência de entrada por um único vetor de contexto fixo, o mecanismo permitiu ao \textit{decoder} ponderar os estados produzidos pelo \textit{encoder}, construindo uma representação de contexto específica para cada etapa da geração. Essa abordagem reduziu a dependência de uma representação única da entrada, embora ainda utilizasse uma arquitetura recorrente.
+
+Posteriormente, \citet{vaswani2017attention} propuseram a arquitetura \textit{Transformer}, substituindo a recorrência por mecanismos de atenção para estabelecer relações entre os elementos das sequências. Essa mudança ampliou a paralelização do processamento das posições durante o treinamento e permitiu relacionar diretamente elementos distantes, facilitando o aprendizado de dependências de longo alcance. As subseções seguintes descrevem cada componente desta arquitetura, partindo das etapas mais elementares (tokenização, \textit{embedding}, codificação posicional) até as estruturas maiores (\textit{self-attention}, \textit{multi-head attention}, blocos empilhados) que culminam na ilustração completa apresentada mais adiante.
+
+\subsection{Tokenização} 
+
+Em etapas de LLMs, a tokenização é uma parte essencial de pré-processamento \citep{webster1992tokenization}, sendo responsável por converter um trecho de texto em uma sequência de unidades discretas, que chamamos de \textit{tokens}. Cada uma associada a um identificador inteiro de um vocabulário fixo. A granularidade dessas unidades pode variar já que os
+\textit{tokens} podem corresponder a palavras inteiras, caracteres individuais, símbolos gráficos ou, mais comumente nos LLMs modernos, as \textit{subwords}. As estratégias mais diretas, como segmentar por palavra ou por caractere, apresentam limitações opostas. A primeira produz vocabulários proibitivamente extensos e não acomoda palavras inéditas, enquanto a segunda gera sequências muito longas e descarta informação morfológica relevante \citep{sennrich2015bpe}. A literatura convergiu, por isso, para esquemas em nível de \textit{subwords}, que oferecem um compromisso entre cobertura lexical e tamanho de vocabulário.
+
+%Dentre os esquemas de subpalavra adotados pelos LLMs atuais, três algoritmos se destacam. O mais antigo deles é o \textit{Byte-Pair Encoding} (BPE), proposto originalmente por \cite{gage1994bpe} como técnica de compressão de dados e adaptado à tradução automática neural mais de duas décadas depois por \cite{sennrich2015bpe}. O funcionamento desse método se dá por uso de um vocabulário composto apenas de caracteres e, a cada passo, o algoritmo localiza o par de símbolos adjacentes mais frequente no corpus e o substitui por um novo \textit{token} combinado, repetindo o processo até que o vocabulário atinja um tamanho-alvo. Um princípio similar de fusão progressiva é adotado pelo \textit{WordPiece}, originalmente desenvolvido por \cite{schuster2012wordpiece} no contexto de reconhecimento de fala e posteriormente popularizado em escala global pelo sistema de tradução neural do Google \cite{wu2016gnmt}. A principal diferença se dá por, em vez de escolher o par mais frequente, o \textit{WordPiece} seleciona aquele que a fusão produz o maior ganho na verossimilhança do corpus, substituindo o critério de frequência por um critério probabilístico. O terceiro algoritmo é o \textit{Unigram Language Model}, proposto por \cite{kudo2018subword}, que adota uma estratégia oposta às anteriores: em vez de construir o vocabulário de baixo para cima, ele parte de um vocabulário inicial grande e elimina iterativamente os \textit{tokens} cuja exclusão menos compromete a verossimilhança do corpus.
+
+
+\subsection{Representação Vetorial (\textit{Embedding})}
+Após a tokenização, cada \textit{token} é apenas um identificador inteiro, mas
+redes neurais operam sobre vetores de números reais. A solução mais simples de associar a cada \textit{token} um vetor \textit{one-hot} de dimensão $|V|$ é inviável na prática, já que produz representações extremamente esparsas e que não codificam qualquer noção de proximidade
+semântica entre os \textit{tokens}. A alternativa convencional consiste em mapeá-los para vetores densos de dimensão muito menor, no que se convencionou chamar de \textit{embedding}. A ideia foi formalizada por \cite{bengio2003neural} no contexto dos primeiros modelos neurais de linguagem, mas remonta à \textit{hipótese distribucional} da linguística estrutural, segundo a qual palavras que ocorrem em contextos semelhantes tendem a apresentar significados semelhantes
+\citep{harris1954distributional, firth1957synopsis}. Sua popularização veio com algoritmos especializados em aprender \textit{embeddings} a partir de grandes corpora não anotados, como o \textit{word2vec} \cite{mikolov2013distributed} e o \textit{GloVe} \cite{pennington2014glove}, nos quais relações semânticas entre palavras emergem como regularidades geométricas no espaço vetorial.
+
+No Transformer, esse mecanismo é implementado por uma matriz $E \in \mathbb{R}^{|V| \times d_{\text{model}}}$, em que cada linha armazena o \textit{embedding} associado a um \textit{token} do vocabulário. A conversão de um \textit{token} para seu vetor consiste em selecionar a
+linha apropriada de $E$, operação equivalente à multiplicação de $E$ pelo respectivo vetor \textit{one-hot}. Diferentemente do que ocorre em \textit{word2vec} ou GloVe, em que os \textit{embeddings} são treinados previamente em uma tarefa auxiliar, no Transformer a matriz $E$ é
+aprendida de forma conjunta com os demais parâmetros durante o treinamento principal, permitindo que os vetores se ajustem diretamente à tarefa-alvo. O resultado é uma sequência de vetores densos, um para cada \textit{token} de entrada, que constitui a representação efetiva
+processada pelas camadas subsequentes do modelo.
+
+
+
+\subsection{Codificação Posicional (\textit{Positional Encoding})}
+Como o processamento de dados ocorre de forma totalmente simultânea e paralela, a rede perde, por padrão, qualquer noção de sequência. Se fossemos embaralhar as palavras de uma frase, o mecanismo de atenção puro calcularia exatamente os mesmos resultados, pois ele é de certa forma, cego para a ordem em que as informações aparecem. Para resolver esse problema estrutural e garantir que o modelo compreenda o sentido direcional do texto, tornou-se necessário criar um mapa de posições.
+
+Para incorporar a ordem dos elementos da sequência, o \textit{Transformer} original utiliza vetores de codificação posicional, somados aos \textit{embeddings} dos \textit{tokens} antes do processamento pelas camadas de atenção. Esses vetores são calculados por funções seno e cosseno de diferentes frequências, permitindo que a representação de entrada contenha informações tanto sobre o conteúdo de cada \textit{token} quanto sobre sua posição na sequência.
+
+%No ecossistema atual dos grandes modelos de linguagem, duas estratégias do tipo relativas se consolidaram como os padrões da indústria: ALiBi e RoPE. 
+
+%A abordagem ALiBi (\textit{Attention with Linear Biases}), desenvolvida por \cite{press2022alibi}, inova ao eliminar completamente a necessidade de somar vetores de posição logo na entrada. Em vez disso, ela age de forma mais sutil, intervindo diretamente na etapa em que o modelo calcula a atenção. O método aplica uma penalidade matemática que cresce conforme a distância física entre duas palavras aumenta. Assim, termos muito afastados perdem força e recebem menos foco. Essa característica não só é elegante, mas também traz a vantagem de permitir que o modelo processe textos muito maiores do que os utilizados em seu treinamento original.
+
+%Por outro lado, o método RoPE (\textit{Rotary Position Embedding}), formulado por \cite{su2024rope}, adota uma perspectiva geométrica. Ele insere a informação de posição aplicando uma rotação aos vetores de consultas (\textit{queries}) e chaves (\textit{keys}) um pouco antes de eles interagirem. O truque central é que o ângulo dessa rotação cresce de maneira proporcional à posição da palavra no texto, conseguindo mapear a ordem sequencial de forma fluida e altamente eficaz.
+
+
+
+\subsection{Mecanismo de Atenção (\textit{Attention}) em LLMs}
+%O conceito de atenção remonta ao trabalho pioneiro de \cite{bahdanau2014neural} no cenário da tradução automática. Até então, o grande obstáculo das arquiteturas baseadas em redes recorrentes era a necessidade de comprimir toda a frase de entrada em um único vetor de contexto de tamanho fixo, o que limitava drasticamente o aproveitamento da informação em sequências mais longas. A proposta de \cite{bahdanau2014neural} quebrou esse paradigma ao permitir que o \textit{decoder} consultasse diretamente todos os estados produzidos pelo \textit{encoder} a cada nova palavra gerada, ponderando a relevância de cada termo de forma dinâmica.
+
+%Anos mais tarde, foi justamente essa noção de ponderação dinâmica que \cite{vaswani2017attention} isolaram e transformaram no coração da arquitetura \textit{Transformer}. Ao abrir mão por completo das estruturas de recorrência, essa evolução deu origem a um novo padrão arquitetural focado inteiramente no mecanismo de autoatenção.
+
+%Uma forma bastante didática de visualizar esse mecanismo, conforme apresentado por \cite{jurafsky2025slp}, é entender que cada palavra do texto assume três papéis matemáticos simultâneos durante o cálculo, formalizados por \cite{vaswani2017attention} como projeções aprendidas. Ela atua como uma consulta (\textit{query}), indicando o que procura no restante da frase, e funciona como uma chave (\textit{key}), sinalizando o que tem a oferecer, e carrega um valor (\textit{value}), que representa sua própria informação semântica. Ao cruzar as \textit{queries} com as \textit{keys}, a rede calcula o grau de afinidade entre todos os pares de palavras da sequência. Essa pontuação serve para mesclar os \textit{values}, fazendo com que cada palavra termine o processo com uma representação muito mais rica, absorvendo de forma natural o contexto dos termos ao seu redor.
+
+Na autoatenção do \textit{Transformer}, a representação de cada \textit{token} é transformada, por meio de projeções lineares aprendidas, em três vetores: consulta (\textit{query}), chave (\textit{key}) e valor (\textit{value}). A compatibilidade entre consultas e chaves determina os pesos atribuídos aos respectivos valores. Esses pesos são utilizados para calcular uma soma ponderada dos vetores de valor, produzindo, para cada posição, uma representação que incorpora informações das posições às quais ela pode atender. Dessa forma, o mecanismo permite contextualizar cada \textit{token} a partir dos demais elementos disponíveis na sequência.
+
+O \textit{Transformer} emprega atenção com múltiplas cabeças (\textit{multi-head attention}), que realiza cálculos de atenção em paralelo utilizando diferentes projeções lineares aprendidas para consultas, chaves e valores. Essa estrutura permite representar relações entre os elementos da sequência em diferentes subespaços de representação. As saídas das cabeças são concatenadas e submetidas a uma projeção linear, produzindo a representação de saída do mecanismo.
+
+Dependendo da tarefa exigida, esse motor de atenção é adaptado em três configurações fundamentais, todas já presentes na proposta original do \textit{Transformer} \cite{vaswani2017attention}. Na autoatenção (\textit{self-attention}), o foco é totalmente interno: todas as palavras avaliam umas às outras dentro da mesma sequência. Já na \textit{cross-attention}, que viabiliza a comunicação entre os blocos de codificação e decodificação, cria-se uma ponte onde as \textit{queries} vêm de uma estrutura e buscam correspondência nas \textit{keys} e \textit{values} da outra. Por fim, existe a \textit{masked attention}, crucial para tarefas de geração. Ela atua ocultando os termos seguintes da sequência para garantir que o modelo aprenda a prever a próxima palavra baseando-se estritamente no histórico já lido, sem acessar informações futuras.
+
+
+\subsection{Rede Feed-Forward Posicional (\textit{Position-wise Feed-Forward Network})}
+
+Além do mecanismo de atenção, cada camada do \textit{encoder} e do \textit{decoder} do Transformer contém uma segunda subcamada, aplicada de forma independente e idêntica a cada posição da sequência. Segundo \citet{vaswani2017attention}, essa subcamada consiste em duas transformações lineares com uma ativação ReLU entre elas, conforme a Equação~\eqref{eq:ffn}.
+
+\begin{equation}
+\text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2
+\label{eq:ffn}
+\end{equation}
+
+Embora as transformações lineares sigam a mesma forma em todas as posições da sequência, os parâmetros $W_1$, $b_1$, $W_2$ e $b_2$ são distintos em cada camada do modelo. Na proposta original de \citet{vaswani2017attention}, a dimensionalidade de entrada e saída dessa subcamada, $d_{model}$, é de 512, enquanto a camada interna, $d_{ff}$, projeta essa representação para uma dimensão quatro vezes maior, de 2048, antes de projetá-la de volta à dimensão original. É justamente essa subcamada de rede \textit{feed-forward} densa que, mais adiante, é substituída por uma camada esparsa de \textit{Mixture-of-Experts} na Seção~\ref{subsec:principais-modelos}.
+
+
+\subsection{Normalização de Camada (\textit{Layer Normalization})}
+
+O modelo \textit{Transformer} faz o uso de técnicas já muito utilizada no aprendizado profundo, sendo a primeira delas que se diz às conexões residuais (\textit{residual connections}), que foram consagradas por \cite{he2016resnet} no contexto de redes convolucionais. Nessa abordagem, a entrada original é somada de uma subcamada diretamente à sua própria saida. Ou seja, esse atalho cria uma espécie de via, que garante que os gradientes sigam livremente durante a fase de retropropagação, evitando o risco de perderem força ao longo do caminho.
+Outra técnica muito utilizada é a de normalização de camada  (\textit{Layer Normalization}), que foi introduzida por \cite{ba2016layernorm}. O papel dessa técnica é padronizar o fluxo de dados, fazendo com que os vetores de ativação se ajustem para que mantenham sempre uma média proxima de zero e uma variância próxima de um. %\cite{jurafsky2025slp} ressalta dizendo que ao ser aplicada estrategicamente no bloco do modelo, essa normalização atua como um regulador interno que impede oscilações drásticas, fazendo com que valores em faixas numéricas seguras e estáveis se mantenham. Na Figura \ref{fig:transformer_arch}, podemos ver essas duas operações como o bloco chamado \textit{Add \& Norm}.
+
+
+\subsection{Organização em Encoder e Decoder}
+
+Com os componentes já apresentados, tokenização, \textit{embedding}, codificação posicional, atenção, rede \textit{feed-forward} e normalização de camada, é possível descrever como o Transformer original os organiza em uma arquitetura completa. Segundo \citet{vaswani2017attention}, o modelo é composto por duas pilhas de camadas idênticas, um \textit{encoder} e um \textit{decoder}. Cada camada do \textit{encoder} contém duas subcamadas, uma de autoatenção e uma rede \textit{feed-forward} posicional, cada uma envolvida por uma conexão residual seguida de normalização de camada. Cada camada do \textit{decoder}, por sua vez, contém três subcamadas: uma autoatenção mascarada, que impede que uma posição atenda a posições futuras da sequência de saída; uma camada de \textit{cross-attention}, em que as consultas vêm do \textit{decoder} e as chaves e valores vêm da saída do \textit{encoder}; e a mesma rede \textit{feed-forward} posicional presente no \textit{encoder}. O \textit{encoder} processa a sequência de entrada por completo antes do início da geração, produzindo uma representação contextualizada que o \textit{decoder} consulta a cada novo \textit{token} gerado, de forma autorregressiva. A Figura~\ref{fig:transformer_arch} apresenta essa organização completa, conforme originalmente ilustrada por \citet{vaswani2017attention}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\textwidth]{images/llms/transformer_architeture.png}
+    \caption{Arquitetura completa do Transformer, com o \textit{encoder} à esquerda e o \textit{decoder} à direita. Fonte: \citet{vaswani2017attention}.}
+    \label{fig:transformer_arch}
+\end{figure}
+
+
+
+\section{Large Language Models}
+\label{sec:o-que-sao-llms}
+
+%A arquitetura descrita na Seção~\ref{sec:llms-transformer} explica como um \textit{Transformer} processa uma sequência de \textit{tokens}, mas não explica, por si só, o que faz de um modelo baseado nessa arquitetura ser chamado de \textit{Large Language Model} (LLM). Arquiteturas anteriores, como o BERT \citep{devlin2019bert}, já utilizavam o mesmo mecanismo de \textit{attention}, mas raramente são chamadas de LLMs na literatura atual. O que de fato distingue um LLM não é uma diferença estrutural, e sim uma questão de escala, tanto do número de parâmetros do modelo quanto do volume de dados utilizados em seu treinamento, além das capacidades comportamentais que essa escala passa a viabilizar. As subseções a seguir descrevem essas características, iniciando com a relação entre escala e o surgimento de capacidades emergentes, em seguida o comportamento de aprendizado em contexto que passou a caracterizar os LLMs atuais, depois o processo de treinamento em duas etapas que os transforma de modelos de linguagem brutos em assistentes utilizáveis e, por fim, os modelos específicos que serão avaliados neste trabalho.
+
+A arquitetura \textit{Transformer}, apresentada na Seção~\ref{sec:llms-transformer}, constitui a base dos grandes modelos de linguagem considerados neste trabalho. Esses modelos são pré-treinados em grandes coleções de texto para aprender padrões da linguagem e, em sua formulação generativa autorregressiva, produzir sequências por meio da predição sucessiva de \textit{tokens}, condicionada ao contexto disponível. Além do pré-treinamento, o comportamento desses modelos pode ser orientado por instruções e exemplos fornecidos na entrada, bem como por etapas adicionais de ajuste para seguimento de instruções. As subseções seguintes apresentam o aprendizado em contexto e o ajuste para seguimento de instruções, fundamentos relevantes para compreender o uso de LLMs nos agentes empregados na combinação de previsões. Por fim, são apresentados os modelos empregados na solução proposta.
+
+
+
+%\subsection{Escala e propriedades emergentes}
+%\label{subsec:escala-emergencia}
+
+%Um dos fatores que impulsionou a transição de modelos \textit{Transformer} de pesquisa para os LLMs atuais foi a constatação empírica de que o desempenho desses modelos melhora de forma previsível à medida que aumentam o número de parâmetros, o tamanho do conjunto de dados de treinamento e o poder computacional empregado. Essa relação, descrita por \citet{kaplan2020scaling}, ficou conhecida como \textit{lei de escala} (\textit{scaling law}) e mostra que a perda de treinamento de um modelo de linguagem decai como uma lei de potência em função desses três fatores, com tendências que se mantêm consistentes por várias ordens de grandeza.
+
+%Essa escala foi perseguida por meio de uma linhagem de modelos construída diretamente sobre o \textit{decoder} do Transformer apresentado na Seção~\ref{sec:llms-transformer}. \citet{radford2018gpt} propuseram o GPT, um modelo composto unicamente pelo \textit{decoder} da arquitetura original, treinado de forma generativa sobre um grande corpus de texto não rotulado e, em seguida, ajustado para tarefas específicas. Essa mesma base arquitetural foi escalada por \citet{radford2019language} no GPT-2, que já demonstrava a capacidade de realizar diversas tarefas de linguagem sem qualquer ajuste fino, apenas a partir do texto fornecido como entrada. Foi sobre essa mesma linhagem que \citet{brown2020language} construíram o GPT-3, elevando o número de parâmetros do modelo, ou seja, o conjunto de pesos aprendidos nas matrizes de atenção, nas camadas totalmente conectadas e na matriz de \textit{embedding} já descritas na Seção~\ref{sec:llms-transformer}, para 175 bilhões, um salto de mais de duas ordens de grandeza em relação ao GPT-2.
+
+%Foi justamente com essa escala que \citet{brown2020language} demonstraram de forma sistemática uma consequência prática das leis de escala: um modelo \textit{Transformer} \textit{decoder-only} suficientemente grande passa a resolver tarefas que nunca foram explicitamente fornecidas durante seu treinamento, bastando para isso receber instruções e alguns exemplos dentro do próprio texto de entrada, sem qualquer atualização de seus parâmetros. Essa capacidade, discutida com mais detalhes na próxima subseção, é uma das primeiras evidências de que aumentar a escala de um modelo não apenas melhora seu desempenho em tarefas já conhecidas, mas também amplia o repertório de tarefas que ele é capaz de realizar.
+
+%Partindo dessa observação, \citet{wei2022emergent} demonstraram que, diferentemente da melhoria gradual de desempenho prevista pelas leis de escala, certas capacidades dos LLMs não surgem de forma contínua conforme o modelo cresce, mas sim de maneira abrupta, tornando-se presentes apenas a partir de um determinado limiar de parâmetros e de dados de treinamento. Os autores definem uma capacidade como \textit{emergente} quando ela está ausente em modelos menores, mas presente em modelos maiores, de tal forma que seu surgimento não pode ser previsto simplesmente extrapolando o desempenho observado nos modelos de menor escala. Entre os exemplos discutidos pelos autores estão a capacidade de realizar operações aritméticas com múltiplos dígitos, a compreensão de instruções compostas por várias etapas e a realização de raciocínio lógico encadeado a partir de \textit{prompts}.
+
+%Essa propriedade de emergência é particularmente relevante para este trabalho, já que é a partir dela que se torna viável utilizar um LLM não apenas como um gerador de texto, mas como um componente capaz de interpretar contexto, seguir instruções complexas e realizar tarefas de raciocínio sobre dados numéricos, características que serão exploradas na Seção~\ref{sec:llm-agents} para a construção de agentes capazes de orquestrar a combinação de modelos de previsão.  
+
+\subsection{Aprendizado em Contexto (\textit{In-Context Learning})}
+\label{subsec:in-context-learning}
+
+O termo \textit{in-context learning} (ICL) foi utilizado por \citet{brown2020language} para descrever o comportamento observado no GPT-3: para todas as tarefas avaliadas pelos autores, o modelo foi aplicado sem qualquer atualização de gradiente ou ajuste fino, com a tarefa e as demonstrações de poucos exemplos especificadas unicamente por meio da interação em texto com o modelo. Isso incluía desde tarefas de tradução e resposta a perguntas até tarefas que exigem algum tipo de raciocínio construído no momento, como desembaralhar as letras de uma palavra ou realizar operações aritméticas com três dígitos.
+
+\citet{dong2022survey}, em um levantamento amplo sobre o tema, sistematizam essa ideia em uma definição formal: o aprendizado em contexto é um paradigma que permite a um modelo de linguagem aprender uma tarefa a partir de apenas alguns exemplos fornecidos na forma de demonstração. Nessa formulação, dado um texto de entrada e um conjunto de possíveis respostas, o modelo condiciona sua previsão a um contexto de demonstração formado por uma instrução opcional e por um pequeno número de pares de exemplo e resposta escritos em linguagem natural, sem que nenhum parâmetro do modelo seja atualizado nesse processo.
+
+Essa característica é o que diferencia o ICL do aprendizado \textit{few-shot} tradicional em Aprendizagem de Máquina. Enquanto o \textit{few-shot learning} convencional envolve o ajuste dos parâmetros de um modelo a partir de um pequeno conjunto de exemplos rotulados, o ICL é realizado inteiramente sobre um modelo já pré-treinado e congelado, bastando modificar o texto de entrada para que o modelo se adapte a uma nova tarefa. Por esse motivo, \citet{brown2020language} também descrevem variações no número de exemplos fornecidos no contexto, chamadas de \textit{zero-shot}, quando nenhuma demonstração é fornecida e a tarefa é descrita apenas por instrução, \textit{one-shot}, quando um único exemplo é fornecido, e \textit{few-shot}, quando um pequeno número de exemplos é incluído no próprio \textit{prompt}.
+
+Essa propriedade tem uma implicação direta para a proposta deste projeto. Como o comportamento do modelo pode ser direcionado apenas pela forma como a informação é apresentada no texto de entrada, torna-se possível descrever novas tarefas, ferramentas ou instruções para um LLM sem a necessidade de treiná-lo ou reajustá-lo para cada novo caso. É justamente essa capacidade que viabiliza a construção de agentes capazes de interpretar instruções e decidir entre diferentes ações a partir do próprio \textit{prompt}, tema discutido na Seção~\ref{sec:llm-agents}.
+
+  
+\subsection{Alinhamento e Seguimento de Instruções}
+\label{subsec:alinhamento}
+
+O aprendizado em contexto, discutido na subseção anterior, permite orientar as respostas de um LLM por meio de instruções e exemplos fornecidos no texto de entrada, sem atualizar seus parâmetros. Essa possibilidade, entretanto, não garante que as respostas correspondam à intenção do usuário. Conforme discutido por \citet{ouyang2022instructgpt}, mesmo modelos de grande escala podem produzir respostas pouco úteis, incorretas ou inadequadas, motivando etapas adicionais de ajuste voltadas ao seguimento de instruções e às preferências humanas.
+
+Para mitigar essas limitações, \citet{ouyang2022instructgpt} empregam inicialmente um ajuste supervisionado do modelo pré-treinado com demonstrações humanas do comportamento desejado. Em seguida, comparações humanas entre respostas são utilizadas para treinar um modelo de recompensa, que orienta o refinamento do modelo de linguagem por aprendizado por reforço. Esse procedimento é conhecido como \textit{Reinforcement Learning from Human Feedback} (RLHF). Nas avaliações realizadas pelos autores, as respostas do InstructGPT com 1,3 bilhão de parâmetros foram preferidas às do GPT-3 com 175 bilhões de parâmetros. Esse resultado indica que o ajuste com feedback humano pode melhorar a adequação das respostas às intenções dos usuários, mesmo em modelos de menor porte.
+
+A distinção entre um modelo apenas pré-treinado e um modelo ajustado para seguir instruções é particularmente relevante para a construção de agentes. Ao revisar paradigmas de uso de ferramentas por LLMs, \citet{kumar2026metatool} observa que abordagens como o ReAct \citep{yao2023react} podem ser implementadas por meio de instruções e exemplos fornecidos no contexto, sem ajuste adicional dos parâmetros do modelo. O ReAct intercala etapas de raciocínio e execução de ações, incorporando as observações resultantes para orientar os passos seguintes, conforme será detalhado na Seção~\ref{subsec:react}. Nos experimentos de adaptação a ferramentas relatados por \citet{kumar2026metatool}, os exemplos fornecidos no \textit{prompt} responderam pela maior parte dos ganhos de desempenho, enquanto os mecanismos adicionais de adaptação avaliados não produziram ganhos nas condições investigadas. Esses resultados sugerem que instruções e exemplos no contexto podem orientar o uso de ferramentas por modelos já ajustados para seguir instruções. Essa combinação fundamenta a utilização de LLMs como componentes de agentes que selecionam ações entre opções predefinidas, sem necessariamente exigir treinamento específico para cada tarefa.
+
+
+
+\subsection{Principais Modelos}
+\label{subsec:principais-modelos}
+
+Para a avaliação experimental deste projeto, foram selecionados dois modelos de linguagem de peso aberto, provenientes de organizações distintas, o que permite avaliar o comportamento do agente de combinação sob diferentes condições de raciocínio e uso de ferramentas. Antes de apresentar cada modelo individualmente, é necessário introduzir um conceito arquitetural comum a ambos: a arquitetura \textit{Mixture-of-Experts} (MoE) \citep{masoudnia2014mixture}. 
+
+\subsubsection{Mixture-of-Experts (MoE)}
+
+Em uma rede neural convencional, dita \textit{densa}, todos os seus parâmetros são utilizados no processamento de cada entrada, de modo que o custo computacional de cada inferência cresce na mesma proporção que o número de parâmetros do modelo. A ideia de contornar essa limitação por meio de computação condicional, na qual apenas partes da rede são ativadas para cada exemplo, foi formalizada por \citet{shazeer2017moe}, que propuseram uma camada de \textit{Mixture-of-Experts} esparsamente ativada composta por milhares de subredes especializadas, chamadas \textit{peritos} (\textit{experts}). Nesse trabalho, os autores aplicaram a técnica originalmente a redes recorrentes do tipo LSTM, e não ainda à arquitetura Transformer, alcançando ganhos de capacidade do modelo superiores a mil vezes com apenas uma pequena perda de eficiência computacional.
+
+A integração dessa ideia à arquitetura Transformer foi posteriormente simplificada por \citet{fedus2022switch} no chamado Switch Transformer. Enquanto o esquema original de \citet{shazeer2017moe} selecionava os $k$ peritos mais adequados para cada token, o Switch Transformer simplifica esse processo selecionando apenas o perito de maior pontuação ($k=1$), o que reduz a complexidade da comunicação entre dispositivos de treinamento e melhora a estabilidade do treinamento, mantendo a qualidade do modelo. 
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[scale=0.5]{images/llms/moe_diagram.png} 
+    \caption{Camada MoE Fonte: \citet{fedus2022switch}}
+    \label{fig:moe_diagram}
+\end{figure}
+
+Na Figura~\ref{fig:moe_diagram}, apresentada no trabalho de \citet{fedus2022switch}, é possível observar esse mecanismo em detalhe. Dois tokens de entrada, ``More'' e ``Parameters'', seguem inicialmente o fluxo usual de um bloco de Transformer, passando pela camada de autoatenção e pela normalização residual. Ao chegarem à etapa em que normalmente haveria uma única camada \textit{feed-forward} (FFN) densa, cada token passa antes por um roteador, que calcula uma distribuição de probabilidades sobre os quatro peritos disponíveis, representada na figura pelos pequenos histogramas abaixo de cada roteador. O token ``More'' é então direcionado ao perito de maior probabilidade, o FFN2, com valor de roteamento $p=0{,}65$, enquanto o token ``Parameters'' é direcionado ao FFN1, com valor de roteamento $p=0{,}8$. A saída do perito selecionado para cada token é multiplicada por esse valor de probabilidade, indicado na figura pela linha tracejada, antes de ser somada de volta ao fluxo principal da rede na etapa final de ``Add + Normalize''. Note que, para ambos os tokens representados, apenas um entre os quatro peritos disponíveis é efetivamente utilizado.
+
+Essa é a origem da distinção entre parâmetros \textit{totais} e parâmetros \textit{ativos} que aparece nas descrições dos modelos a seguir: o número total de parâmetros do modelo corresponde à soma de todos os peritos existentes, enquanto o número de parâmetros ativos corresponde apenas àqueles efetivamente utilizados para processar um token específico. Essa distinção, entretanto, não se estende ao consumo de memória do modelo: como o roteador pode selecionar qualquer perito a cada novo token processado, todos os peritos precisam permanecer carregados na memória da GPU durante a inferência, ainda que apenas um pequeno subconjunto deles seja utilizado a cada passo.
+
+\subsubsection{Qwen}
+
+A família Qwen, desenvolvida pela equipe de mesmo nome, foi introduzida por \citet{qwentechreport2023} como uma série de modelos de linguagem que inclui tanto modelos base pré-treinados quanto variantes ajustadas para diálogo (\textit{Qwen-Chat}) por meio de técnicas de alinhamento com feedback humano, discutidas na Seção~\ref{subsec:alinhamento}. Além dos modelos de propósito geral, os autores também apresentaram variantes especializadas, como o Code-Qwen, voltado à geração de código, e o Math-Qwen-Chat, voltado a tarefas matemáticas, ambos construídos a partir dos modelos base por meio de ajuste fino adicional. Um ponto destacado pelos próprios autores é que os modelos de diálogo da família demonstraram capacidades avançadas de planejamento e uso de ferramentas para a construção de aplicações baseadas em agentes, alcançando desempenho competitivo mesmo em comparação a modelos de porte consideravelmente maior em tarefas complexas, como a utilização de interpretadores de código.
+
+A versão mais recente da família, apresentada por \citet{qwen3team2025}, expande esse conjunto para incluir tanto arquiteturas densas quanto arquiteturas MoE, com escalas de parâmetros que variam de 0,6 a 235 bilhões. O modelo de maior porte da série, o Qwen3-235B-A22B, ilustra bem a distinção entre parâmetros totais e ativos discutida na seção anterior: apesar de possuir 235 bilhões de parâmetros totais, apenas 22 bilhões deles são efetivamente ativados para processar cada token. Uma característica central do Qwen3, segundo os autores, é a integração de um modo de raciocínio estendido (\textit{thinking mode}), voltado a tarefas complexas de múltiplas etapas, com um modo de resposta direta (\textit{non-thinking mode}), em um único modelo unificado, eliminando a necessidade de alternar entre modelos distintos para cada tipo de tarefa, como ocorria anteriormente entre modelos de conversação geral e modelos especializados em raciocínio. Os autores também introduzem um mecanismo de orçamento de raciocínio (\textit{thinking budget}), que permite ao usuário definir quantos \textit{tokens} o modelo pode gastar gerando seu raciocínio interno antes de produzir a resposta final, possibilitando balancear o tempo de resposta e a qualidade da resposta de acordo com a complexidade da tarefa. Os autores relatam ainda que o Qwen3 alcança resultados competitivos frente a modelos MoE maiores e a modelos proprietários em tarefas de geração de código, raciocínio matemático e tarefas de agentes, além de expandir o suporte multilíngue de 29 para 119 idiomas e dialetos em relação à geração anterior, o Qwen2.5.
+
+\subsubsection{gpt-oss}
+
+O gpt-oss, apresentado no \textit{model card} publicado pela OpenAI \citep{gptossmodelcard2025}, corresponde a dois modelos de peso aberto construídos sobre uma arquitetura MoE que, segundo os próprios autores, se apoia nas arquiteturas do GPT-2 e do GPT-3, adotando padrões alternados de atenção densa e de atenção esparsa localmente contida, além de atenção multi-consulta agrupada (\textit{grouped multi-query attention}) com tamanho de grupo igual a 8 e codificação posicional rotativa (RoPE), com suporte nativo a janelas de contexto de até 128 mil tokens \citep{openai2025gptossblog}. O modelo maior, gpt-oss-120b, é composto por 36 camadas, totalizando 116,8 bilhões de parâmetros, dos quais apenas 5,1 bilhões são ativados por token a cada passo de inferência; o modelo menor, gpt-oss-20b, possui 24 camadas, totalizando 20,9 bilhões de parâmetros, dos quais 3,6 bilhões são ativados por token. Segundo a OpenAI, essa proporção reduzida de parâmetros ativos é o que permite que o gpt-oss-120b seja executado em uma única GPU de 80 GB e que o gpt-oss-20b seja executado em dispositivos com apenas 16 GB de memória, alcançando desempenho próximo ao do modelo proprietário o4-mini e o3-mini da própria empresa, respectivamente, em benchmarks de raciocínio.
+
+Os autores relatam que os modelos foram treinados por meio de destilação em larga escala, técnica na qual um modelo menor é treinado para reproduzir o comportamento de um modelo maior e mais capaz que atua como professor, combinada a uma etapa de aprendizado por reforço que se apoia em técnicas empregadas nos modelos internos mais avançados da OpenAI, incluindo o modelo o3. O treinamento foi realizado principalmente sobre dados em inglês, com foco em conteúdos de exatas, programação e conhecimento geral \citep{openai2025gptossblog}. Os modelos foram otimizados especificamente para capacidades agênticas, incluindo navegação para pesquisa, uso de ferramentas em Python e suporte a funções fornecidas pelo desenvolvedor, utilizando um formato de conversa estruturado (\textit{rendered chat format}) que, segundo os autores, favorece o seguimento claro de instruções e a delimitação de papéis entre sistema, usuário e assistente. Os pesos dos modelos, implementações de inferência, ambientes de ferramentas e tokenizadores foram disponibilizados sob licença Apache 2.0.
+
+\subsubsection{Gemma}
+
+O Gemma, desenvolvido pelo Google DeepMind, é apresentado por \citet{gemma4team2026} em sua quarta geração como uma nova geração de modelos de linguagem de peso aberto e nativamente multimodais, projetados para avançar eficiência computacional e capacidade de raciocínio. A família Gemma 4 reúne, em um único conjunto, tanto arquiteturas densas quanto arquiteturas MoE, com escalas de parâmetros que variam de 2,3 a 31 bilhões, distribuídas em quatro variantes: dois modelos de borda, E2B e E4B, voltados a dispositivos móveis e de baixo recurso computacional; um modelo de 12 bilhões de parâmetros com arquitetura unificada e sem codificadores dedicados, que processa áudio e imagem por meio de projeções lineares diretas do dado bruto, em vez de codificadores multimodais separados; e um modelo MoE de 26 bilhões de parâmetros totais, identificado como 26B A4B, do qual apenas 3,8 bilhões são ativados por token, distribuídos entre 128 peritos, dos quais 8 são ativados a cada passo de inferência, além de um perito compartilhado sempre ativo. É essa última variante, o Gemma 26B A4B, a empregada neste trabalho no papel de agente combinador.
+
+Assim como o Qwen3, discutido anteriormente, o Gemma 4 integra um modo de raciocínio estendido, que os próprios autores relatam ter sido inspirado pela técnica popularizada no \textit{system card} do o1 da OpenAI \citep{o1systemcard2024}: antes de produzir a resposta final, o modelo pode gerar um rastro de raciocínio explícito. Diferentemente do Qwen3, porém, esse modo não é ativado por um parâmetro de orçamento de \textit{tokens}, mas por um \textit{token} de controle específico inserido no início do \textit{prompt} de sistema; na ausência desse \textit{token}, o modelo ainda emite a estrutura de marcação do raciocínio, mas com o bloco de pensamento vazio, produzindo diretamente a resposta final. O Gemma 4 também introduz suporte nativo ao papel de sistema (\textit{system role}) na conversa, ausente nas gerações anteriores da família, e os autores relatam melhorias específicas de velocidade de inferência, memória e eficiência computacional em relação ao Gemma 3, além de capacidades aprimoradas de codificação e uso de ferramentas, com suporte nativo a chamada de função. Os pesos do modelo são disponibilizados sob licença Apache 2.0.
+
+% \subsubsection{Gemma}
+
+% A família Gemma, desenvolvida pelo Google DeepMind, teve sua terceira geração apresentada por \citet{gemma3team2025} como uma adição multimodal à família de modelos leves de peso aberto, com escalas de parâmetros entre 1 e 27 bilhões, introduzindo capacidades de compreensão visual, suporte ampliado a idiomas e janelas de contexto de pelo menos 128 mil tokens. Os autores destacam que os modelos foram treinados por meio de destilação a partir de um modelo professor maior e que o novo processo de pós-treinamento adotado melhorou significativamente as capacidades matemáticas, conversacionais, de seguimento de instruções e multilíngues dos modelos, a ponto de o Gemma3-4B-IT alcançar desempenho competitivo com o Gemma2-27B-IT, um modelo de porte muito maior da geração anterior.
+
+% A quarta geração da família, apresentada por \citet{gemma4team2026}, é composta por quatro variantes de peso aberto voltadas a diferentes contextos de implantação, das quais duas são modelos densos de menor porte, chamados E2B e E4B, com 2,3 e 4,5 bilhões de parâmetros efetivos respectivamente, uma variante MoE de 26 bilhões de parâmetros totais e 4 bilhões de parâmetros ativos, e uma variante densa de 31 bilhões de parâmetros, com janela de contexto de até 256 mil tokens. Assim como o Qwen3, o Gemma 4 também incorpora um modo de raciocínio estendido, no qual o modelo gera um rastro de raciocínio antes de produzir a resposta final, com o objetivo declarado pelos autores de melhorar o desempenho em domínios que exigem maior capacidade de raciocínio, como matemática e programação. Os autores destacam ainda uma otimização voltada especificamente a contextos longos: como o uso de janelas de contexto muito extensas tende a causar uma explosão no tamanho do \textit{cache} de chave-valor do mecanismo de atenção, os autores mantiveram uma proporção de cinco camadas de atenção local para cada camada de atenção global (proporção de quatro para um no modelo de 2,3 bilhões de parâmetros) e adotaram uma variante posicional chamada p-RoPE, o que, combinado ao compartilhamento do \textit{cache} de chave-valor entre camadas, reduziu em até 37,5\% o espaço ocupado por esse \textit{cache} em contextos longos.
+
+\section{Agentes baseados em LLMs}
+\label{sec:llm-agents}
+
+As propriedades discutidas nas seções anteriores permitem que um LLM seja utilizado não apenas como um gerador de texto, mas como o componente de decisão de um agente. Esta seção apresenta o conceito de agente e discute como LLMs passaram a ser empregados nessa função, com foco no paradigma ReAct e no uso de ferramentas restritas a um conjunto predefinido, abordagem adotada neste projeto para a construção de um agente combinador de previsões.
+
+\subsection{Definição de agente}
+\label{subsec:definicao-agente}
+
+Um agente pode ser definido de forma ampla como qualquer entidade capaz de perceber seu ambiente por meio de sensores e agir sobre esse ambiente por meio de atuadores \citep{russellnorvig2010}. Um agente de software, por exemplo, tem como sensores as informações textuais ou numéricas que recebe como entrada, e como atuadores as ações que pode executar, como realizar uma chamada de função ou emitir uma resposta.
+
+Antes do surgimento dos LLMs, a construção de agentes autônomos enfrentava uma limitação importante. Segundo \citet{wang2023surveyagents}, pesquisas anteriores nessa área costumavam treinar agentes com conhecimento limitado, restrito a ambientes isolados e específicos de cada tarefa, o que divergia significativamente do processo de aprendizado humano e dificultava que esses agentes tomassem decisões de maneira semelhante à humana. Os autores argumentam que essa limitação começou a ser superada quando LLMs, por meio da aquisição de grandes quantidades de conhecimento obtido durante o pré-treinamento, passaram a demonstrar um potencial considerável para se aproximar de um comportamento mais geral e menos dependente de treinamento específico para cada ambiente.
+
+Um agente baseado em LLM pode então ser entendido como um sistema no qual um modelo de linguagem assume o papel de núcleo de decisão do agente: a cada iteração, o modelo recebe uma representação textual do estado atual do ambiente (por exemplo, o histórico da conversa, o resultado da última ação executada, ou os dados de um problema a ser resolvido) e produz, a partir desse estado, tanto um raciocínio sobre qual ação tomar, que pode ser uma resposta final ou a invocação de uma ferramenta externa. É essa alternância entre raciocínio e ação, formalizada no paradigma ReAct, que será discutida na Seção~\ref{subsec:react}.
+
+
+\subsection{O paradigma ReAct}
+\label{subsec:react}
+
+Até o início da década de 2020, as capacidades de raciocínio e de ação dos LLMs eram estudadas majoritariamente como tópicos separados. De um lado, encontrava-se a linha de trabalho representada por \citet{wei2022cot}, que demonstraram que solicitar a um LLM que gerasse uma cadeia de pensamento, isto é, uma sequência de passos intermediários de raciocínio escritos em linguagem natural antes da resposta final, melhorava significativamente seu desempenho em tarefas de raciocínio aritmético, de senso comum e simbólico. Nessa técnica, o modelo raciocina sobre um problema fechado, sem qualquer possibilidade de consultar informações externas ou de agir sobre um ambiente para obter novos dados durante esse raciocínio. De outro lado, havia uma linha de trabalho voltada à geração de planos de ação para agentes, sem que essas ações fossem necessariamente acompanhadas de um raciocínio explícito que as justificasse.
+
+\citet{yao2023react} identificaram essa lacuna e propuseram o ReAct, um paradigma que solicita ao LLM que gere, de forma intercalada, tanto rastros de raciocínio verbais quanto ações específicas para a tarefa em questão. Segundo os autores, essa intercalação permite uma sinergia entre as duas capacidades: os rastros de raciocínio ajudam o modelo a induzir, acompanhar e ajustar planos de ação, além de lidar com exceções, enquanto as ações permitem que o modelo interaja com fontes externas, como uma base de conhecimento ou um ambiente simulado, e incorpore essas novas informações ao raciocínio subsequente. Na prática, isso é operacionalizado por meio de um ciclo repetido de três elementos textuais, apresentados no próprio \textit{prompt} como exemplos de demonstração: um \textit{Thought} (pensamento), em que o modelo verbaliza sua interpretação do estado atual e decide o que fazer a seguir; uma \textit{Action} (ação), em que o modelo emite um comando dentro de um espaço de ações predefinido; e uma \textit{Observation} (observação), que corresponde ao retorno obtido após a execução dessa ação, e que é reincorporado ao contexto para orientar o próximo pensamento.
+
+Um exemplo concreto apresentado por \citet{yao2023react} ilustra esse funcionamento. Para tarefas de perguntas e respostas de múltiplos saltos, como as do conjunto de dados HotpotQA, os autores definem um espaço de ação composto por três comandos: \textit{Search}, que busca um termo em uma API simplificada da Wikipédia; \textit{Lookup}, que localiza a próxima ocorrência de uma palavra-chave dentro do artigo recuperado; e \textit{Finish}, que encerra a tarefa retornando a resposta final. A cada passo, o modelo verbaliza por que decidiu buscar determinado termo, executa a busca, recebe o trecho de texto correspondente como observação e, com base nessa nova informação, decide o próximo passo, até reunir evidências suficientes para responder à pergunta original.
+
+Os resultados relatados por \citet{yao2023react} abrangem quatro conjuntos de tarefas distintos: perguntas e respostas de múltiplos saltos (HotpotQA), verificação de fatos (Fever), e dois ambientes interativos de tomada de decisão sequencial, o ALFWorld e o WebShop. Segundo os autores, nas duas primeiras tarefas, o ReAct supera os problemas de alucinação e de propagação de erros comumente observados na cadeia de pensamento pura, justamente por poder consultar uma fonte externa de informação em vez de depender inteiramente do conhecimento paramétrico do modelo, produzindo trajetórias de resolução de tarefa mais interpretáveis para um leitor humano do que as geradas por métodos sem rastros de raciocínio. Já nos dois ambientes interativos, os autores relatam que o ReAct supera métodos de aprendizado por imitação e de aprendizado por reforço em taxas de sucesso absolutas de 34\% no ALFWorld e 10\% no WebShop, utilizando para isso apenas um ou dois exemplos de demonstração no próprio \textit{prompt}, sem qualquer necessidade de ajuste fino dos parâmetros do modelo.
+
+É importante destacar, no entanto, que o desempenho do ReAct não é uniformemente superior ao da cadeia de pensamento pura em todas as tarefas. Uma reanálise dos resultados originais aponta que, embora o ReAct supere consistentemente uma variante que apenas age sem verbalizar raciocínio algum, ele supera a cadeia de pensamento pura na tarefa de verificação de fatos (Fever), mas fica atrás dela na tarefa de perguntas e respostas (HotpotQA), sendo que o próprio desempenho do ReAct tende a se deteriorar quando os resultados de busca recuperados são pouco informativos, dificultando a recuperação do raciocínio do modelo.
+
+Uma avaliação mais recente sobre o desempenho do ReAct foi apresentada por \citet{verma2024brittle}. Os autores conduziram uma análise de sensibilidade introduzindo variações sistemáticas nos \textit{prompts} utilizados em tarefas de tomada de decisão sequencial em um ambiente doméstico simulado, e constataram que o desempenho do modelo é pouco influenciado pela intercalação entre raciocínio e ação em si, ou mesmo pelo conteúdo dos rastros de raciocínio gerados, contrariando as alegações originais e o uso corrente do método. Segundo os autores, o desempenho observado é explicado, em grande medida, pela similaridade entre os exemplos fornecidos no \textit{prompt} e a consulta específica que está sendo resolvida, e não por uma capacidade de raciocínio genuína do modelo, o que impõe ao projetista do \textit{prompt} o ônus de fornecer exemplos específicos para cada instância do problema.
+
+Essa ressalva é particularmente relevante para a proposta deste projeto. Se parte do ganho de desempenho atribuído ao ReAct de fato depende da qualidade e da especificidade dos exemplos de demonstração fornecidos, e não de uma capacidade de raciocínio aberta e irrestrita do modelo, isso reforça a decisão de restringir o espaço de ações do agente combinador a um conjunto pequeno e bem definido de funções de transformação, estratégias de combinação de predições e seleção de modelos, tema discutido na Seção~\ref{subsec:uso-ferramentas}, em vez de permitir que o modelo gere livremente código ou decisões não verificáveis.
+
+
+
+
+\subsection{Uso de Ferramentas e Mitigação de Alucinação}
+\label{subsec:uso-ferramentas}
+
+Uma das motivações para capacitar LLMs de utilizar ferramentas externas é justamente compensar limitações que esses modelos apresentam mesmo quando demonstram forte desempenho em tarefas de linguagem natural. \citet{schick2023toolformer} observam que modelos de linguagem exibem habilidades notáveis para resolver novas tarefas a partir de poucos exemplos ou instruções textuais, especialmente em escala, mas, paradoxalmente, apresentam dificuldades em funcionalidades básicas, como aritmética ou busca factual, nas quais modelos mais simples e especializados se sobressaem. Os autores propõem o Toolformer, um modelo autossupervisionada para decidir quais APIs invocar, em que momento invocá-las, quais argumentos fornecer, e como incorporar o resultado dessas chamadas à geração de texto subsequente, exigindo um número reduzido de demonstrações para cada ferramenta.
+
+Esse mesmo princípio de delegar à ferramentas externas a realização de tarefas que o LLM não executa de forma confiável, também motivou o desenvolvimento de modelos especializados em gerar chamadas de funções. \citet{patil2023gorilla} destacam que, mesmo modelos de ponta apresentam dificuldade em utilizar ferramentas por meio de chamadas de API, em grande parte devido à sua inabilidade de gerar argumentos de entrada precisos devido a alucinações. Os autores propõem o Gorilla, um modelo ajustado especificamente para essa tarefa que mitiga substancialmente esse problema de alucinação quando combinado a um mecanismo de recuperação da documentação correta da ferramenta antes da geração da chamada. Esse resultado é relevante para a proposta deste projeto porque sugere que restringir e documentar claramente o espaço de ações disponível a um agente, em vez de permitir chamadas de função totalmente livres, é uma estratégia eficaz para reduzir a ocorrência de alucinações.
+
+É exatamente essa lógica de restrição que orienta o desenho do agente combinador proposto neste projeto. Em vez de permitir que o LLM gere livremente código, transforme a representação dos dados, gere predições ou tome decisões de combinação, o espaço de ações do agente é limitado a um conjunto fechado de funções pré-definidas e determinísticas, que implementam operações de transformação, previsão e combinação já estabelecidas na literatura. Ao agente cabe apenas decidir qual dessas funções invocar, em qual ordem, e com quais argumentos, e nunca gerar diretamente um valor numérico de previsão, um peso de combinação ou uma transformação de dados a partir de seu próprio conhecimento paramétrico. O conjunto específico de funções disponibilizado ao agente é detalhado no Capítulo~\ref{chp:proposta}. Essa decisão de projeto está alinhada à observação de \citet{kumar2026metatool}, discutida na Seção~\ref{subsec:alinhamento}, de que exemplos de demonstração bem elaborados no próprio \textit{prompt} costumam ser suficientes para que um modelo já alinhado por instrução utilize corretamente um conjunto de ferramentas, sem que seja necessário qualquer ajuste fino adicional específico para essa tarefa.
+
+Ainda assim, é importante reconhecer que restringir o espaço de ações a um conjunto fechado de funções reduz, mas não elimina, a possibilidade de erros. Uma síntese recente reunindo 27 trabalhos de avaliação e taxonomia publicados entre 2023 e 2026, abrangendo 19 \textit{benchmarks} distintos de agentes baseados em LLMs, identifica que falhas relacionadas à invocação de ferramentas continuam a ocorrer mesmo em cenários controlados \citep{albayaydh2026beyond}. Segundo os autores, uma dessas taxonomias caracteriza os erros de uso de ferramentas por LLMs em sete tipos recorrentes: número insuficiente de chamadas à função quando mais de uma seria necessária, valores de argumento incorretos, nomes de argumento incorretos, tipos de argumento incorretos, chamadas repetidas e redundantes à mesma função, nomes de função alucinados que não correspondem a nenhuma ferramenta realmente disponível, e formatação inválida da saída esperada pelo sistema. Essa taxonomia é particularmente útil para a etapa de avaliação deste projeto, pois oferece uma categorização concreta dos tipos de erro que devem ser monitorados na saída do agente combinador, para além da simples medição de acurácia preditiva.
+
+A combinação dessas duas perspectivas, a evidência de que a restrição e a documentação clara do espaço de ações reduzem a alucinação \citep{patil2023gorilla}, e o reconhecimento de que erros residuais de invocação ainda podem ocorrer mesmo nesse cenário mais controlado \citep{albayaydh2026beyond}, reforça a necessidade de mecanismos adicionais de verificação sobre as chamadas de função emitidas pelo agente, tema que será retomado no Capítulo~\ref{chp:proposta} ao lado da arquitetura completa do sistema proposto, que pode envolver mais de um agente com papéis distintos, tema discutido a seguir na Seção~\ref{subsec:multiagentes}.
+
+
+
+\subsection{Sistemas Multiagente}
+\label{subsec:multiagentes}
+
+Além de um único agente que intercala raciocínio e ação, a literatura recente também explora arquiteturas compostas por múltiplos agentes baseados em LLMs, cada um responsável por um papel distinto dentro de uma tarefa maior. \citet{wu2023autogen} descrevem esse tipo de sistema como um conjunto de agentes personalizáveis e conversáveis, que podem operar combinando LLMs, entradas humanas e ferramentas, permitindo que padrões de interação entre eles sejam definidos tanto em linguagem natural quanto em código. Segundo os autores, essa estrutura simplifica e unifica a implementação de fluxos de trabalho complexos como conversas automatizadas entre agentes, sendo aplicável a domínios que vão de matemática e programação a tomada de decisão \textit{online}.
+
+Entretanto, dividir a execução de uma tarefa entre múltiplos agentes não é, por si só, garantia de melhor desempenho. \citet{hong2024metagpt} observam que sistemas multiagente baseados em LLMs, quando construídos de forma ingênua, isto é, simplesmente encadeando a saída de um agente como entrada do próximo, sofrem de um problema de alucinação em cascata, em que um erro cometido por um agente inicial se propaga e se amplifica ao longo da cadeia, comprometendo a solução final. Para mitigar esse problema, os autores propõem que cada agente seja obrigado a produzir saídas estruturadas e padronizadas, inspiradas em procedimentos operacionais padronizados utilizados por equipes humanas, o que permite que agentes subsequentes validem e verifiquem os resultados dos agentes anteriores antes de prosseguir, reduzindo o acúmulo de erros ao longo do processo.
+
+Esse padrão de divisão de papéis já foi aplicado especificamente ao domínio de séries temporais. \citet{zhao2025timeseriesscientist} propõem um sistema com quatro agentes especializados, sendo: $i)$ um agente Curador, que realiza diagnósticos guiados por LLM apoiados em ferramentas externas que analisam estatísticas dos dados para escolher o pré-processamento adequado; $ii)$ um agente Planejador, que restringe o espaço de hipóteses de escolha de modelo a partir de diagnósticos multimodais; $iii)$ um agente Previsor, que realiza o ajuste e a validação dos modelos e, com base nesses resultados, seleciona adaptativamente tanto a configuração final do modelo quanto a estratégia de \textit{ensemble} a ser utilizada; e $iv)$ um agente Relator, que consolida todo o processo em um relatório transparente. Segundo os autores, essa divisão de responsabilidades torna o processo de previsão um sistema interpretável e extensível, em contraposição à abordagem de caixa-preta característica de muitos modelos de previsão tradicionais.
+
+\section{Procedimentos e Métricas de Avaliação} \label{sec:metricas}
+
+Para uma avaliação robusta, cada série temporal dos diferentes conjuntos de dados é separada três partes, sendo uma subsequência de treino, composta por todas as observações anteriores ao período de avaliação, uma subsequência de validação, composta por um pequeno número de janelas mais recentes cujos valores reais são conhecidos, e uma subsequência de teste, composta pelas últimas $h$ observações da série, onde $h$ é o horizonte de previsão. A subsequência de treino é usada para o ajuste dos modelos; a subsequência de validação é usada para orientar qualquer decisão tomada a partir do desempenho observado, incluindo a escolha de uma estratégia de combinação; e a subsequência de teste, nunca observada durante essas decisões, é reservada exclusivamente para a avaliação final, comparando as previsões geradas aos valores reais correspondentes.
+
+Para comparar modelos e estratégias segundo esse procedimento, são adotadas as métricas de avaliação SMAPE e POCID, conforme discutido a seguir.
+
+
+1. \textbf{Symmetric Mean Absolute Percentage Error (SMAPE)}
+
+O \textit{Symmetric Mean Absolute Percentage Error} (SMAPE) foi introduzido como uma alternativa ao MAPE para superar suas limitações, como a assimetria de valores. Conforme apontado por \cite{armstrong1992}, o MAPE apresenta um viés a favor de previsões que subestimam os valores reais, pois penaliza erros positivos de forma mais severa do que erros negativos.
+
+Neste trabalho, considera-se o SMAPE de acordo com a Equação \ref{eq:smape}, em que $y_t$ representa o valor esperado de uma série temporal no tempo $t$ e $\hat{y}_t$ representa o seu valor predito.
+
+\begin{equation}
+\text{SMAPE}(y, \hat{y}) = \frac{1}{N} \sum_{t=1}^{N} \frac{2 \cdot | \hat{y}_t - y_t |}{|\hat{y}_t| + |y_t|}
+\label{eq:smape}
+\end{equation}
+
+O SMAPE calcula a média dos erros absolutos ponderados, onde cada erro é proporcional à soma dos valores absolutos dos dados reais e preditos. Assim como o MAPE, resultados próximos de 0 indicam proximidade em relação aos valores reais; erros maiores, no entanto, são expressos até 2.
+
+2. \textbf{Prediction of Change in Direction (POCID)}
+
+A medida \textit{Prediction of Change in Direction} (POCID) avalia a capacidade de um modelo de prever a direção de variação de uma série, se os valores futuros aumentam ou diminuem, independentemente da escala dos valores. Uma previsão com as direções totalmente alinhadas aos valores reais obtém POCID de 100\%; o pior cenário, em que todas as direções previstas são contrárias às reais, corresponde a um POCID de 0\%.
+
+A medida POCID é definida de acordo com a Equação \ref{eq:pocid}, em que $N$ é o número de observações, \(\hat{y}_t\) as previsões no tempo $t$ e \(y_t\) as observações reais.
+
+\begin{equation}
+POCID = 100 \times \frac{\sum_{t=2}^N D_t}{N-1} \quad \text{onde:} \quad D_t =
+\left\{
+\begin{aligned}
+1 & : (\hat{y}_t - \hat{y}_{t-1})(y_t - y_{t-1}) > 0\\
+0 & : \text{caso contrário} \\
+\end{aligned}
+\right.
+\label{eq:pocid}
+\end{equation}
+
+Além da comparação direta por essas duas métricas, a comparação entre múltiplos modelos e estratégias ao longo de múltiplos conjuntos de dados emprega a Matriz de Comparação Múltipla (\textit{Multi-Comparison Matrix}, MCM), proposta por \citet{ismail2023mcm} como alternativa aos diagramas de diferença crítica tradicionais.  Os autores mostram que esses diagramas, ao ordenar os métodos comparados por um posto médio agregado, sofrem de uma instabilidade estrutural: o posto relativo entre dois métodos específicos pode se inverter apenas em função de quais outros métodos são incluídos ou excluídos da comparação, tornando o resultado sensível à composição do estudo e, segundo os autores, sujeito tanto a manipulação inadvertida quanto deliberada. A MCM contorna esse problema ao abandonar a métrica agregada de posto médio como base da comparação, priorizando diretamente comparações par a par entre métodos, cujo resultado permanece o mesmo independentemente de quais outros métodos participam da análise.
+
+Na MCM, tanto as linhas quanto as colunas da matriz correspondem aos métodos comparados, ordenados pelo valor médio da métrica de desempenho considerada, exibido ao lado do nome de cada método. Cada célula da matriz, cruzando o método da linha com o método da coluna, reúne três estatísticas: a diferença média entre os dois métodos na métrica considerada; a contagem de quantas vezes o método da linha venceu, empatou ou perdeu para o método da coluna, ao longo de todos os conjuntos de dados avaliados; e o valor $p$ de um teste de Wilcoxon com postos sinalizados entre os dois métodos. A diferença média é também representada visualmente por um mapa de calor, com uma cor indicando que o método da linha supera o da coluna em média e a cor oposta indicando o inverso, enquanto o texto de cada célula é destacado em negrito quando o valor $p$ correspondente é inferior a um limiar de significância pré-definido. 
+
+
+
+\section{Considerações finais}
+
+Neste capítulo, foi realizada uma revisão dos principais conceitos relacionados a séries temporais, transformações de dados e à tarefa de previsão de valores. Foram apresentadas as componentes que constituem uma série temporal, técnicas de decomposição clássica e via STL, e transformações que buscam evidenciar características relevantes dos dados, como as transformações logarítmica, de Box-Cox, de Fourier e \textit{wavelet}. Também foram introduzidos os principais métodos da literatura que compõem abordagens lineares e não lineares de previsão, estatísticos, de aprendizagem de máquina e de aprendizagem profunda, bem como a técnica DBA, explorada neste projeto como alternativa às formas tradicionais de agregação de predições.
+
+O capítulo também apresentou a fundamentação necessária à proposta central deste projeto: a combinação de previsões guiada por agentes baseados em \textit{Large Language Models}. Para isso, foi descrita a arquitetura Transformer e seus principais componentes presentes na grande parte dos LLMs atuais e avaliados nessa pesquisa, como Qwen e gpt-oss.
+
+Por fim, foi introduzido o conceito de agente baseado em LLM, com destaque para o paradigma ReAct, que intercala raciocínio e ação; para a estratégia de restringir o espaço de ações do agente a um conjunto fechado de ferramentas pré-definidas como forma de mitigar a ocorrência de alucinações; e para arquiteturas multiagente, nas quais diferentes papéis são distribuídos entre agentes especializados. Esses conceitos fundamentam a proposta deste projeto de utilizar um agente, ou um conjunto de agentes, baseado em LLM para orquestrar dinamicamente a combinação de modelos lineares e não lineares de previsão de séries temporais, tema retomado com maior detalhe no Capítulo~\ref{chp:proposta}.
+

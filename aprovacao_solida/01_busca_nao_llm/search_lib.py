@@ -6,12 +6,16 @@ aleatoria ou bandit — com o MESMO orcamento empatar ou vencer o agente, entao 
 que nao agrega e a busca em geral (e o LLM e apenas um search caro). Se o agente
 vencer as buscas simples, a contribuicao do LLM fica isolada.
 
-Espaco de acoes identico ao catalogo (Seção 3.4 do texto):
-    pools   : full, select_stable k, select_top_k k, prune_redundant
-    pesos   : inverse, softmax, error_trend, feature_based, pooled_meta, ols*
+Espaco de acoes identico ao catalogo final do agente (catalog v2, com as
+receitas extra ligadas), para que a unica diferenca entre os bracos seja o
+mecanismo de busca:
+    pools   : full, select_stable k, select_top_k k, prune_redundant, select_forward
+    pesos   : inverse, error_trend, meta_model (escopo por conjunto), best_per_horizon,
+              topk_per_horizon, forward, ols*
     combinar: mean, median, trimmed_mean, dba, weighted, best_single
 
-(*) `ols` so entra quando ha janelas suficientes, igual ao catalogo do agente.
+(*) `ols` so entra quando ha janelas suficientes (`min_windows_for_ols`), igual ao
+catalogo do agente; com as tres janelas do protocolo, nunca entra.
 """
 
 from __future__ import annotations
@@ -29,10 +33,12 @@ FAMILIES = COMBINES
 
 _WEIGHT_METHODS = {
     "inverse_error": "inverse",
-    "softmax_neg_error": "softmax",
     "error_trend": "trend",
-    "feature_based": "feature",
-    "pooled_meta_model": "pooled",
+    "pooled_meta_model": "meta",
+    "feature_based": "meta",
+    "best_per_horizon": "best_per_horizon",
+    "topk_mean_per_horizon": "topk_per_horizon",
+    "forward_selection": "forward",
     "ols": "ols",
 }
 
@@ -42,9 +48,7 @@ def _spec_key(spec):
 
 
 def allowed_weight_methods(state):
-    methods = ["inverse", "softmax", "trend", "feature"]
-    if getattr(state, "pooled_meta_model", None) is not None:
-        methods.append("pooled")
+    methods = ["inverse", "trend", "meta", "best_per_horizon", "topk_per_horizon", "forward"]
     if state.n_windows >= int(getattr(state.config, "min_windows_for_ols", 5)):
         methods.append("ols")
     return tuple(methods)
@@ -62,6 +66,10 @@ def candidate_pools(state):
         pools.append(
             ("pruned", T.prune_redundant(state, pool=FULL_POOL, corr_threshold=0.95)["pool"])
         )
+    except Exception:
+        pass
+    try:
+        pools.append(("forward", T.select_forward(state, max_steps=20, metric="rmse")["pool"]))
     except Exception:
         pass
     return pools
@@ -83,14 +91,17 @@ class SpecFactory:
         st = self.state
         if method == "inverse":
             h = T.weights_inverse_error(st, pool=pool)["weights"]
-        elif method == "softmax":
-            h = T.weights_softmax_neg_error(st, pool=pool)["weights"]
         elif method == "trend":
             h = T.weights_error_trend(st, pool=pool)["weights"]
-        elif method == "feature":
-            h = T.weights_feature_based(st, pool=pool)["weights"]
-        elif method == "pooled":
-            h = T.weights_pooled_meta_model(st, pool=pool)["weights"]
+        elif method == "meta":
+            scope = "dataset" if getattr(st, "pooled_meta_model", None) is not None else "series"
+            h = T.weights_meta_model(st, pool=pool, scope=scope)["weights"]
+        elif method == "best_per_horizon":
+            h = T.weights_best_per_horizon(st, pool=pool)["weights"]
+        elif method == "topk_per_horizon":
+            h = T.weights_topk_per_horizon(st, pool=pool, k=3)["weights"]
+        elif method == "forward":
+            h = T.weights_forward(st, pool=pool, max_steps=20)["weights"]
         elif method == "ols":
             h = T.weights_ols(st, pool=pool)["weights"]
         else:

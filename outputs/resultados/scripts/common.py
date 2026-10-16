@@ -37,9 +37,9 @@ INDIVIDUAL_MODELS = [
 
 STATIC_COMBINATIONS = ["mean", "median", "dba"]
 FFORMA_ADE = ["FFORMA", "ADE"]
-ORCHESTRATOR_GPTOSS = "orchestrator_react_v5"
-ORCHESTRATOR_QWEN = "orchestrator_react_v5_qwen"
-ORCHESTRATOR_GEMMA = "orchestrator_react_v5_gemma26"
+ORCHESTRATOR_GPTOSS = "orchestrator_react_v2_medium_x1_gpt-oss-20b"
+ORCHESTRATOR_QWEN = "orchestrator_react_v2_medium_x1_qwen3.8-27b"
+ORCHESTRATOR_GEMMA = "orchestrator_react_v2_medium_x1_gemma4-26b"
 ORCHESTRATOR_BASELINE = "orchestrator_baseline_v1"
 
 INCLUDED_FOLDERS = set(INDIVIDUAL_MODELS) | set(STATIC_COMBINATIONS) | set(FFORMA_ADE) | {

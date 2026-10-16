@@ -4,57 +4,54 @@ Só números, medidos exatamente como pedido nos Passos 1-4. Sem conclusão qual
 
 ## Passo 1 — amostra
 
-Total de séries com `origin=agent`: **273** (de 680 séries no total, todos os 7 datasets).
+Total de séries com `origin=agent`: **47** (de 680 séries no total, todos os 7 datasets).
 
 | dataset | n_series |
 |---|---|
-| ANP_MONTHLY | 77 |
-| NN5_WEEKLY_DATASET | 50 |
-| M4_WEEKLY_DATASET | 135 |
-| ETTH1 | 3 |
-| ETTH2 | 2 |
-| ETTM1 | 3 |
-| ETTM2 | 3 |
+| ANP_MONTHLY | 11 |
+| NN5_WEEKLY_DATASET | 7 |
+| M4_WEEKLY_DATASET | 27 |
+| ETTH1 | 1 |
+| ETTH2 | 0 |
+| ETTM1 | 1 |
+| ETTM2 | 0 |
 
 ## Passo 2 — repetição de frases exatas (n-gramas de 5 a 8 palavras)
 
-Tokenização: minúsculas, hífens/travessões tratados como espaço, mantido só `[a-z0-9]+`. N-gramas contados por presença no documento (um n-grama repetido dentro da mesma justificativa conta uma vez). Limiar de 20% da amostra = **54.6** séries (arredondado para cima na contagem).
+Tokenização: minúsculas, hífens/travessões tratados como espaço, mantido só `[a-z0-9]+`. N-gramas contados por presença no documento (um n-grama repetido dentro da mesma justificativa conta uma vez). Limiar de 20% da amostra = **9.4** séries (arredondado para cima na contagem).
 
-N-gramas de 5-8 palavras que aparecem em ≥20% das 273 justificativas: **3**.
+N-gramas de 5-8 palavras que aparecem em ≥20% das 47 justificativas: **0**.
 
 Top 15 por frequência:
 
 | n-grama | contagem | percentual |
 |---|---|---|
-| "the series is trend dominated" | 69 | 25.3% |
-| "series is trend dominated with" | 68 | 24.9% |
-| "the series is trend dominated with" | 66 | 24.2% |
 
-Variação de "mitigat(ing/es) overfitting to the few validation windows" (regex `mitigat\w*\s+overfit\w*\s+(?:to\s+)?the\s+few\s+validation\s+windows`, case-insensitive): aparece em **7/273** justificativas (**2.6%**).
+Variação de "mitigat(ing/es) overfitting to the few validation windows" (regex `mitigat\w*\s+overfit\w*\s+(?:to\s+)?the\s+few\s+validation\s+windows`, case-insensitive): aparece em **0/47** justificativas (**0.0%**).
 
 ## Passo 3 — similaridade estrutural
 
-Jaccard sobre o conjunto de palavras de conteúdo (stopwords removidas), calculado sobre **todos os 37128 pares** da amostra (não uma subamostra aleatória — com 273 séries o cálculo completo é factível e mais preciso que amostrar).
+Jaccard sobre o conjunto de palavras de conteúdo (stopwords removidas), calculado sobre **todos os 1081 pares** da amostra (não uma subamostra aleatória — com 47 séries o cálculo completo é factível e mais preciso que amostrar).
 
-- Média: **0.1897**
-- Mediana: **0.1778**
+- Média: **0.1300**
+- Mediana: **0.1154**
 
 Separando por `estrategia_params` (chave = `combine`+`pool`+`weights`/`trim_pct`/`model` conforme aplicável, comparado como JSON canônico):
 
-- Pares com a **mesma** estratégia (n=1564): média=0.2303, mediana=0.2129
-- Pares com estratégia **diferente** (n=35564): média=0.1879, mediana=0.1765
+- Pares com a **mesma** estratégia (n=30): média=0.2371, mediana=0.2000
+- Pares com estratégia **diferente** (n=1051): média=0.1269, mediana=0.1143
 
-Primeira frase (até a primeira vírgula/ponto/ponto-e-vírgula): **231** moldes distintos por correspondência textual exata (entre 273 séries). Os 5 mais comuns por correspondência exata:
+Primeira frase (até a primeira vírgula/ponto/ponto-e-vírgula): **46** moldes distintos por correspondência textual exata (entre 47 séries). Os 5 mais comuns por correspondência exata:
 
 | primeira frase (exata) | n_series |
 |---|---|
-| "the series is trend‑dominated with high predictability and unstable model rankings across windows" | 9 |
-| "the series is trend‑dominated with high predictability and moderate ranking stability" | 7 |
-| "the series has very strong trend and seasonality but unstable model rankings and high error correlation" | 6 |
-| "the series is trend‑dominated with unstable model rankings and high error correlation" | 4 |
-| "the series is trend‑dominated with unstable model rankings across windows" | 3 |
+| "trend‑dominated series" | 2 |
+| "median on pool5 is the best robust combination for this trend‑dominated series and the margin is not statistically significant" | 1 |
+| "trend‑dominated series with unstable ranking" | 1 |
+| "rf alone is the best performer" | 1 |
+| "the series shows a strong upward trend and high predictability" | 1 |
 
-Agrupando por quase-duplicata (Jaccard sobre palavras de conteúdo da primeira frase ≥ 0.6, clusterização por componentes conexos): **95** moldes distintos ao todo; **41** moldes cobrem ≥80% da amostra (219/273 séries nesses 41 moldes). Tamanhos dos moldes, do maior ao menor: [118, 24, 10, 8, 5, 4, 4, 3, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1].
+Agrupando por quase-duplicata (Jaccard sobre palavras de conteúdo da primeira frase ≥ 0.6, clusterização por componentes conexos): **39** moldes distintos ao todo; **30** moldes cobrem ≥80% da amostra (38/47 séries nesses 30 moldes). Tamanhos dos moldes, do maior ao menor: [4, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1].
 
 ## Passo 4 — variação por dataset e por estratégia
 
@@ -62,13 +59,13 @@ Agrupando por quase-duplicata (Jaccard sobre palavras de conteúdo da primeira f
 
 | dataset | n_series | n_pares | média | mediana |
 |---|---|---|---|---|
-| ANP_MONTHLY | 77 | 2926 | 0.2115 | 0.1967 |
-| NN5_WEEKLY_DATASET | 50 | 1225 | 0.2004 | 0.1818 |
-| M4_WEEKLY_DATASET | 135 | 9045 | 0.1899 | 0.1778 |
-| ETTH1 | 3 | 3 | 0.1518 | 0.1618 |
-| ETTH2 | 2 | 1 | 0.0588 | 0.0588 |
-| ETTM1 | 3 | 3 | 0.2542 | 0.2321 |
-| ETTM2 | 3 | 3 | 0.2175 | 0.2500 |
+| ANP_MONTHLY | 11 | 55 | 0.1862 | 0.1714 |
+| NN5_WEEKLY_DATASET | 7 | 21 | 0.0866 | 0.0909 |
+| M4_WEEKLY_DATASET | 27 | 351 | 0.1367 | 0.1176 |
+| ETTH1 | 1 | 0 | n/a (0 pares) | n/a |
+| ETTH2 | 0 | 0 | n/a (0 pares) | n/a |
+| ETTM1 | 1 | 0 | n/a (0 pares) | n/a |
+| ETTM2 | 0 | 0 | n/a (0 pares) | n/a |
 
 ### 4.2 — similaridade da primeira frase por mecanismo de formação do pool da estratégia final
 
@@ -76,10 +73,8 @@ Mecanismo = ferramenta que criou o `pool` referenciado por `best_strategy_params
 
 | mecanismo | n_series | n_pares internos | média Jaccard (1ª frase) dentro do mecanismo |
 |---|---|---|---|
-| prune_redundant | 140 | 9730 | 0.1426 |
-| outro_ou_nao_rastreado | 112 | 6216 | 0.1603 |
-| pool_full | 17 | 136 | 0.0919 |
-| select_stable | 2 | 1 | 0.0526 |
-| select_top_k | 2 | 1 | 0.0714 |
+| pool_full | 20 | 190 | 0.1385 |
+| outro_ou_nao_rastreado | 19 | 171 | 0.0784 |
+| prune_redundant | 8 | 28 | 0.1328 |
 
-Média Jaccard da 1ª frase entre pares de mecanismos **diferentes** (n=21044 pares): **0.1345**.
+Média Jaccard da 1ª frase entre pares de mecanismos **diferentes** (n=692 pares): **0.0701**.

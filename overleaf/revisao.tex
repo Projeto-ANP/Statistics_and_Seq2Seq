@@ -1,0 +1,375 @@
+% Buscar por trabalhos que utilizam LLMs para a seleção de modelos ou algo nessa direção
+\chapter{Revisão da literatura }\label{chp:revisao}
+
+\section{Considerações inicias}
+Neste capítulo, são apresentados os principais trabalhos da literatura relacionados ao tema principal dessa pesquisa de mestrado sobre combinação de modelos de predição para séries temporais. Para a filtragem e seleção destes trabalhos, foi levada em consideração os resultados obtidos na competição M4 \citep{m4competition}, em que boa parte dos resultados considerados promissores foram alcançados a partir de abordagens de combinação de modelos. Além disso, a revisão apresentada aqui também leva em conta as discussões apresentadas no trabalho de \citet{wang2023forecast}, responsável por categorizar e apresentar uma visão geral das abordagens de combinação propostas nos últimos 50 anos. %Os principais trabalhos com relação direta com a presente pesquisa e que realizam a combinação por meio de aprendizado são descritos na Seção \ref{sec:baseadas_em_erro}.
+
+\section{Combinação simples de predições}
+Por combinação simples, entende-se abordagens que utilizam médias ou medianas para agregar previsões individuais emitidas por qualquer modelo, podendo ou não empregar ponderação. Métodos sem ponderação, como a média ou mediana simples, atribuem igual importância a todas as previsões, ignorando diferenças na precisão dos modelos e correlações entre os erros. Para casos de ponderação, os pesos podem ser definidos com base no desempenho de cada modelo, dando maior influência às previsões mais confiáveis ou a partir do aprendizado do peso de cada modelo com base em diferentes características dos dados e comportamento dos modelos.
+
+\subsection{Abordagens sem ponderamento}
+\label{subsec:sem_ponderamento}
+Uma das abordagens mais eficientes para a combinação de previsões é a utilização da média aritmética dos resultados de vários modelos. Embora essa seja uma das maneiras mais simples de combinar predições, esse tipo de abordagem frequentemente supera combinações sofisticadas que exigem maior tempo de processamento e desenvolvimento. O estudo de \cite{shaub2020} demonstra experimentalmente que a combinação de vários modelos por meio de uma média aritmética simples utilizando pesos não restritos, que podem até ser negativos, conforme a metodologia de \cite{granger1984}, pode gerar resultados de maneira eficiente e com acurácia competitiva em comparação ao desempenho de modelos individuais. Com base em análises obtidas em conjuntos de dados com frequência anual da competição M4, os resultados da abordagem a posicionaram na terceira posição entre os rivais. Os modelos utilizados nessa combinação foram o ARIMA, o Theta \citep{assimakopoulos2000theta} e o T-BATS \citep{tbats2011}, um modelo de espaço de estado com transformações de Box-Cox para lidar com invariância de escala, transformações de Fourier para sazonalidade complexa e variável no tempo, e ARMA para correção de erros.
+
+Outra abordagem que se destacou na combinação de previsões na competição M4 foi o uso de uma combinação usando mediana com apenas quatro modelos. O trabalho desenvolvido por \cite{petropoulos2020} alcançou a sexta posição nos \textit{datasets} de frequência semanal e trimestral. Os modelos selecionados nesse trabalho foram 
+ARIMA, ETS, o Dynamic Optimised Theta Model (DOTM) \citep{dotm2016}, uma variante avançada do modelo Theta, aplicada para combinar diferentes métodos de suavização exponencial com ajustes dinâmicos, buscando melhorar a precisão, especialmente em dados com comportamento complexo ou não linear. Também foi utilizado o Complex Exponential Smoothing (CES) \citep{ces2018}, que aplica uma abordagem mais sofisticada para modelar séries temporais, ajustando exponenciais complexos para capturar padrões sazonais e tendências com maior flexibilidade.
+
+A escolha da mediana, em vez da média, teve como objetivo minimizar o impacto de previsões extremas que poderiam distorcer o resultado final. Ao descartar os dois modelos com previsões mais extremas, a mediana garante que a previsão final seja influenciada apenas pelos modelos mais alinhados entre si, evitando que um modelo com um erro elevado afete o resultado. %Essa abordagem demonstrou melhorar a precisão das previsões em diferentes frequências de dados.
+
+\subsection{Abordagens com ponderamento}
+
+Visando reduzir os erros cometidos pela estratégia de combinação simples usando média e mediana, é possível aplicar ponderação aos modelos. Ajustar os pesos dos modelos no momento da combinação pode ser vantajoso, pois alguns modelos podem gerar previsões sabidamente menos precisas e a redução do seu peso no resultado final minimiza o impacto dos seus erros.
+
+Uma estratégia simples e eficaz de definir os pesos é considerar o histórico de desempenho de cada modelo, analisando como suas previsões se comportaram em períodos anteriores. Isso permite quantificar os erros passados e ajustar os pesos de acordo com a confiabilidade de cada modelo na previsão atual.
+
+\subsubsection{Desempenho histórico}
+
+O trabalho de \cite{pawlikowski} utilizou a combinação de modelos estatísticos visando melhorar o desempenho em relação a cada modelo individual. A abordagem calcula pesos para cada modelo de acordo com o seu desempenho histórico em dados de validação utilizando a estratégia de \textit{holdout}. Nesse processo, a série foi dividida em diferentes partes de treinamento e validação, onde cada modelo é ordenado com base nas médias dos erros medidos nos dados de validação, sendo possível atribuir pesos aos modelos de acordo com o seu desempenho para a previsão de dados de teste.
+
+Os modelos utilizados foram Naive, ETS, Theta, ARIMA e de regressão linear para lidar com a tendência das séries. A combinação final das previsões foi realizada utilizando os pesos calculados durante a validação e foi feita uma média ponderada das previsões. Esta abordagem atingiu desempenho relevante nos \textit{datasets} da competição M4, sendo aplicável a frequências anuais, mensais, diárias, etc. Além disso, o OWA (\textit{Overall Weighted Average}) foi utilizado como a principal medida de perda, permitindo ajustes refinados nos parâmetros. Essa medida foi apresentada no guia de participação da Competição M4. O OWA é uma média ponderada que leva em consideração o SMAPE e o MASE obtidos por um método de \textit{baseline} denominado \textit{Naïve 2}, que considera a última observação sazonal da série. 
+
+\subsubsection{Ordinary Least Squares}
+Um dos métodos simples de aplicar uma combinação ponderada é utilizando o \textit{Ordinary Least Squares} (OLS), uma técnica popularmente empregada para ajustar modelos de regressão linear. O principal objetivo da técnica OLS é encontrar coeficientes que minimizem a soma dos quadrados dos resíduos (erros), que representam a diferença entre os valores observados e as previsões do modelo. Essa técnica de combinação é chamada de pesos ótimos, pois ajusta os pesos para cada modelo de modo que a soma ponderada das previsões minimize o erro entre elas. A solução para os coeficientes \( \hat{\beta} \), que minimizam o erro quadrático, é dada por \( \hat{\beta} = (X^T X)^{-1} X^T Y \), onde \( X \) é a matriz de variáveis independentes e \( Y \) o vetor de respostas observadas. Com os coeficientes estimados, as previsões são obtidas multiplicando a matriz de entradas \( X \) pelos coeficientes \( \hat{\beta} \).
+
+Por exemplo, se temos três modelos de previsão (A, B e C), e as previsões desses modelos para um determinado conjunto de dados são \( \hat{Y}_A \), \( \hat{Y}_B \), e \( \hat{Y}_C \). Essas previsões podem ser combinadas usando o OLS, onde \( X \) seria a matriz das previsões de cada modelo e \( Y \) os valores reais da série. O modelo de OLS, ao ajustar os pesos \( \hat{\beta}_A \), \( \hat{\beta}_B \), e \( \hat{\beta}_C \) para cada previsão, gera uma previsão combinada \( \hat{y}_{comb} = \hat{\beta}_A \hat{y}_A + \hat{\beta}_B \hat{y}_B + \hat{\beta}_C \hat{y}_C \), que minimiza o erro quadrático em relação aos valores reais \( Y \). Dessa forma, o OLS estima quais modelos têm maior influência na previsão final e ajusta os pesos para obter a previsão combinada mais precisa possível.
+
+Esse tipo de abordagem pode ser comparado aos métodos clássicos, como média e mediana, pois enquanto esses utilizam pesos fixos e iguais para todas as previsões, o OLS ajusta os pesos conforme a importância de cada modelo. O trabalho de \cite{granger1984} impulsionou a utilização dessa abordagem, recomendando especificamente o uso do OLS para estimar os pesos ótimos em modelos de combinação de previsões. Esse modelo ajusta os pesos de forma a minimizar o erro de previsão, considerando as diferenças nas contribuições de cada modelo e potencializando o desempenho geral das previsões combinadas.
+
+
+\section{Combinação por aprendizado} \label{sec:baseadas_em_erro}
+
+A combinação por aprendizado refere-se a métodos que utilizam aprendizado de máquina para otimizar a combinação de previsões de diferentes modelos a partir do treinamento de um \textit{meta-learner}. Essa abordagem busca aproveitar a diversidade e a qualidade de cada modelo de forma mais eficiente, aprendendo a partir dos dados para melhorar os resultados obtidos pelas combinações.  
+
+Em geral, essa técnica envolve o treinamento de um modelo de aprendizado de máquina alimentado pelas previsões ou erros dos modelos individuais. Esse meta-modelo pode então gerar uma previsão combinada, atribuindo pesos ajustados com base nas informações fornecidas e nas características dos dados, ou até mesmo produzir uma nova previsão. Diferentes características das séries temporais podem ser utilizadas no treinamento desse modelo, como sazonalidade, tendência e outras propriedades extraídas dos dados como estatísticas descritivas. Entre os principais métodos dessa abordagem, destacam-se os algoritmos \textit{Feature-based Forecast Model Averaging} (FFORMA) e \textit{Arbitrated Dynamic Ensemble} (ADE).
+
+
+\subsection{Feature-based Forecast Model Averaging (FFORMA)}
+
+O FFORMA desenvolvido por \cite{fforma2019} é um método automático de obter pesos para combinações de previsões usando \textit{features} extraídas das séries temporais.
+Para essa combinação ponderada, foram utilizados nove modelos, abrangendo desde métodos simples utilizados como \textit{baselines} em avaliações até modelos de \textit{deep learning} considerados complexos. Os modelos são descritos a seguir:
+
+\begin{itemize}
+\label{pool_models}
+    \item \textbf{Naive}: Modelo de \textit{baseline} que utiliza o valor mais recente como previsão para todos os horizontes futuros;
+    \item \textbf{Random Walk with Drift}: Similar ao Naive, mas incorpora uma constante de tendência (drift);
+    \item \textbf{Seasonal Naive (snaive)}: Extensão do Naive que considera a sazonalidade, repetindo valores de períodos anteriores;
+    \item \textbf{Theta Method (thetaf)}: Método baseado na decomposição Theta, que combina previsões lineares e não lineares;
+    \item \textbf{Automated ARIMA Algorithm (auto.arima)}: Algoritmo automatizado para ajustar e selecionar o melhor modelo ARIMA;
+    \item \textbf{Automated Exponential Smoothing Algorithm (ets)}: Algoritmo automatizado para ajustar modelos de suavização exponencial;
+    \item \textbf{T-BATS}: Modelo para séries com sazonalidade complexa e múltiplos períodos sazonais;
+    \item \textbf{STLM-AR}: Decomposição sazonal e de tendência utilizando LOESS, com modelagem AR aplicada à série ajustada sazonalmente;
+    \item \textbf{Neural Network Time Series Forecasts (nnetar)}: Modelo baseado em redes neurais para previsão de séries temporais.
+\end{itemize}
+
+Esses modelos são aplicados na parte de treinamento das séries para gerar as previsões em subsequências de teste. A partir das previsões, o erro é calculado usando a diferença entre os valores reais e previstos, sendo resumido em uma medida de perda de previsão para a combinação ponderada dos modelos.
+
+A perda de previsão de cada modelo é uma abordagem adaptada do OWA descrito no guia do competidor da competição M4 \cite{m4competition} que combina o MASE e o SMAPE. Para cada série e método, o MASE e o SMAPE foram divididos pelo respectivo erro do método Naive sobre todas as séries no conjunto de dados, no caso o MASE foi dividido pela média do MASE do Naive, e somados posteriormente.
+
+Com o mesmo período de treinamento usado para os modelos individuais, são extraídas características das séries de entrada para auxiliar o \textit{meta-learner} no aprendizado dos pesos de cada modelo, compreendendo a natureza da série com a qual está trabalhando. Essas características extraídas da série podem incluir o comprimento da série, a direção da tendência, a autocorrelação, entre outras características.
+
+O modelo de combinação ponderada é utilizado para aprender os pesos dos modelos individuais com base nessas características. Os pesos são treinados de forma que a medida de perda seja minimizada. Quando o modelo de \textit{meta-learning} estiver treinado, novas séries temporais podem ser aplicadas para gerar os pesos do modelo para a combinação, de acordo com as características extraídas da série de entrada.
+
+Na Figura \ref{fig:fluxograma_fforma} é apresentado um fluxograma que ilustra os principais passos do algoritmo FFORMA.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth, height=0.8\textheight]{images/flowchart_fforma.png} 
+    \caption{Fluxograma do processo de previsão do algoritmo FFORMA \citep{fforma2019}.}
+    \label{fig:fluxograma_fforma}
+\end{figure}
+
+Os autores consideraram o algoritmo XGBoost para o treinamento do modelo de meta-aprendizado, aplicado em diversas séries temporais fornecidas pela competição M4, que inclui 100.000 séries temporais com diferentes frequências (anuais, trimestrais, mensais, semanais, diárias e por hora). %A formação do pool de modelos $M$ é dos mesmos descritos na Seção \ref{pool_models}, sendo para cada um desses geradas as previsões e pesos.
+
+Para a extração de características, foi utilizada a biblioteca proposta por \cite{tsfeatures2018}, um pacote desenvolvido em R que fornece uma série de funções para calcular atributos das séries temporais, como medidas de tendência, sazonalidade, autocorrelação, complexidade e outras propriedades estatísticas.
+
+
+
+\subsection{Arbitrated Dynamic Ensemble (ADE)}
+
+O método Arbitrated Dynamic Ensemble (ADE) proposto por \cite{ade} é também uma estratégia de \textit{meta-learning} para otimizar previsões de séries temporais. A motivação deste trabalho é que diferentes modelos de aprendizado possuem distintas áreas de especialização ao longo das entradas. A hipótese levantada é que a estratégia baseada no uso de \textit{meta-learners} permite detectar mudanças no desempenho dos modelos, possibilitando sua adaptação contínua.  
+
+A estratégia ADE utiliza a arquitetura \textit{Arbitrating} \citep{ortega2001arbitrating} para que cada modelo base do comitê possua um \textit{meta-learner} associado. Esse \textit{meta-learner} tem a função de modelar e avaliar o quão apto seu modelo correspondente está para realizar previsões em novos dados de teste. Para isso, o \textit{meta-learner} é treinado com os erros de cada modelo, de modo a prever os erros futuros.
+
+No momento da previsão, os modelos base são ponderados de acordo com os erros estimados pelos seus respectivos \textit{meta-learners}. Quanto maior a estimativa de erro de um modelo base em relação aos demais modelos do comitê, menor será seu peso na combinação final das previsões. Esse mecanismo permite que o ADE adapte dinamicamente a influência de cada modelo base, priorizando aqueles que demonstram maior competência para o dado observado. Na Figura \ref{fig:ade_scheme} é possível visualizar a abordagem definida.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\linewidth]{images/ade_scheme.png}
+    \caption{Funcionamento do ADE \citep{ade}.}
+    \label{fig:ade_scheme}
+\end{figure}
+
+A utilização da arquitetura \textit{Arbitrating} no ADE foi uma melhoria do uso dessa arbitragem de modelos que foi originalmente formulada no conceito de seleção de classificadores, sendo aprimorada para o conceito de séries temporais e a capacidade de capturar mudanças nos regimes dos dados e ajustar rapidamente os pesos dos modelos base, garantindo maior estabilidade e precisão preditiva.  
+
+\subsubsection{Modelos base}
+
+Os modelos base são definidos como os modelos individuais responsáveis por realizar as predições. Nessa etapa, cada modelo  \( M_j \) é treinado utilizando as séries temporais disponíveis para o treinamento. A seleção dos modelos base foi feita considerando um conjunto de modelos heterogêneos, como Processos Gaussianos, \textit{Random Forests}, \textit{Support Vector Machines}, Redes Neurais, entre outros. Essa escolha se deve ao fato de que modelos heterogêneos possuem diferentes viéses indutivos e suposições sobre o processo gerador dos dados, permitindo que cada modelo apresente um desempenho diferenciado em distintos segmentos da série temporal.
+
+\subsubsection{\textit{Meta-learners}}
+
+Na etapa de construção dos modelos de meta-aprendizado, cada modelo base \( M_j \) possui um \textit{meta-learner} \( Z_j \) associado, que é treinado para prever o erro absoluto \( e_j \) do modelo. A previsão é feita com base em um conjunto de dados feita a partir dos erros desse modelo durante o treinamento.
+
+A construção desse conjunto de dados de cada modelo é realizada a partir da abordagem de validação \textit{Out-of-Bag} (OOB), onde o treinamento é feito em subconjuntos de dados selecionados com reposição. Essas previsões ajudam a fornecer estimativas não enviesadas do desempenho de cada modelo base, aumentando a quantidade de dados disponíveis para os \textit{meta-learners}.
+
+As amostras OOB são obtidas por meio de um procedimento chamado \textit{Blocked Prequential}, que divide a série temporal em blocos sequenciais. Esse procedimento permite que cada \textit{meta-learner} utilize todas as informações disponíveis até o ponto de previsão, enquanto reduz a carga computacional ao atualizar os modelos periodicamente. Nos experimentos realizados pelos autores, foram considerados 10 blocos sequenciais.
+
+Em cada iteração, o primeiro bloco é usado para treinar os modelos base, enquanto o segundo bloco é utilizado para testá-los. Posteriormente, os blocos são combinados sequencialmente, onde os blocos de treino se expandem e um novo bloco é utilizado para teste, até que todos os blocos sejam testados.
+
+No final, os modelos com os piores desempenhos nas últimas observações são descartados, mantendo apenas aqueles que apresentaram os menores valores de Erro  Médio Absoluto. Essa seleção é feita com base em uma porcentagem definida, representada por $\alpha$, que determina quantos modelos serão aceitos com resultados satisfatórios. Por exemplo, se $\alpha = 50$, a estratégia irá selecionar a metade dos modelos disponíveis, ordenando-os de acordo com seus desempenhos, priorizando os melhores.
+
+\subsubsection{Predição final}
+
+Para a previsão de \( y_{t+1} \), o ADE gera uma combinação dos modelos base \( M \) de acordo com a informação recebida do \textit{meta-learner} de cada modelo \( M \). Os modelos selecionados que tiveram o melhor desempenho formam o comitê. Cada peso do modelo será definido a partir da fórmula de \textit{softmax} de sua perda predita negativa, sendo formalizado na Equação \eqref{softmax_ade}:
+
+\begin{equation}
+w_{t+1}^j = \frac{\exp(-\hat{e}_j)}{\sum_{j \in \alpha M} \exp(-\hat{e}_j)} \label{softmax_ade}
+\end{equation}
+
+Onde:
+
+\begin{itemize}
+    \item \( w_{t+1}^j \): Peso do modelo \( M_j \) para a previsão de \( y_{t+1} \).
+    \item \( \hat{e}_j \): Perda predita do modelo \( M_j \).
+    \item \( \alpha M \): Comitê dos \( \alpha\% \) modelos com melhor desempenho.
+\end{itemize}
+
+
+A escolha dessa função se deu pela influência de aumentar os modelos que têm melhor desempenho previsto, visto que o peso de um modelo decai exponencialmente à medida que sua perda predita aumenta.
+
+Após a definição dos pesos de cada modelo, a previsão final é uma média ponderada das previsões feitas pelos modelos base, levando em conta seus pesos. Cada previsão é multiplicada pelo seu peso correspondente, e todas são somadas para obter a previsão final.
+
+
+\subsection{Modelos híbridos baseados em resíduos}
+
+A combinação sequencial de modelos levando em consideração os erros cometidos (também chamados de resíduos) como entrada para o próximo modelo da cadeia, tem se mostrado uma abordagem promissora, principalmente quando são considerados modelos com abordagens distintas. Essa abordagem se baseia na agregação em sequência de modelos lineares e não lineares, buscando capturar padrões distintos presentes em séries temporais. A motivação para essa abordagem reside na complexidade das séries temporais, que frequentemente exibem uma mistura de comportamentos lineares e não lineares. Nessa direção, modelos lineares como a regressão linear, são eficientes em identificar relações diretas e proporções constantes entre variáveis, sendo ideais para capturar tendências e sazonalidades simples. Por outro lado, modelos não lineares, como redes neurais ou árvores de decisão, são mais adequados para detectar interações complexas entre as observações da série e padrões que não podem ser expressos por relações lineares. Desse modo, a combinação desses dois tipos de modelos permite a predição em cenários mais abrangentes, aproveitando as vantagens de cada abordagem \citep{zhang2003}.
+
+Se uma série temporal contém tanto padrões lineares quanto não lineares, ela pode ser representada como a soma de um componente linear \( L_t \) e um componente não linear \( N_t \), conforme a Equação~\ref{eq:sum_lnl}:  
+\begin{equation}
+Y_t = L_t + N_t,    
+\label{eq:sum_lnl}
+\end{equation}
+
+\noindent em que \( Y_t \) é o valor da série no tempo \( t \), \( L_t \) representa o componente linear e \( N_t \) é o componente não linear.
+
+O processo de combinação se inicia com a aplicação de modelos estatísticos \( A_l \), frequentemente lineares, para prever os padrões principais da série temporal  \( Y_t \). Esses modelos tendem a capturar adequadamente os componentes lineares \( L_t \) de  \( Y_t \). Em seguida, calcula-se o resíduo \( R_t \) no tempo \( t \), definido como a diferença entre o valor real \( Y_t \) e a previsão linear \( L(Y_t) \), conforme expresso na Equação~\ref{eq:lin}:  
+\begin{equation}
+R_t = Y_t - L(Y_t)    
+\label{eq:lin}
+\end{equation}
+
+%em que \( R_t \) é o resíduo no tempo \( t \) e \( ML(Y_t) \) é a previsão do componente do modelo linear obtida em \( Y_t \).
+
+O resíduo \( R \) que contém principalmente os padrões não lineares da série, é então utilizado como entrada para um segundo modelo \( NL \), tipicamente não linear, que é capaz de capturar essas características complexas. A previsão final da série temporal é obtida somando-se a previsão linear \( L(Y_t) \) e a previsão \( NL(R_t) \) do componente não linear, resultando na expressão apresentada na Equação~\ref{eq:comb_final}:  
+\begin{equation}
+\hat{Y}_t =  L(Y_t) +  NL(R_t),
+\label{eq:comb_final}
+\end{equation}
+
+\noindent em que \( \hat{Y}_t \) é o valor previsto da série no tempo \( t \).
+
+%Essa abordagem integrada permite uma modelagem mais precisa e flexível, pois aproveita a força de diferentes tipos de modelos para lidar com as duas características mais importantes das séries temporais.
+
+Um dos trabalhos que apresenta essa ideia de combinação é o de \cite{demattos2019}, onde é proposto um sistema híbrido que modela separadamente os padrões lineares e não lineares. O sistema proposto foi dividido em três etapas sequenciais, discutidas a seguir.
+
+\subsubsection{Etapa de Previsão Linear}
+
+Nesta etapa, um modelo linear é utilizado para realizar a previsão inicial da série temporal \(Y_t\). O ARIMA foi o modelo selecionado para ser responsável por capturar os padrões lineares da série. Após gerar as previsões do modelo linear, calcula-se a diferença entre os valores reais da série e os valores previstos, resultando em uma série de erros ou resíduos (\(R_t = Y_t - L(Y_t)\)). Esses resíduos refletem os padrões que o modelo linear não conseguiu capturar, sendo, em sua maioria, compostos por componentes não lineares.
+
+\subsubsection{Etapa de Previsão Não Linear}
+
+A segunda etapa foca nos padrões não lineares presentes na série de resíduos \(R_t\). Um modelo não linear é treinado para prever essa nova série temporal gerada a partir dos erros do modelo linear, sendo especificamente selecionados os modelos \textit{Support Vector Regression} (SVR) e \textit{Multilayer Perceptron} (MLP). A ideia é explorar a capacidade de aprendizado do modelo não linear para capturar relações complexas e não lineares que o modelo linear não foi capaz de identificar. Assim, esta etapa complementa a previsão feita pelo modelo linear, reduzindo possíveis erros nas estimativas finais.
+
+\subsubsection{Etapa de Combinação das Previsões}
+
+Na terceira e última etapa, um meta modelo é treinado com as previsões dos modelos linear $L$ e não linear $NL$, com o objetivo de unir as previsões da etapa de previsão linear com os resultados da previsão não linear (que considera os resíduos), visando uma previsão final mais precisa. Este meta modelo é treinado com um algoritmo não linear, como MLP ou SVR. A escolha do algoritmo depende da escolha realizada na etapa de previsão não linear. Ou seja, se o MLP foi escolhido nessa etapa, será utilizado o SVR para o meta modelo ou vice-versa.
+
+Em específico, o meta modelo de combinação \(MC\) recebe como entrada:
+\begin{itemize}
+    \item As previsões do modelo linear \(L(Y_t)\).
+    \item As previsões do modelo não linear \(NL(R_t)\).
+    \item Uma variável de atraso \(lag\), que refere-se ao número de previsões anteriores consideradas como entradas.
+\end{itemize}
+
+A Figura \ref{fig:demattos_train_phase} ilustra uma visão geral da abordagem proposta por \cite{demattos2019}. Em específico, a imagem representa a fase de treinamento.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\linewidth]{demattos_train.png}
+    \caption{Etapa de treinamento do método de combinação hibrida proposto por \citep{demattos2019}.}
+    \label{fig:demattos_train_phase}
+\end{figure}
+
+
+Nessa abordagem, o modelo de combinação tem como objetivo encontrar uma função \(f(.)\) que descreva a relação ideal entre as previsões lineares e não lineares, maximizando o desempenho preditivo e, para encontrar essa função. A variável \(lag\) é a quantidade de previsões anteriores que o modelo \(MC\) irá considerar na hora do treinamento das entradas de \(L(Y_t)\) e \(NL(R_t)\), a seleção dessa variável é realizada por meio de uma análise de correlação cruzada entre as previsões do modelo linear \(L(Y_t)\) e sua respectiva série de erros do modelo não linear  \(NL(R_t)\). O intervalo de possíveis valores para o \(lag\) é definido como $[1, L_{\text{max}}]$, onde $L_{\text{max}}$ é determinado a partir da análise estatística que considera a força da correlação entre a série temporal original e os resíduos das previsões. Esta correlação é avaliada para diferentes \(lags\), permitindo identificar quais prolongamentos temporais apresentam relevância significativa para a predição. Após encontrar o valor de $L_{\text{max}}$ o modelo de combinação \(MC\) é treinado utilizando esses \(lags\) selecionados.
+
+Quando o \(lag\) é igual a 1, o modelo \(MC\) é treinado usando apenas a previsão de \(L(Y_t)\) e \(NL(R_t)\) para o tempo \( t+1 \), totalizando duas entradas. Para \(lag\) maior que 1, o modelo \(MC\) recebe, além da previsão para \( t+1 \), \( lag - 1 \) previsões passadas. Por exemplo, quando \(lag\) = 5, o modelo \(MC\) recebe como entradas as previsões \(L(Y_t)\) e \(NL(R_t)\) nas posições \([t+1, t, t-1, t-2, t-3, t-4]\), totalizando 10 entradas. A fase de treinamento tem como critério de parada o número máximo de \(lags\) definido em \( L_{max} \). Assim, o modelo $MC$ busca uma função de combinação adequada entre as previsões da série temporal $YS$ e as previsões dos resíduos $YR$ obtidas por $L$ e $NL$, respectivamente e considerando um determinado número de \textit{lags}.
+
+A estrutura da etapa de teste é ilustrada na Figura \ref{fig:demattos_test_phase}. Os algoritmos SVR e MLP foram alternados para os modelos de previsão não linear \( NL \) e de combinação \(MC\). Os resultados da proposta variaram de acordo com características dos \textit{datasets}, sendo mais precisos em séries que tendência e sazonalidade bem definidas.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\linewidth]{demattos_test.png}
+    \caption{Etapa de teste do método de combinação hibrida proposto por \citet{demattos2019}.}
+    \label{fig:demattos_test_phase}
+\end{figure}
+
+% NOVA SEÇÃO
+\section{Agregação e orquestração de modelos com LLMs}
+Além dos métodos desenvolvidos especificamente para combinar previsões numéricas, são relevantes para esta pesquisa trabalhos que investigam o uso de LLMs na agregação de saídas produzidas por outros modelos. Nesse contexto, o \textit{Mixture-of-Agents} (MoA), proposto por \citet{wang2024moa}, constitui uma referência conceitual ao empregar modelos de linguagem para sintetizar múltiplas respostas em uma saída final. Sua relação com esta dissertação está no papel atribuído ao LLM como componente de agregação. Entretanto, enquanto o MoA combina respostas textuais, a presente pesquisa investiga agentes que orientam a combinação de previsões numéricas de séries temporais. Assim, os resultados do MoA oferecem uma motivação para investigar essa estratégia, mas não constituem evidência de sua eficácia em \textit{forecasting}.
+
+%\subsection{Mixture-of-Agents (MoA)}
+%O Mixture-of-Agents, proposto por \citet{wang2024moa}, não foi concebido nem avaliado para tarefas de classificação ou regressão numérica no sentido tradicional do aprendizado de máquina supervisionado. Seu domínio de aplicação é a geração de texto aberta em resposta a instruções, no qual, dado um pedido em linguagem natural, o modelo produz uma resposta em texto livre cuja qualidade é medida por comparação, seja por avaliadores humanos, seja por um LLM utilizado como juiz.
+
+%A motivação do trabalho parte de uma pergunta em aberto identificada pelos próprios autores: com o crescimento acelerado no número de LLMs disponíveis, tanto proprietários quanto de código aberto, como aproveitar a expertise coletiva de múltiplos modelos ao mesmo tempo, em vez de depender de um único modelo generalista para todas as tarefas. Para investigar essa pergunta, \citet{wang2024moa} conduzem primeiro um experimento exploratório voltado a testar uma hipótese específica, à qual os autores dão o nome de colaboratividade dos LLMs: a ideia de que um modelo de linguagem tende a gerar respostas de qualidade superior quando tem acesso, dentro do próprio \textit{prompt}, às respostas geradas por outros modelos para a mesma pergunta.
+
+%Para testar essa hipótese, os autores selecionaram um conjunto de perguntas, coletaram as respostas geradas por vários LLMs distintos para cada uma delas, e então forneceram essas respostas, como contexto adicional dentro do próprio \textit{prompt}, de volta a cada um desses mesmos modelos, solicitando que gerassem uma nova resposta considerando esse material de referência. Em seguida, compararam o desempenho de cada modelo nessa condição, à qual chamam de colaborativa, com o desempenho do mesmo modelo respondendo de forma isolada, sem qualquer acesso às respostas de outros modelos.
+
+%O resultado desse experimento é o achado central que sustenta todo o restante do método: o desempenho de um modelo melhora de forma significativa quando ele tem acesso às respostas de outros modelos, e esse ganho ocorre de maneira consistente entre os diversos LLMs de código aberto testados pelos autores, não sendo um comportamento isolado de um modelo específico. Mais notável ainda, segundo os autores, essa melhora ocorre mesmo quando as respostas auxiliares fornecidas pelos outros modelos são de qualidade inferior à que o próprio modelo conseguiria gerar de forma totalmente independente. Ou seja, o benefício observado não depende de o modelo estar se apoiando em uma resposta objetivamente melhor que a sua; mesmo respostas de qualidade inferior parecem funcionar como material de referência que amplia a qualidade da resposta final gerada, possivelmente por oferecerem ângulos ou informações que o modelo não teria considerado sozinho.
+
+%É esse achado empírico, e não uma escolha arbitrária de projeto, que justifica a arquitetura do MoA descrita na Seção~\ref{subsec:moa-arquitetura}. Se um modelo já melhora sua resposta apenas por ter acesso às respostas de outros modelos dentro do próprio \textit{prompt}, sem qualquer treinamento adicional, então uma arquitetura que organiza essa troca de informação de forma sistemática e repetida, em múltiplos estágios sucessivos, deveria amplificar ainda mais esse ganho de qualidade, utilizando apenas os LLMs já existentes como blocos de construção.
+
+%\subsubsection{Arquitetura em Camadas: Propositores e Agregadores}
+%\label{subsec:moa-arquitetura}
+
+%\citet{wang2024moa} propõem uma arquitetura organizada em $l$ camadas sucessivas, cada uma composta por $n$ agentes, sendo cada agente um LLM já existente, utilizado apenas por meio de \textit{prompting}, sem qualquer treinamento ou ajuste adicional. A Figura~\ref{fig:moa_arquitetura} ilustra essa estrutura com um exemplo de quatro camadas e três agentes por camada.
+
+%\begin{figure}[H]
+%    \centering
+%    \includegraphics[width=\textwidth]{images/llms/moa_arquitetura.png}
+%    \caption{Estrutura em camadas do Mixture-of-Agents. Cada camada é composta por múltiplos agentes, cujas saídas são concatenadas e fornecidas como contexto adicional aos agentes da camada seguinte, até a camada final, que produz a saída definitiva. Fonte: \citet{wang2024moa}.}
+%    \label{fig:moa_arquitetura}
+%\end{figure}
+
+%Observando a Figura~\ref{fig:moa_arquitetura}, cada agente é identificado pela notação $A_{i,j}$, em que $i$ indica a camada à qual o agente pertence e $j$ indica sua posição dentro dessa camada. Na primeira camada, os três agentes ($A_{1,1}$, $A_{1,2}$ e $A_{1,3}$) recebem apenas o \textit{prompt} original fornecido pelo usuário, gerando cada um sua própria saída de forma independente. Essas três saídas são então concatenadas em um único bloco de texto, chamado de saída intermediária, que passa a compor o contexto de entrada para os agentes da camada seguinte, além do \textit{prompt} original. Esse processo se repete camada após camada: os agentes da segunda e da terceira camada recebem tanto o \textit{prompt} original quanto a saída intermediária concatenada da camada anterior, gerando novas respostas que, por sua vez, também são concatenadas e repassadas adiante. Por fim, a quarta e última camada é composta por um único agente, $A_{4,1}$, responsável por consolidar todo esse histórico de respostas em uma única saída final.
+
+%Segundo os autores, essa estrutura permite que os agentes desempenhem dois papéis distintos, ainda que um mesmo agente possa, dependendo da camada em que se encontra, exercer os dois papéis ao longo do processo. O papel de \textit{propositor} é exercido por um agente que gera respostas de referência diversas e úteis para os demais, mesmo que essa resposta, isoladamente, não seja a melhor possível. O papel de \textit{agregador} é exercido por um agente responsável por sintetizar as respostas de múltiplos propositores em uma única saída de maior qualidade. Como indica a legenda da própria Figura~\ref{fig:moa_arquitetura}, os agentes das camadas intermediárias, da segunda até a penúltima, acumulam os dois papéis simultaneamente: atuam como agregadores das respostas da camada anterior e, ao mesmo tempo, suas próprias saídas servem de material de referência para os propositores da camada seguinte. Já o agente da primeira camada atua apenas como propositor, e o agente da última camada atua apenas como agregador final. Vale destacar também, conforme indicado na legenda original da figura, que os agentes de diferentes camadas podem compartilhar o mesmo modelo de LLM subjacente, de modo que a arquitetura não exige necessariamente um número de modelos distintos igual ao número total de agentes.
+
+%\subsubsection{Análise do Mecanismo Interno do MoA}
+%\label{subsec:moa-mecanismo}
+
+%Para investigar por que a arquitetura em camadas descrita na Seção~\ref{subsec:moa-arquitetura} funciona, \citet{wang2024moa} conduzem um experimento adicional comparando o MoA contra uma linha de base construída especificamente para isolar o papel do agregador. Nessa linha de base, em vez de permitir que o agregador sintetizasse uma resposta nova a partir das saídas dos propositores, o mesmo modelo utilizado como agregador foi empregado apenas para selecionar, entre as respostas já geradas pelos propositores, aquela que considerasse a melhor, sem produzir texto novo algum, abordagem à qual os autores se referem como um tipo de classificador de LLM(\textit{LLM ranker}). Essa comparação recupera a distinção entre métodos baseados em seleção e métodos baseados em geração, identificada por \citet{jiang2023llmblender} no contexto da combinação de saídas de múltiplos LLMs: assim como um método de seleção está limitado ao teto de qualidade do melhor candidato já gerado, o agregador do MoA tem liberdade para produzir uma resposta nova a partir da síntese de todas as respostas recebidas.
+
+%Segundo os autores, o MoA supera de forma significativa essa linha de base de classificação, o que evidencia que o agregador não está simplesmente escolhendo uma das respostas dos propositores, mas de fato realizando uma síntese mais sofisticada a partir delas.
+
+%Para investigar mais a fundo em que consiste essa síntese, os autores mediram a similaridade textual entre a resposta final gerada pelo agregador e cada uma das respostas individuais dos propositores, utilizando três métricas distintas: BLEU, que mede a sobreposição de sequências de palavras entre dois textos; a distância de Levenshtein, que mede o número mínimo de edições necessárias para transformar um texto em outro; e TF-IDF, que pondera a frequência dos termos presentes em cada texto. Em seguida, calcularam a correlação de postos de Spearman entre essas pontuações de similaridade e a pontuação de preferência atribuída a cada resposta dos propositores por um avaliador baseado em GPT-4. As três métricas de similaridade apresentaram correlação positiva com a pontuação de preferência: a resposta final do agregador se assemelha mais às respostas que já eram consideradas de maior qualidade pelo avaliador do que às demais. Ou seja, o agregador não trata todas as respostas dos propositores como igualmente relevantes para a síntese final; ele tende a incorporar mais fortemente o conteúdo das respostas que já eram melhores, ainda que sem descartar por completo as demais.
+
+
+%\subsubsection{Resultados}
+%\label{subsec:moa-resultados}
+
+%Para avaliar a arquitetura descrita nas subseções anteriores, \citet{wang2024moa} utilizam três \textit{benchmarks} de avaliação automática de qualidade de texto. O AlpacaEval 2.0, desenvolvido por \citet{dubois2024alpacaeval}, compara a resposta do modelo avaliado com a de um modelo de referência para um conjunto fixo de 805 instruções, por meio de um LLM utilizado como juiz, reportando a taxa de vitória controlada por comprimento, uma correção estatística que evita que o juiz favoreça respostas apenas por serem mais longas. O MT-Bench, proposto por \citet{zheng2023mtbench}, avalia a capacidade de sustentar diálogos de múltiplos turnos por meio de 80 perguntas distribuídas em oito categorias, com cada resposta pontuada de 1 a 10 por um LLM juiz. O FLASK, proposto por \citet{ye2023flask}, decompõe a avaliação em um conjunto de habilidades específicas, como raciocínio lógico e aderência às instruções, em vez de atribuir uma única nota geral de qualidade.
+
+%Segundo os autores, o MoA, configurado com seis propositores e três camadas de agregação, alcança uma taxa de vitória controlada por comprimento de 65,8\% no AlpacaEval 2.0, uma melhoria absoluta de 8,2 pontos percentuais em relação ao então melhor modelo individual, o GPT-4o, que obtinha 57,5\%. Os autores avaliam também uma variante reduzida, chamada MoA-Lite, composta pelos mesmos seis propositores mas com apenas duas camadas de agregação em vez de três, o que permite isolar o efeito do número de camadas sobre o resultado final. No FLASK, utilizando a mesma configuração de seis propositores, os autores relatam que o MoA se destaca em diversas das dimensões de habilidade avaliadas pelo \textit{benchmark}, sem que um único aspecto isolado explique a totalidade do ganho observado. Já no MT-Bench, os resultados foram obtidos pelos próprios autores executando a avaliação turno a turno, e posteriormente combinados com os resultados do AlpacaEval 2.0 e de um terceiro \textit{benchmark}, o Arena-Hard, em uma pontuação agregada única.
+
+%Além dos três \textit{benchmarks} de qualidade de texto, \citet{wang2024moa} avaliam também o efeito do número de camadas em uma tarefa de raciocínio matemático com resposta verificável, utilizando o conjunto de dados MATH. Os autores relatam que aumentar a arquitetura de duas para três camadas de agregação melhora o desempenho nessa tarefa, e destacam que o ganho trazido pelo MoA é complementar a outras técnicas de indução de raciocínio já estabelecidas na literatura, como a cadeia de pensamento \citep{wei2022cot} e a autoconsistência \citep{wang2023selfconsistency}, técnica que consiste em gerar múltiplas cadeias de raciocínio para a mesma pergunta e adotar a resposta mais frequente entre elas. Ou seja, o MoA pode ser combinado a essas técnicas em vez de substituí-las.
+
+%\subsubsection{Limitações e o Contraponto do Self-MoA}
+%\label{subsec:moa-limitacoes}
+
+%Os próprios autores do MoA reconhecem uma limitação prática relevante da arquitetura em camadas: como cada camada só pode iniciar seu processamento depois que a camada anterior termina de gerar suas respostas, o modelo final não pode começar a emitir seu primeiro \textit{token} até que a última camada seja alcançada. Isso resulta em um tempo até o primeiro \textit{token} (\textit{Time to First Token}, TTFT) potencialmente alto, o que pode prejudicar a experiência de uso em aplicações que exigem resposta imediata. Esse custo de latência cresce proporcionalmente ao número de camadas utilizadas, sendo um dos motivos pelos quais os próprios autores avaliam também a variante reduzida MoA-Lite, discutida na Seção~\ref{subsec:moa-resultados}.
+
+%Uma crítica mais substancial ao próprio princípio de funcionamento do MoA foi apresentada posteriormente por \citet{li2025selfmoa}. Os autores questionam diretamente a premissa de que misturar LLMs diferentes seja de fato benéfico, e propõem o Self-MoA, um método de \textit{ensemble} que, em vez de agregar respostas de múltiplos modelos distintos, agrega múltiplas respostas amostradas repetidamente de um único modelo, o de melhor desempenho individual disponível. Para isso, os autores reproduzem exatamente a mesma configuração de seis modelos e o mesmo agregador utilizados por \citet{wang2024moa}, mas, no caso do Self-MoA, todas as seis respostas de entrada são amostradas do mesmo modelo, identificado como o de melhor desempenho individual entre os seis, em vez de uma resposta de cada um dos seis modelos distintos.
+
+%Segundo \citet{li2025selfmoa}, o Self-MoA supera o MoA convencional em uma ampla gama de cenários, alcançando uma melhoria de 6,6 pontos percentuais sobre o MoA no AlpacaEval 2.0, e uma melhoria média de 3,8\% em outros \textit{benchmarks}, incluindo o MMLU, o CRUX e o MATH. Os autores interpretam esse resultado como evidência de que existe um compromisso entre qualidade e diversidade (\textit{quality-diversity trade-off}) na composição do conjunto de propositores: ao misturar modelos de qualidades distintas, o MoA convencional acaba incorporando também as respostas dos modelos mais fracos do conjunto, o que pode degradar a qualidade da síntese final, enquanto o Self-MoA obtém diversidade suficiente apenas pela variação natural entre diferentes amostras geradas por um único modelo já forte, sem sofrer essa penalidade de qualidade.
+
+%Esse achado tem uma implicação direta e cautelar para a proposta deste projeto. Ele sugere que a suposição implícita de que aumentar o número ou a diversidade de modelos no conjunto de entrada do agente combinador necessariamente melhora o resultado final não deve ser aceita sem verificação. Da mesma forma que o Self-MoA questiona se misturar diferentes LLMs é sempre vantajoso, é possível que, para a tarefa de combinação de previsões de séries temporais, um subconjunto menor e mais criterioso de modelos historicamente mais precisos produza uma combinação final tão boa quanto, ou melhor do que, um conjunto amplo que inclua também modelos historicamente mais fracos, o que reforça a necessidade de avaliar essa hipótese empiricamente durante os experimentos, e não apenas assumi-la por analogia à literatura de combinação clássica revisada anteriormente neste capítulo.
+
+\subsection{Mixture-of-Agents (MoA)}
+
+O \textit{Mixture-of-Agents} (MoA), proposto por \citet{wang2024moa}, organiza múltiplos LLMs em camadas sucessivas para gerar e refinar respostas textuais, sem treinamento adicional dos modelos. Na primeira camada, os modelos recebem uma mesma instrução e produzem respostas independentes. Nas camadas seguintes, essas respostas são fornecidas como contexto adicional para a geração de novas respostas, até a obtenção de uma saída final. Nesse processo, os modelos desempenham os papéis de \textit{propositores}, que produzem respostas de referência, e de \textit{agregadores}, que sintetizam as informações recebidas. Um mesmo modelo pode desempenhar ambos os papéis em diferentes etapas.
+
+A motivação dessa organização é a observação de que um LLM pode melhorar sua resposta quando recebe respostas de outros modelos como referência, mesmo quando estas respostas apresentam qualidade individual inferior à sua própria resposta. Diferentemente de uma estratégia que apenas seleciona o melhor candidato, o agregador pode produzir uma nova resposta incorporando informações de múltiplas fontes. Nos experimentos apresentados por \citet{wang2024moa}, essa estratégia obteve resultados superiores aos de modelos individuais nos cenários de geração textual avaliados.
+
+Entretanto, a agregação em camadas introduz custos adicionais de inferência e latência, pois cada etapa depende das respostas produzidas anteriormente. Além disso, a diversidade dos modelos não garante uma combinação superior. \citet{li2025selfmoa} investigaram essa questão com o Self-MoA, que agrega múltiplas respostas amostradas de um único modelo de bom desempenho, em vez de respostas provenientes de modelos distintos. Nos cenários avaliados, essa abordagem superou a agregação heterogênea, indicando que a qualidade das respostas pode ser mais determinante do que a diversidade dos modelos que as produzem.
+
+Para esta pesquisa, esses trabalhos motivam a investigação do LLM como componente de agregação e destacam a necessidade de avaliar a qualidade e a composição do conjunto de modelos cujas saídas serão combinadas. A transferência dessas observações para previsões numéricas, contudo, requer avaliação própria: sintetizar respostas textuais e combinar previsões de séries temporais envolvem objetivos e critérios de qualidade distintos.
+
+Em seguida, são discutidos dois trabalhos que empregam agentes baseados em LLMs diretamente na previsão de séries temporais: TSOrchestr \citep{cao2025tsorchestr}, voltado à coordenação e combinação de modelos de fundação para séries temporais e o TimeSeriesScientist \citep{zhao2025timeseriesscientist}, que abrange etapas de preparação dos dados, seleção de modelos e combinação de previsões.
+
+
+\subsection{TSOrchestr}
+\label{subsec:tsorchestr}
+A proliferação de modelos de fundação para séries temporais (\textit{Time Series Foundation Models}, TSFMs) nos últimos anos criou um cenário no qual nenhum método isolado alcança superioridade consistente sobre os demais. Essa ausência de um modelo dominante já foi observada empiricamente em outros domínios de aplicação, como no trabalho de \citet{krause2026foundation}, que constataram que nenhuma família de modelos, incluindo modelos de fundação, estatísticos, de aprendizagem de máquina e de aprendizagem profunda, venceu de forma consistente em todos os cenários avaliados. O trabalho de \citet{cao2025tsorchestr} não se limita a essa constatação empírica e formaliza matematicamente por que essa ausência de um modelo dominante é esperada, propondo o que chamam de Índice de Incompatibilidade Temporal, uma medida do grau em que padrões históricos semelhantes entre séries podem levar a desfechos futuros divergentes. A partir dessa medida, os autores demonstram um teorema, ao qual chamam de Superioridade do \textit{Ensemble}, segundo o qual, sempre que esse índice de incompatibilidade for maior que zero para um conjunto de dados, um \textit{ensemble} de modelos com desempenho diverso entre si tende a superar qualquer modelo individual isolado. Esse resultado teórico é o que sustenta a decisão de projeto central do trabalho: em vez de buscar um único TSFM que sirva bem a todos os cenários, os autores concentram esforço em orquestrar de forma inteligente um conjunto pequeno de TSFMs já existentes.
+
+Diante desse cenário, no trabalho de \citet{cao2025tsorchestr}, os autores argumentam que o desafio central deixa de ser encontrar o melhor modelo individual e passa a ser orquestrar um conjunto de modelos de forma ótima e interpretável, e que, embora os LLMs ofereçam capacidades poderosas de raciocínio, sua aplicação direta à previsão de séries temporais já se mostrou ineficaz. Os autores criticam explicitamente duas famílias de abordagens anteriores que tentam lidar com esse problema. A primeira, que busca unir raciocínio em linguagem natural e precisão numérica por meio de ajuste fino supervisionado ou por reforço, exige computação extensiva para ganhos apenas marginais, dado o descompasso fundamental entre o tipo de raciocínio linguístico que um LLM realiza e a precisão numérica exigida por uma tarefa de previsão. A segunda, representada por abordagens de agentes puramente \textit{zero-shot}, como o LLMTime \citep{gruver2023llmtime}, que utiliza o LLM diretamente como previsor, solicitando a continuação da representação textual da própria série numérica sem qualquer modelo de previsão especializado envolvido, preserva a capacidade de raciocínio geral do LLM, mas carece do conhecimento específico do domínio necessário para uma seleção de modelo verdadeiramente informada.
+
+Para superar essas duas limitações, \citet{cao2025tsorchestr} propõem o TSOrchestr, que reposiciona o LLM não como um previsor numérico direto, e sim como um juiz inteligente, responsável por avaliar, explicar e coordenar estrategicamente um conjunto de TSFMs especializados. O conjunto orquestrado é formado por quatro modelos de fundação com arquiteturas e paradigmas de treinamento bastante distintos entre si, escolhidos justamente por oferecerem forças complementares: o Toto, treinado pela Datadog sobre quase um trilhão de pontos de dados de observabilidade de sistemas; o Sundial, escalado para um trilhão de pontos temporais; o Moirai-2; e o TabPFN-TS, que, apesar de possuir apenas 11 milhões de parâmetros, treinado inteiramente sobre dados tabulares sintéticos, também compõe o conjunto. A Figura~\ref{fig:tsorchestra_arquitetura} ilustra a arquitetura proposta para orquestrar o conjunto de modelos.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/llms/tsorchestra_arquitetura.png}
+    \caption{Arquitetura do TSOrchestr. A parte superior mostra o agente de LLM guiando a otimização dos pesos do \textit{ensemble} via SLSQP por meio de raciocínio iterativo. A parte inferior detalha o processo de ajuste fino do agente no estilo R1, no qual uma pontuação de fidelidade alinhada a valores de SHAP recompensa explicações causalmente fundamentadas durante o treinamento por GRPO. Fonte: \citet{cao2025tsorchestr}.}
+    \label{fig:tsorchestra_arquitetura}
+\end{figure}
+
+Como indicado na própria Figura~\ref{fig:tsorchestra_arquitetura}, a arquitetura do TSOrchestr é dividida em dois estágios complementares: um estágio de otimização numérica dos pesos do \textit{ensemble}, guiado pelo raciocínio do agente, e um estágio de treinamento desse mesmo agente, apresentado a seguir.
+
+
+\subsubsection{Ajuste Fino Guiado por SHAP}
+\label{subsec:tsorchestra-shap}
+
+Um obstáculo central enfrentado por \citet{cao2025tsorchestr} é que um LLM, por mais capaz que seja em raciocínio geral, não possui conhecimento intrínseco específico do domínio de séries temporais: um peso de combinação como 0,7 para um modelo e 0,3 para outro é, para o LLM, apenas um par de números, sem qualquer significado causal associado a padrões temporais como tendência ou sazonalidade. Para resolver esse obstáculo, os autores propõem um processo de ajuste fino adicional do agente, que utiliza como sinal de recompensa uma pontuação derivada do SHAP (\textit{SHapley Additive exPlanations}) \citep{lundberg2017shap}. O SHAP se baseia nos valores de Shapley, um conceito originário da teoria dos jogos cooperativos que determina como dividir de forma justa o resultado obtit por uma coalizão de jogadores entre os próprios jogadores, de acordo com a contribuição marginal de cada um. Aplicado a um modelo preditivo, o SHAP trata cada variável de entrada como um "jogador" e atribui a cada uma delas um valor de importância que representa sua contribuição real para uma previsão específica, permitindo decompor a saída de um modelo complexo na soma das contribuições individuais de cada uma de suas partes.
+
+No caso do TSOrchestr, o SHAP não é aplicado diretamente aos modelos do \textit{ensemble}, mas sim aos componentes temporais da própria série, tendência, sazonalidade e resíduo, obtidos por uma decomposição prévia. Os autores avaliam o desempenho de um modelo sobre diferentes subconjuntos desses três componentes, presentes ou ausentes, e usam os valores de Shapley resultantes para atribuir a cada componente temporal o quanto ele de fato contribui para o desempenho daquele modelo, gerando o que os autores chamam de pontuação de fidelidade (\textit{Faithfulness Score}). Essa pontuação serve como um padrão-ouro contra o qual se verifica se a explicação em linguagem natural gerada pelo LLM, ao justificar o peso atribuído a um modelo, por exemplo, atribuindo seu bom desempenho à sazonalidade da série, de fato corresponde à contribuição real medida pelo SHAP para aquele componente específico, e não a uma justificativa apenas plausível, mas sem fundamento real.
+
+A partir da pontuação de fidelidade, o agente é treinado por meio de um processo de ajuste fino denominado "estilo R1", em referência à metodologia de treinamento por reforço popularizada pelo DeepSeek-R1 \citep{guo2025deepseekr1}, modelo que demonstrou ser possível incentivar capacidades de raciocínio em um LLM por meio de aprendizado por reforço puro, utilizando o algoritmo de \textit{Group Relative Policy Optimization} (GRPO), sem depender de trajetórias de raciocínio anotadas por humanos. No caso do TSOrchestr, a pontuação de fidelidade alinhada ao SHAP é utilizada como recompensa durante esse treinamento por GRPO, o que ensina o agente a interpretar os pesos de combinação como afirmações causais sobre a dinâmica temporal da série, como "um peso alto atribuído ao modelo A indica um padrão autorregressivo forte na série", em vez de gerar explicações plausíveis, mas sem fundamento real no que de fato ocorreu na combinação. Dessa forma, pesos numéricos abstratos são transformados em decisões semanticamente significativas, sobre as quais o agente pode raciocinar e que pode explicar de forma verificável. Para essa etapa de raciocínio, os autores empregam o Qwen-2.5-3B-Instruct como modelo base do agente, uma escolha notável por se tratar de um modelo relativamente pequeno e passível de execução local, na mesma linha dos modelos considerados neste projeto.
+
+Os autores comprovam o valor específico dessa etapa de ajuste fino por meio de um experimento de ablação, no qual comparam três configurações: uma linha de base não agêntica, que seleciona pesos otimizando diretamente uma única métrica de erro, sem qualquer raciocínio envolvido; uma variante agêntica, na qual o LLM realiza raciocínio multimétrico sobre a compatibilidade entre o conjunto de dados e cada modelo sem ter passado pelo ajuste fino guiado por SHAP; e a variante completa do TSOrchestr, que inclui esse ajuste fino. Essa comparação isola precisamente a contribuição do processo de ajuste fino guiado por SHAP em relação ao uso do LLM apenas por meio de \textit{prompting} direto.
+
+\subsubsection{Coordenação via Conversação Iterativa}
+
+Uma vez treinado, o agente do TSOrchestr não decide os pesos de combinação de uma única vez, de forma estática, mas sim por meio de um processo de coordenação estruturado em duas etapas sucessivas. Na primeira, chamada pelos autores de avaliação prospectiva, o agente analisa os padrões de desempenho histórico dos modelos de fundação envolvidos para determinar se a combinação de pesos atualmente em uso permanece válida, ou se há indícios de uma mudança de regime na série, isto é, uma alteração no comportamento subjacente dos dados que tornaria os pesos vigentes desatualizados. É essa avaliação inicial que decide se um novo ciclo de recalibração dos pesos deve ou não ser acionado.
+
+Quando uma recalibração é de fato acionada, o agente entra na segunda etapa, um processo iterativo de múltiplos turnos de conversação, no qual duas capacidades atuam em conjunto a cada rodada $k$. A primeira, chamada de exploração estratégica, consiste em selecionar, dentre um conjunto de métricas de erro disponíveis, MAE, SMAPE, MSE e CRPS, qual métrica $L_k$ deve ser otimizada nessa rodada, com o objetivo de testar uma hipótese específica sobre a qualidade dos pesos atuais. A segunda, chamada de raciocínio avaliativo, sintetiza as evidências disponíveis, o desempenho de validação cruzada obtido para todas as métricas consideradas, as características do conjunto de dados, e o conhecimento de domínio sobre a capacidade de cada modelo de fundação, produzindo três saídas: uma pontuação de confiança sobre a qualidade da combinação de pesos testada nessa rodada; uma decisão binária indicando se o processo deve continuar para uma nova rodada ou se os pesos atuais devem ser aceitos como definitivos; e, caso o processo continue, uma recomendação de qual métrica deve ser testada na rodada seguinte. Esse ciclo se repete até que o agente decida aceitar uma configuração de pesos, momento em que ele produz explicações causalmente fundamentadas, alinhadas às contribuições medidas pelo SHAP discutido na Seção anterior, articulando por que modelos específicos receberam pesos mais altos com base em seu impacto sobre componentes temporais como tendência e sazonalidade.
+
+Os autores reconhecem que esse processo de raciocínio em múltiplos turnos introduz um custo de latência, mas argumentam que, no contexto de previsão de séries temporais, esse custo é amortizado: diferentemente de uma aplicação conversacional que precisa responder a cada interação do usuário, os processos computacionalmente intensivos, otimização iterativa, cálculo dos valores de SHAP e raciocínio do LLM, ocorrem apenas durante a fase de calibração, que por sua vez só é acionada quando a avaliação prospectiva detecta uma mudança de regime, e não a cada nova previsão gerada. Avaliado no \textit{benchmark} GIFT-Eval, que reúne 23 conjuntos de dados de séries temporais em 97 configurações experimentais distintas, os autores relatam que o TSOrchestr alcança um ranking médio de 7,3 no MASE e de 8,2 no CRPS, superando todos os modelos de fundação individuais avaliados e aproximando-se do limite superior de uma seleção oracular de pesos, o que representa uma melhoria de 25,5\% em relação ao melhor modelo individual isolado, o Moirai-2.
+
+
+
+
+
+\subsection{TimeSeriesScientist}
+
+Enquanto o TSOrchestr concentra-se em orquestrar um conjunto pequeno de modelos de fundação de séries temporais, \citet{zhao2025timeseriesscientist} propõem o TimeSeriesScientist (TSci), um sistema com escopo mais amplo, que automatiza de ponta a ponta todo o fluxo de trabalho que um cientista de dados humano seguiria para realizar previsão de séries temporais univariadas, incluindo etapas como diagnóstico de qualidade dos dados, tratamento de valores faltantes e \textit{outliers}, e seleção dos modelos candidatos. Os autores argumentam que o custo dominante na previsão de séries temporais em ambientes reais não está no ajuste dos modelos em si, mas no esforço manual de pré-processamento, validação e combinação exigido para lidar com milhares de séries curtas e ruidosas, de frequência, qualidade e horizonte heterogêneos, e que abordagens de propósito específico, ajustadas a um domínio ou conjunto de dados particular, tendem a generalizar mal fora desse contexto.
+
+O TSci organiza esse fluxo em quatro agentes especializados, ilustrados na Figura~\ref{fig:tsci_arquitetura}, cada um correspondendo a uma etapa distinta do trabalho de um cientista de dados: Curador, Planejador, Previsor e Relator.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/llms/tsci_arquitetura.png}
+    \caption{Arquitetura do TimeSeriesScientist. O Curador realiza diagnóstico e pré-processamento guiados por LLM; o Planejador seleciona e ajusta modelos candidatos por meio de busca validada; o Previsor integra os modelos ajustados em uma estratégia de \textit{ensemble} adaptativa; e o Relator consolida todo o processo em um relatório final. Fonte: \citet{zhao2025timeseriesscientist}.}
+    \label{fig:tsci_arquitetura}
+\end{figure}
+
+\subsubsection{Curador}
+
+O Curador atua em três etapas. Na primeira, o agente examina a série bruta e, por raciocínio de LLM, decide como tratá-la antes de qualquer modelagem: escolhe entre diferentes técnicas de detecção de \textit{outlier} (como limites baseados no intervalo interquartil, ou em desvios em relação à média móvel da série) e diferentes formas de tratá-los ou de preencher valores faltantes (\textit{winsorização}, interpolação, preenchimento direcional, substituição por média ou mediana local, entre outras), sem seguir uma regra fixa igual para toda série que passa pelo sistema. Na segunda etapa, o agente gera automaticamente três tipos de visualização a partir da série já tratada: um gráfico geral com média e desvio-padrão móveis; uma decomposição sazonal em tendência, sazonalidade e resíduo; e gráficos de autocorrelação, usados posteriormente para orientar a escolha de parâmetros de modelos autorregressivos. Na terceira etapa, o agente combina a série tratada e essas visualizações para produzir um perfil descrevendo tendência, sazonalidade e estacionariedade, novamente por raciocínio de LLM sobre os gráficos gerados na etapa anterior. O resultado consolidado dessas três etapas é entregue ao Planejador.
+
+\subsubsection{Planejador}
+
+O Planejador recebe o perfil produzido pelo Curador e também atua em três etapas. Primeiro, mapeia as características observadas para famílias de modelos adequadas, formando um pool de modelos candidatos retirados de uma biblioteca de 21 modelos, organizados em cinco categorias: sete estatísticos (ARIMA, \textit{Random Walk}, \textit{Exponential Smoothing}, Média Móvel, TBATS, Theta e Croston), seis de regressão de aprendizagem de máquina (Regressão Linear, Polinomial, Ridge, Lasso, \textit{Elastic Net} e SVR), quatro baseados em árvore (Random Forest, \textit{Gradient Boosting}, XGBoost e LightGBM), duas redes neurais (uma rede neural genérica e uma LSTM), e dois modelos especializados (Prophet e Transformer). Para cada modelo escolhido, o agente também gera uma justificativa textual associando as características observadas na análise ao motivo da escolha. Em seguida, para cada modelo candidato, o agente testa várias configurações de hiperparâmetros e escolhe a que obtém o menor erro percentual de validação. Por fim, os modelos ajustados são ranqueados por esse mesmo critério, e retêm-se apenas os de melhor desempenho, que seguem para o Previsor.
+
+\subsubsection{Previsor}
+
+O Previsor decide, por raciocínio de LLM, qual entre três famílias de estratégia de \textit{ensemble} aplicar aos modelos retidos pelo Planejador, sempre fixando essa decisão antes de qualquer contato com o conjunto de teste, para evitar vazamento de dados. Na primeira família, seleção do único melhor modelo, o agente descarta todos os demais candidatos e usa só o de melhor desempenho de validação, recomendada quando esse modelo se destaca por uma margem clara sobre o segundo colocado. Na segunda, média ponderada por desempenho, os modelos com melhor desempenho de validação recebem peso maior na combinação final, com um mecanismo que aproxima os pesos do valor uniforme quando os modelos candidatos são poucos ou têm desempenho muito próximo entre si, evitando que a combinação fique excessivamente concentrada em um único modelo por uma diferença pequena de validação. Na terceira, agregação robusta, usa-se a mediana ou uma média aparada entre as previsões dos modelos candidatos, recomendada quando essas previsões divergem substancialmente entre si. Os pesos, quando aplicáveis, são fixos ao longo de todo o horizonte de previsão, não variando passo a passo.
+
+\subsubsection{Relator}
+
+O Relator consolida o processo inteiro em um relatório com cinco partes: a previsão final do \textit{ensemble} com intervalos de confiança; um resumo de desempenho com as métricas de teste de cada modelo individual ao lado do conjunto combinado; uma seção de interpretabilidade em linguagem natural, cobrindo a justificativa da escolha dos modelos, a derivação dos pesos do \textit{ensemble}, a confiança do sistema na previsão, e quaisquer suposições ou limitações identificadas; a suíte de visualizações geradas ao longo do processo; e a documentação completa do fluxo, registrando cada decisão tomada em cada uma das etapas anteriores.
+
+\subsubsection{Estrutura dos \textit{Prompts}}
+
+Um aspecto relevante do TSci é que cada agente é implementado por meio de um par de \textit{prompts} com papéis distintos: um \textit{prompt} de sistema, fixo, que atribui ao agente uma persona profissional específica (por exemplo, o Curador é instruído como "\textit{Data Preprocessing Chief Agent}", e o Previsor como "\textit{Ensemble Forecasting Integration Agent}"), estabelecendo contexto, área de especialidade e responsabilidades; e um \textit{prompt} de tarefa, que fornece os dados específicos daquela chamada e exige uma resposta estritamente em formato JSON estruturado, sem qualquer texto explicativo fora do próprio objeto JSON. Diferentemente do formato Pensamento/Ação/Entrada de Ação usado em ciclos do tipo ReAct, cada chamada aos agentes do TSci corresponde a um \textit{prompt} de tarefa próprio para cada sub-etapa (um \textit{prompt} específico para diagnóstico de valores faltantes, outro para geração de visualizações, outro para seleção de modelos, e outro para decisão da estratégia de \textit{ensemble}). Os \textit{prompts} publicados pelos próprios autores não mencionam nenhum mecanismo de repetição, autocrítica ou refinamento do resultado dentro da mesma sub-etapa, o que sugere, sem que os autores afirmem isso diretamente, um processo de decisão pontual por chamada, em vez de um ciclo iterativo.
+
+\subsubsection{Resultados}
+
+\citet{zhao2025timeseriesscientist} avaliam o TSci em oito conjuntos de dados públicos de cinco domínios distintos, entre eles os quatro subconjuntos ETT (\textit{Electricity Transformer Temperature}), Weather, ECL, Exchange e ILI, comparando-o tanto contra cinco LLMs de propósito geral utilizados diretamente como previsores (GPT-4o, Gemini-2.5-Flash, Qwen-Plus, DeepSeek-v3 e Claude-3.7) quanto contra métodos estatísticos clássicos. O próprio TSci, na configuração padrão utilizada nos experimentos, também tem seus quatro agentes executados sobre o GPT-4o; ou seja, tanto o \textit{backbone} do sistema quanto os cinco concorrentes de comparação são modelos de nuvem, acessados por API, sem nenhuma variante de peso aberto executada localmente entre eles. Contra os LLMs de propósito geral, os autores relatam uma redução média de 38,2\% no erro absoluto médio, e contra os métodos estatísticos clássicos, uma redução média de 10,4\%, ambas calculadas sobre os oito conjuntos de dados do estudo. Especificamente nos quatro conjuntos ETT, os próprios autores destacam uma ressalva importante: em horizontes curtos, modelos lineares simples podem igualar ou superar levemente o TSci, e a vantagem do sistema só se torna mais consistente à medida que o horizonte de previsão aumenta. Um estudo de ablação indica que a remoção do módulo de pré-processamento do Curador é o que mais prejudica o desempenho (aumento médio de 41,8\% no erro), seguida pela remoção do módulo de análise (28,3\%) e do módulo de otimização de modelo (36,2\%), evidenciando que cada componente contribui de forma material ao resultado final.
+
+\section{Considerações finais}
+Na maioria dos trabalhos discutidos, os modelos estatísticos são amplamente utilizados dentro do conjunto de modelos candidatos para combinação. O estudo de \cite{demattos2019} destaca que a inclusão de modelos estatísticos no conjunto se justifica devido à sua capacidade de identificar padrões de sazonalidade e tendência, além de pertencer à categoria de modelos lineares, o que facilita sua interpretação e aplicação.
+
+Por outro lado, os demais modelos empregados nos trabalhos analisados apresentam maior diversidade, variando conforme cada estudo. Os resultados de \cite{fforma2019} e \cite{ade}, indicam que combinações ponderadas de modelos híbridos tendem a superar o desempenho de modelos individuais, reforçando a importância de uma abordagem eficiente para a definição dos pesos atribuídos a cada modelo na combinação. Nessa pesquisa, a diversidade de modelos é explorada a partir de diferentes representações dos dados para o treinamento dos modelos.
+
+Uma linha de pesquisa mais recente substitui a definição de pesos, até então resolvida por um meta-modelo estatístico ou de aprendizagem de máquina, por um LLM ou por um agente baseado em LLM. O Mixture-of-Agents \citep{wang2024moa}, ainda que aplicado à geração de texto, mostra que sintetizar as saídas de múltiplos modelos por meio de raciocínio em linguagem natural, sem qualquer treinamento adicional, pode superar o melhor modelo individual do conjunto. O TSOrchestr \citep{cao2025tsorchestr} traz essa mesma ideia diretamente para séries temporais, reposicionando o LLM como um juiz que pondera um conjunto de modelos de fundação em vez de atuar como meta-modelo estatístico ou como previsor numérico direto, ainda que dependa de um ajuste fino adicional guiado por SHAP e por aprendizado por reforço, o que o diferencia de uma proposta baseada em aprendizado em contexto sobre modelos executados localmente. O TimeSeriesScientist \citep{zhao2025timeseriesscientist} amplia esse princípio para um escopo mais amplo, automatizando não apenas a combinação, mas todo o fluxo de trabalho de previsão, do diagnóstico e pré-processamento dos dados até a geração de um relatório final, por meio de quatro agentes especializados. Ainda que o Previsor desse sistema decida entre estratégias de combinação de forma semelhante em espírito ao que se propõe neste projeto, fixando pesos antes de qualquer contato com o conjunto de teste, o mecanismo de decisão de cada agente corresponde a uma chamada isolada e estruturada ao LLM, sem um ciclo de tentativa e reavaliação dentro da mesma etapa, e os modelos empregados, tanto como base do sistema quanto nas comparações realizadas, são todos acessados por API de nuvem, sem nenhuma variante de peso aberto executada localmente entre eles.
+
+Os trabalhos da literatura apresentam diferentes formas de empregar LLMs na agregação de respostas e na coordenação de modelos de previsão. Nesse contexto, esta dissertação investiga o uso de um agente baseado em LLM para orientar a combinação de previsões de séries temporais por meio de um conjunto predefinido de funções determinísticas. A proposta explora a seleção e a execução dessas funções em um ciclo de ação e avaliação, sem ajuste adicional dos parâmetros do LLM. O método proposto é detalhado no Capítulo~\ref{chp:proposta}.

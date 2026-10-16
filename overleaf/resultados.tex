@@ -1,0 +1,987 @@
+\chapter{Avaliação Experimental e Discussão de Resultados}\label{chp:resultados}
+
+\section{Considerações iniciais} \label{sec:resultados-iniciais}
+
+Este capítulo apresenta os resultados obtidos pelo método proposto, CREST, em comparação com os modelos individuais que compõem o conjunto de preditores, com as combinações estáticas (média, mediana e DBA), e com os métodos de combinação por meta-aprendizagem revisados no Capítulo~\ref{chp:revisao}, FFORMA e ADE.
+
+\section{Design experimental}
+O conjunto de preditores individuais utilizado em todos os experimentos deste capítulo é composto por dezenove modelos: três estatísticos (ARIMA, ETS e Theta), dois regressores de aprendizagem de máquina treinados sobre a representação original dos dados (Random Forest e CatBoost), doze variantes desses mesmos dois regressores treinadas sobre representações obtidas por transformação \textit{wavelet} contínua, \textit{wavelet} discreta e de Fourier, tanto de forma concatenada à representação original quanto isoladamente, e dois métodos ingênuos (Naive Seasonal e Naive Moving Average). Cada um desses métodos foi apresentado individualmente no Capítulo~\ref{chp:background}, e sua combinação no conjunto $\mathcal{M}$ foi formalizada na Seção~\ref{sec:formulacao} do capítulo de método.
+
+Os experimentos foram conduzidos sobre sete conjuntos de dados de domínios e frequências de amostragem distintos: o conjunto de demanda de combustíveis fornecido pela ANP, obtido por meio da biblioteca StreamFuels, desenvolvida no âmbito desta dissertação \citep{streamfuels}, os conjuntos NN5 e M4 do repositório \textit{Monash Forecasting}, ambos em frequência semanal, e os quatro subconjuntos do \textit{Electricity Transformer Temperature} (ETTh1, ETTh2, ETTm1 e ETTm2). Em todos os casos, o protocolo de avaliação segue o descrito na Seção~\ref{sec:formulacao}: cada série é dividida em um conjunto de treino, três janelas de validação, usadas tanto para a busca de hiperparâmetros dos modelos individuais quanto para a decisão de combinação do CREST, e uma janela de teste, reservada exclusivamente para a avaliação final e nunca observada durante qualquer etapa de decisão.
+
+Os experimentos foram realizados em uma máquina equipada com duas GPUs NVIDIA GeForce RTX 5090, com 32 GB de memória VRAM cada, e um processador Intel [modelo].
+
+%As métricas empregadas para comparar os métodos, SMAPE e POCID, assim como a Matriz de Comparação Múltipla (MCM) usada para comparações par a par entre vários métodos simultaneamente, já foram apresentadas na Seção~\ref{sec:metricas} do Capítulo~\ref{chp:background}.
+
+%O restante deste capítulo está organizado da seguinte forma. A Seção~\ref{sec:escolha-llm} justifica a escolha do modelo de linguagem empregado no papel de agente combinador. As Seções~\ref{sec:resultados-anp} a~\ref{sec:resultados-ettm2} apresentam os resultados para cada conjunto de dados individualmente, cada uma seguindo a mesma estrutura: desempenho dos modelos individuais, desempenho entre estratégias de combinação, e uma comparação geral por meio da MCM. A Seção~\ref{sec:resultados-sintese} apresenta uma síntese entre os sete conjuntos de dados, incluindo um ranqueamento consolidado e uma MCM agregada considerando todas as séries de todos os conjuntos de dados simultaneamente. A Seção~\ref{sec:resultados-agente} analisa o comportamento do agente combinador, incluindo o uso do catálogo de ações, os critérios de encerramento observados na prática, e o custo computacional do ciclo de decisão.
+
+
+
+\section{Escolha do modelo de linguagem do agente} \label{sec:escolha-llm}
+
+Antes de apresentar os resultados por conjunto de dados, é necessário justificar a escolha do modelo de linguagem empregado no papel de agente combinador ao longo do restante deste capítulo. Três modelos de linguagem de peso aberto foram comparados nesse papel, gpt-oss:20b, qwen3:30b-a3b e gemma4:26b, descritos na Seção~\ref{subsec:principais-modelos} do Capítulo~\ref{chp:background}, avaliando tanto o desempenho preditivo quanto o custo computacional de cada um.
+
+\subsection{Desempenho preditivo}
+
+A Tabela~\ref{tab:escolha-llm-desempenho} compara o SMAPE e o POCID médios do CREST executado com cada um dos três modelos, por conjunto de dados.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio do CREST com gpt-oss:20b, qwen3:30b-a3b e gemma4:26b, por conjunto de dados.}
+\label{tab:escolha-llm-desempenho}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& \multicolumn{3}{c}{\textbf{SMAPE (\%)}} & \multicolumn{3}{c}{\textbf{POCID (\%)}} \\
+\textbf{Conjunto de dados} & \textbf{gpt-oss} & \textbf{Qwen3} & \textbf{Gemma4} & \textbf{gpt-oss} & \textbf{Qwen3} & \textbf{Gemma4} \\
+\midrule
+ANP    & 22,09 & 22,00 & 22,11 & 64,59 & 63,49 & 64,49 \\
+NN5    & 11,77 & 12,01 & 11,85 & 43,76 & 44,14 & 45,30 \\
+M4     & 9,23  & 9,21  & 9,77  & 59,05 & 58,84 & 58,77 \\
+ETTh1  & 22,76 & 24,49 & 25,04 & 62,73 & 63,98 & 63,98 \\
+ETTh2  & 17,94 & 17,95 & 17,99 & 55,28 & 54,04 & 55,28 \\
+ETTm1  & 45,94 & 45,97 & 45,94 & 55,28 & 55,28 & 55,28 \\
+ETTm2  & 16,10 & 15,99 & 20,19 & 45,34 & 44,72 & 44,72 \\ \hline
+Média  & 20.83 & 21.09 & 21.84 & 55.15 & 54.93 & 55.41 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Na maior parte dos sete conjuntos de dados, as diferenças entre os três modelos de linguagem permanecem pequenas, tipicamente abaixo de 1,5 ponto percentual em ambas as métricas, o mesmo padrão já observado na comparação entre gpt-oss e Qwen3. Dois conjuntos de dados destoam desse padrão geral. No ETTh1, o SMAPE cresce progressivamente do gpt-oss (22,76\%) para o Qwen3 (24,49\%) e para o Gemma (25,04\%), uma diferença de 2,28 pontos percentuais entre o melhor e o pior dos três. No ETTm2, a diferença é ainda maior: o Gemma obtém SMAPE de 20,19\%, contra 15,99\% do Qwen3 e 16,10\% do gpt-oss, uma diferença de 4,20 pontos percentuais, a maior registrada entre os três modelos em qualquer conjunto de dados. Em nenhum dos dois casos, porém, a diferença altera a ordem de mérito relativo estabelecida entre os métodos de combinação nas seções anteriores deste capítulo, que emprega exclusivamente o gpt-oss.
+
+\subsection{Custo computacional}
+
+A Tabela~\ref{tab:escolha-llm-custo} compara o tempo médio de decisão por série entre os três modelos, por conjunto de dados.
+
+\begin{table}[H]
+\centering
+\caption{Tempo médio de decisão por série (segundos), gpt-oss:20b, qwen3:30b-a3b e gemma4:26b, por conjunto de dados.}
+\label{tab:escolha-llm-custo}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& \multicolumn{3}{c}{\textbf{Média}} & \multicolumn{3}{c}{\textbf{Desvio-padrão}} \\
+\textbf{Conjunto de dados} & \textbf{gpt-oss} & \textbf{Qwen3} & \textbf{Gemma4} & \textbf{gpt-oss} & \textbf{Qwen3} & \textbf{Gemma4} \\
+\midrule
+ANP    & 74,83  & 137,56 & 224,36 & 122,66 & 67,19  & 75,59 \\
+NN5    & 67,16  & 151,05 & 184,45 & 141,56 & 216,08 & 71,02 \\
+M4     & 58,60  & 153,04 & 219,67 & 96,07  & 112,60 & 66,31 \\
+ETTh1  & 41,29  & 160,48 & 161,24 & 10,32  & 50,70  & 51,11 \\
+ETTh2  & 41,55  & 159,57 & 245,12 & 7,25   & 40,22  & 60,10 \\
+ETTm1  & 39,05  & 171,20 & 196,64 & 11,28  & 37,92  & 18,03 \\
+ETTm2  & 102,55 & 463,12 & 214,77 & 143,11 & 759,78 & 71,53 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O gpt-oss:20b é o mais rápido dos três em todos os sete conjuntos de dados, por uma margem considerável. O Gemma é o mais lento em cinco dos sete (ANP, NN5, M4, ETTh1 e ETTh2), com tempos médios entre 3 e 6 vezes maiores que o gpt-oss. A exceção ocorre no ETTm2: ali, o Gemma (214,77 segundos) é mais rápido que o Qwen3 (463,12 segundos), mas isso decorre menos de uma vantagem do Gemma e mais da variabilidade já registrada do Qwen3 nesse conjunto de dados específico (Seção~\ref{sec:escolha-llm}, desvio-padrão de 759,78 segundos), maior que sua própria média.
+
+\subsection{Modelo escolhido}
+
+Como o desempenho preditivo dos três modelos é equivalente na maior parte dos conjuntos de dados, com exceção pontual do Gemma no ETTh1 e, mais acentuadamente, no ETTm2, e o custo computacional do gpt-oss:20b é o menor entre os três em todos os sete conjuntos de dados, sem contrapartida de ganho de acurácia por parte dos outros dois, o gpt-oss:20b foi adotado como modelo de linguagem do agente em todos os demais resultados apresentados neste capítulo.
+
+
+
+
+
+
+
+
+
+\section{ANP} \label{sec:resultados-anp}
+
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:anp-individual} apresenta o desempenho médio, entre as 182 séries do conjunto de dados de demanda de combustíveis da ANP, de cada um dos dezenove preditores individuais que compõem $\mathcal{M}$, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais na ANP.}
+\label{tab:anp-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Theta                                & \textbf{21,54} & 63,14 \\
+ETS                                  & 21,66 & \textbf{64,69} \\
+Random Forest (Original + CWT)       & 21,76 & 58,39 \\
+Random Forest (DWT)                  & 21,88 & 58,39 \\
+Random Forest (Original + FT)        & 22,08 & 59,84 \\
+Random Forest (Original + DWT)       & 22,29 & 58,79 \\
+CatBoost (Original + DWT)            & 22,41 & 58,14 \\
+CatBoost (Original + FT)             & 22,49 & 58,04 \\
+Random Forest (CWT)                  & 22,87 & 58,14 \\
+CatBoost (DWT)                       & 23,09 & 57,99 \\
+ARIMA                                & 23,19 & 62,39 \\
+CatBoost (Original + CWT)            & 23,33 & 56,64 \\
+CatBoost (CWT)                       & 23,41 & 56,89 \\
+Random Forest (Original)             & 23,82 & 57,44 \\
+Naive Moving Average                 & 24,61 & 58,09 \\
+Random Forest (FT)                   & 24,98 & 52,10 \\
+CatBoost (FT)                        & 25,27 & 50,45 \\
+CatBoost (Original)                  & 26,18 & 57,34 \\
+Naive Seasonal                       & 28,15 & 61,29 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Os modelos estatísticos Theta e ETS ocupam as duas primeiras posições por SMAPE, mas não coincidem: o Theta tem o menor SMAPE do conjunto (21,54\%), enquanto o ETS tem o maior POCID (64,69\%), evidenciando que o ranqueamento entre preditores pode variar conforme a métrica considerada, um comportamento já esperado dada a natureza distinta de cada uma delas, discutida na Seção~\ref{sec:metricas}. Os dois métodos ingênuos, como esperado, ocupam posições inferiores por SMAPE, mas o Naive Seasonal ainda supera catorze dos dezessete modelos mais sofisticados em POCID (61,29\%), perdendo apenas para o Theta, o ETS e o ARIMA, indicando que a repetição do padrão sazonal do ano anterior continua sendo um indicador razoável da direção de variação da demanda, ainda que não da sua magnitude.
+
+\subsection{Desempenho entre estratégias de combinação}
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação na ANP.}
+\label{tab:anp-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & 21,94 & 61,94 \\
+Média   & 22,06 & 61,89 \\
+DBA     & 22,52 & 60,54 \\
+FFORMA & \textbf{21,66} & \textbf{65,13} \\
+ADE    & 21,77 & 62,39 \\
+CREST & 22,09 & 64,59 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:anp-estaticas}, o FFORMA obtém o melhor resultado em ambas as métricas, com SMAPE de 21,66\% e POCID de 65,13\%, à frente do ADE (21,77\% e 62,39\%), da mediana (21,94\% e 61,94\%), da média (22,06\% e 61,89\%), do CREST (22,09\% e 64,59\%) e do DBA (22,52\% e 60,54\%). Nenhuma das seis supera o melhor modelo individual do conjunto em SMAPE, o Theta, cujo valor é 21,54\% (Tabela~\ref{tab:anp-individual}): combinar os dezenove preditores, por qualquer uma das seis estratégias aqui comparadas, não é, neste conjunto de dados específico, melhor do que simplesmente escolher o modelo estatístico mais forte do conjunto. Em POCID, o quadro se inverte parcialmente: o FFORMA supera até mesmo o melhor modelo individual nessa métrica, o ETS (64,69\%), sendo a única das seis estratégias a fazê-lo; o CREST fica próximo, também superando o ETS por uma margem menor (64,59\%), enquanto a mediana, a média, o DBA e o ADE ficam atrás dele. Esse descolamento entre o desempenho em SMAPE e em POCID já havia sido observado por \citet{krause2026foundation} no mesmo domínio de aplicação, e reforça que a acurácia de magnitude e a acurácia de direção capturam aspectos distintos do problema, conforme discutido na Seção~\ref{sec:metricas}.
+\subsection{Comparação geral e discussão} \label{subsec:anp-discussao}
+
+A Figura~\ref{fig:mcm-anp} apresenta a Matriz de Comparação Múltipla entre cinco métodos na ANP: Theta, o melhor modelo individual; a mediana, a melhor combinação estática, conforme a Tabela~\ref{tab:anp-estaticas}; FFORMA; ADE; e CREST, ordenados pelo SMAPE médio entre as 182 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ANP_MONTHLY.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos na ANP, ordenados por SMAPE médio.}
+    \label{fig:mcm-anp}
+\end{figure}
+
+
+O SMAPE médio dos cinco métodos fica em um intervalo estreito, entre 21,54\% (Theta) e 22,09\% (CREST), e a MCM mostra que a maior parte dessas diferenças não é estatisticamente significativa. Das dez comparações par a par possíveis, apenas três apresentam valor $p$ do teste de Wilcoxon abaixo de 0,05: o FFORMA supera a mediana ($p \leq 0,0001$) e supera o CREST ($p = 0,0060$), e o ADE supera a mediana ($p = 0,0118$). Nenhuma das quatro comparações envolvendo o Theta como modelo individual isolado é estatisticamente significativa, incluindo a comparação direta contra o CREST ($p = 0,7599$): não é possível afirmar, com base nesta amostra, que qualquer um dos quatro métodos mais elaborados supere, de forma estatisticamente confiável, a simples escolha do melhor modelo individual neste conjunto de dados.
+
+A comparação entre o FFORMA e o CREST merece um comentário à parte, porque a contagem de vitórias por série conta uma história diferente da média isolada. Embora o FFORMA tenha SMAPE médio menor, a MCM mostra que o CREST obtém SMAPE menor que o FFORMA em 114 das 182 séries (62,6\%), contra 68 séries em que o FFORMA é melhor. Ou seja, a vantagem média do FFORMA é sustentada por um subconjunto menor de séries nas quais a diferença é grande, não por uma superioridade consistente ao longo da maioria das séries individuais.
+
+Vale notar ainda que a comparação entre o CREST e a mediana é a única, entre as dez, que registra empates: em 23 das 182 séries, os dois métodos produzem exatamente o mesmo SMAPE, o que é compatível com o CREST optar, nessas séries específicas, pela mesma combinação que já constitui a mediana pré-semeada no histórico, descrita na Seção~\ref{sec:preparacao} do Capítulo~\ref{chp:proposta}.
+
+
+
+
+\section{NN5} \label{sec:resultados-nn5}
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:nn5-individual} apresenta o desempenho médio, entre as 111 séries do NN5, de cada um dos dezenove preditores individuais, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais no NN5.}
+\label{tab:nn5-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+CatBoost (Original + FT)             & \textbf{12,30} & 44,02 \\
+CatBoost (DWT)                       & 12,52 & 47,10 \\
+CatBoost (Original + DWT)            & 12,55 & 48,26 \\
+CatBoost (CWT)                       & 12,78 & 47,23 \\
+Random Forest (Original + DWT)       & 12,80 & \textbf{49,16} \\
+Random Forest (FT)                   & 12,82 & \textbf{49,16} \\
+CatBoost (Original + CWT)            & 12,84 & 46,98 \\
+Random Forest (Original + CWT)       & 12,94 & 46,72 \\
+Random Forest (DWT)                  & 12,98 & 48,78 \\
+CatBoost (Original)                  & 13,00 & 48,39 \\
+Random Forest (Original + FT)        & 13,07 & 46,85 \\
+Random Forest (CWT)                  & 13,13 & 46,85 \\
+Random Forest (Original)             & 13,25 & 47,23 \\
+CatBoost (FT)                        & 13,45 & 46,07 \\
+Naive Moving Average                 & 14,05 & 41,44 \\
+ARIMA                                & 14,35 & 37,58 \\
+ETS                                  & 14,54 & 9,91 \\
+Theta                                & 14,81 & 40,67 \\
+Naive Seasonal                       & 20,58 & 41,70 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O padrão observado no NN5 é distinto do observado na ANP: aqui, o CatBoost sobre a representação concatenada com a transformada de Fourier obtém o menor SMAPE do conjunto (12,30\%), e os modelos estatísticos (ARIMA, ETS e Theta) ocupam as últimas posições por SMAPE entre os dezessete modelos não ingênuos, à frente apenas do Naive Seasonal. O caso do ETS chama atenção em particular: apesar de manter um SMAPE competitivo (14,54\%), próximo ao dos demais modelos estatísticos, seu POCID é de apenas 9,91\%, muito abaixo de qualquer outro modelo da tabela, incluindo os dois métodos ingênuos. Isso indica que o ETS, neste conjunto de dados, produz previsões de magnitude razoavelmente próxima da real, mas sistematicamente na direção errada, um comportamento que os modelos de aprendizagem de máquina baseados em janela deslizante não repetem.
+
+
+\subsection{Desempenho entre estratégias de combinação}
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação no NN5.}
+\label{tab:nn5-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & 12,01 & 46,20 \\
+Média   & 11,99 & 44,53 \\
+DBA     & 12,26 & \textbf{46,46} \\
+ADE    & 11,78 & 45,05 \\
+FFORMA & 11,97 & 44,66 \\
+CREST & \textbf{11,77} & 43,76 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:nn5-estaticas}, o CREST obtém o menor SMAPE (11,77\%), à frente do ADE (11,78\%) por uma margem mínima, seguidos do FFORMA (11,97\%), da média (11,99\%), da mediana (12,01\%) e do DBA (12,26\%). Diferentemente de todos os conjuntos de dados analisados até aqui, as seis estratégias de combinação superam o melhor modelo individual do conjunto em SMAPE, o CatBoost (Original + FT), cujo valor é 12,30\% (Tabela~\ref{tab:nn5-individual}). O quadro se inverte em POCID: nenhuma das seis estratégias alcança o melhor valor entre os modelos individuais (49,16\%, empatado entre o Random Forest (Original + DWT) e o Random Forest (FT)); entre as seis, o DBA obtém o maior POCID (46,46\%), seguido da mediana (46,20\%) e do ADE (45,05\%), enquanto o CREST apresenta o menor valor (43,76\%). Assim como observado na ANP, a acurácia de magnitude e a acurácia de direção não evoluem necessariamente juntas: o CREST maximiza a primeira às custas da segunda.
+\subsection{Comparação geral e discussão} \label{subsec:nn5-discussao}
+
+A Figura~\ref{fig:mcm-nn5} apresenta a Matriz de Comparação Múltipla entre cinco métodos no NN5: CREST, ADE, FFORMA, a média, a melhor combinação estática conforme a Tabela~\ref{tab:nn5-estaticas}, e o CatBoost (Original + FT), o melhor modelo individual, ordenados pelo SMAPE médio entre as 111 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_NN5_WEEKLY_DATASET.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no NN5, ordenados por SMAPE médio.}
+    \label{fig:mcm-nn5}
+\end{figure}
+
+Diferentemente da ANP, onde o CREST ficou atrás de quatro métodos por SMAPE, no NN5 o CREST ocupa a primeira posição desse ranqueamento, com SMAPE médio de 11,77\%, à frente do ADE por uma margem pequena (11,78\%). Nenhuma das quatro comparações envolvendo o CREST atinge significância estatística pelo teste de Wilcoxon, com valores de $p$ entre 0,10 e 0,89: a posição de destaque do CREST no ranqueamento pela média não pode ser considerada estatisticamente confiável frente a nenhum dos quatro métodos comparados neste conjunto de dados.
+
+Entre as dez comparações par a par possíveis, apenas uma atinge significância estatística: o FFORMA supera a média ($p \leq 0,0001$). Essa diferença, no entanto, é a menor diferença média observada em toda a matriz (0,0003 ponto percentual de SMAPE), e a contagem de vitórias por série mostra o padrão oposto ao que a significância sugere: a média obtém SMAPE menor que o FFORMA em 84 das 111 séries (75,7\%), contra apenas 27 séries em que o FFORMA é melhor. Assim como já observado na comparação entre o FFORMA e o CREST na ANP (Seção~\ref{subsec:anp-discussao}), uma diferença estatisticamente significativa na média não implica superioridade na maioria das séries individuais: aqui, a significância decorre da magnitude das vitórias do FFORMA nas poucas séries em que ele vence, não da frequência com que vence.
+
+A comparação entre o CREST e a média é a única desta matriz, além da anterior, a registrar empates: em 9 das 111 séries, os dois métodos produzem exatamente o mesmo SMAPE, o que é compatível com o CREST optar, nessas séries específicas, pela mesma combinação que já constitui a média pré-semeada em seu histórico, descrita na Seção~\ref{sec:preparacao} do Capítulo~\ref{chp:proposta}.
+
+
+
+
+
+\section{M4} \label{sec:resultados-m4}
+
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:m4-individual} apresenta o desempenho médio, entre as 359 séries do M4, de cada um dos dezenove preditores individuais, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais no M4.}
+\label{tab:m4-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Random Forest (CWT)                  & \textbf{9,35} & 58,82 \\
+Random Forest (Original + CWT)       & 9,91  & 59,12 \\
+Random Forest (DWT)                  & 10,16 & 57,78 \\
+Random Forest (Original)             & 10,17 & 54,57 \\
+Random Forest (Original + FT)        & 10,47 & 59,66 \\
+CatBoost (Original + FT)             & 10,51 & 58,47 \\
+CatBoost (Original + CWT)            & 10,52 & 57,24 \\
+CatBoost (CWT)                       & 10,67 & 57,66 \\
+Random Forest (Original + DWT)       & 10,72 & 57,47 \\
+CatBoost (Original + DWT)            & 10,83 & \textbf{59,84} \\
+CatBoost (DWT)                       & 10,99 & 58,68 \\
+CatBoost (Original)                  & 11,39 & 55,22 \\
+Random Forest (FT)                   & 12,18 & 50,16 \\
+CatBoost (FT)                        & 12,74 & 49,42 \\
+Naive Moving Average                 & 42,14 & 55,06 \\
+ARIMA                                & 44,83 & 50,67 \\
+Theta                                & 47,72 & 37,16 \\
+ETS                                  & 47,84 & 3,62 \\
+Naive Seasonal                       & 50,27 & 46,75 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No M4, os catorze modelos de aprendizagem de máquina, CatBoost e Random Forest em suas diferentes representações, superam os três modelos estatísticos e o Naive Seasonal por uma margem larga, com SMAPE entre 9,35\% e 12,74\%, contra 42,14\% a 50,27\% dos demais. O Random Forest (CWT) obtém o menor SMAPE do conjunto (9,35\%). O ETS apresenta, mais uma vez, um POCID muito abaixo de qualquer outro modelo (3,62\%), o mesmo padrão de acerto de magnitude sem acerto de direção já observado no NN5 (Seção~\ref{sec:resultados-nn5}).
+
+\subsection{Desempenho entre estratégias de combinação}
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação no M4.}
+\label{tab:m4-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & \textbf{8,97} & 58,45 \\
+Média   & 15,60 & 53,20 \\
+DBA     & 15,94 & 51,74 \\
+FFORMA & 9,96 & \textbf{59,45} \\
+ADE    & 10,69 & 57,29 \\
+CREST & 9,23 & 59,05 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:m4-estaticas}, a mediana obtém o menor SMAPE (8,97\%), seguida de perto pelo CREST (9,23\%) e pelo FFORMA (9,96\%); o ADE fica um pouco mais distante (10,69\%), e a média e o DBA seguem com valores bem mais altos (15,60\% e 15,94\%, respectivamente). A mediana e o CREST são as únicas duas estratégias que superam o melhor modelo individual do conjunto em SMAPE, o Random Forest (CWT), cujo valor é 9,35\% (Tabela~\ref{tab:m4-individual}); o FFORMA e o ADE ficam, por uma margem pequena, atrás dele. Em POCID, o FFORMA obtém o maior valor entre as seis estratégias (59,45\%), à frente do CREST (59,05\%) e da mediana (58,45\%), mas nenhuma das seis alcança o melhor POCID entre os modelos individuais, o CatBoost (Original + DWT), com 59,84\%.
+
+\subsection{Comparação geral e discussão} \label{subsec:m4-discussao}
+
+A Figura~\ref{fig:mcm-m4} apresenta a Matriz de Comparação Múltipla entre cinco métodos no M4: a mediana, o CREST, o Random Forest (CWT), o melhor modelo individual, o FFORMA e o ADE, ordenados pelo SMAPE médio entre as 359 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_M4_WEEKLY_DATASET.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no M4, ordenados por SMAPE médio.}
+    \label{fig:mcm-m4}
+\end{figure}
+
+O ADE, que havia superado o FFORMA no NN5 (Seção~\ref{subsec:nn5-discussao}), ocupa aqui a última posição do ranqueamento, com SMAPE médio de 10,69\%, e a diferença contra os quatro demais métodos é estatisticamente significativa em todos os quatro casos ($p \leq 0,0001$ contra a mediana; $p = 0,0005$ contra o CREST; $p = 0,0033$ contra o Random Forest (CWT); $p = 0,0002$ contra o FFORMA). É a única linha da matriz em que todas as quatro comparações atingem significância estatística.
+
+Entre os quatro métodos restantes, apenas duas comparações são estatisticamente significativas: a mediana supera o Random Forest (CWT) ($p = 0,0497$) e supera o FFORMA ($p = 0,0252$). A comparação entre a mediana e o CREST, apesar de a mediana apresentar o menor SMAPE médio da matriz (8,97\% contra 9,23\%), não é estatisticamente significativa ($p = 0,6794$), e é também a única comparação desta matriz que registra empates: 57 das 359 séries produzem o mesmo SMAPE para os dois métodos, um número proporcionalmente maior do que os observados na ANP e no NN5, compatível com o CREST recorrer à mediana pré-semeada com mais frequência neste conjunto de dados.
+\section{ETTh1} \label{sec:resultados-etth1}
+
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:etth1-individual} apresenta o desempenho médio, entre as 7 séries do ETTh1, de cada um dos dezenove preditores individuais, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais no ETTh1.}
+\label{tab:etth1-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Random Forest (CWT)                  & \textbf{20,96} & \textbf{65,84} \\
+Random Forest (Original + CWT)       & 22,44 & 65,22 \\
+Random Forest (Original + DWT)       & 23,22 & 57,76 \\
+Random Forest (DWT)                  & 23,59 & 59,63 \\
+CatBoost (Original + DWT)            & 24,15 & 60,25 \\
+CatBoost (Original + CWT)            & 24,41 & 60,87 \\
+CatBoost (CWT)                       & 24,44 & 58,39 \\
+CatBoost (Original + FT)             & 25,15 & 65,22 \\
+Random Forest (Original + FT)        & 25,55 & 60,25 \\
+CatBoost (DWT)                       & 27,89 & 59,01 \\
+Random Forest (Original)             & 43,00 & 55,28 \\
+CatBoost (FT)                        & 52,68 & 50,93 \\
+Random Forest (FT)                   & 53,34 & 49,69 \\
+ARIMA                                & 72,04 & 62,73 \\
+Naive Moving Average                 & 87,02 & 48,45 \\
+Naive Seasonal                       & 92,62 & 43,48 \\
+Theta                                & 115,21 & 52,17 \\
+ETS                                  & 119,50 & 50,93 \\
+CatBoost (Original)                  & 200,00 & 52,17 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No ETTh1, os dez modelos de aprendizagem de máquina com transformação de dados (\textit{wavelet} contínua, discreta e de Fourier, concatenadas ou isoladas) ocupam as dez primeiras posições por SMAPE, com valores entre 20,96\% e 27,89\%. O Random Forest (CWT) obtém o menor SMAPE e o maior POCID do conjunto simultaneamente. A partir da décima primeira posição, o desempenho piora de forma acentuada: o Random Forest e o CatBoost sobre a representação original, sem transformação, têm SMAPE de 43,00\% e 200,00\% respectivamente, este último o pior valor de toda a tabela, e os três modelos estatísticos (ARIMA, Theta e ETS) ficam entre os últimos colocados, com SMAPE acima de 70\%.
+
+\subsection{Desempenho entre estratégias de combinação}
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação no ETTh1.}
+\label{tab:etth1-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & 26,02 & 62,11 \\
+Média   & 200,00 & 52,17 \\
+DBA     & 200,00 & 54,66 \\
+FFORMA & 30,01 & \textbf{65,22} \\
+ADE    & 39,51 & 62,73 \\
+CREST & \textbf{22,76} & 62,73 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth1-estaticas}, o CREST obtém o menor SMAPE (22,76\%), à frente da mediana (26,02\%), do FFORMA (30,01\%) e do ADE (39,51\%). A média e o DBA, como já observado no desempenho dos modelos individuais desta seção, atingem o valor máximo possível de SMAPE (200,00\%). Em POCID, o FFORMA obtém o maior valor entre as seis (65,22\%), à frente do ADE e do CREST, empatados em segundo lugar (62,73\%), e da mediana (62,11\%); a média e o DBA, apesar do SMAPE saturado, ainda superam essas quatro estratégias em POCID (54,66\% e 52,17\%, respectivamente, contra as demais). Nenhuma das seis estratégias supera o melhor modelo individual do conjunto em SMAPE: o CREST fica atrás do Random Forest (CWT) (20,96\%) e do Random Forest (Original + CWT) (22,44\%), a primeira seção de resultados em que mais de um modelo individual isolado supera todas as estratégias de combinação nessa métrica (Tabela~\ref{tab:etth1-individual}).
+
+
+\subsection{Comparação geral e discussão} \label{subsec:etth1-discussao}
+
+A Figura~\ref{fig:mcm-etth1} apresenta a Matriz de Comparação Múltipla entre cinco métodos no ETTh1: o Random Forest (CWT), o melhor modelo individual; o CREST; a mediana, a melhor combinação estática; o FFORMA; e o ADE, ordenados pelo SMAPE médio entre as 7 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTH1.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh1, ordenados por SMAPE médio.}
+    \label{fig:mcm-etth1}
+\end{figure}
+
+O ETTh1 apresenta o padrão mais consistente entre os conjuntos de dados analisados até aqui: das dez comparações par a par possíveis, todas as dez atingem significância estatística pelo teste de Wilcoxon, com valores de $p$ entre 0,0156 e 0,0469. Esse resultado está associado ao pequeno número de séries do conjunto (7), que faz com que qualquer comparação em que um método vence de forma unânime nas sete séries atinja o menor valor de $p$ possível para essa quantidade de observações. De fato, oito das dez comparações são unânimes, com um dos dois métodos superando o outro nas sete séries simultaneamente; as duas exceções são o Random Forest (CWT) contra o CREST (6 vitórias a 1 para o Random Forest) e a mediana contra o FFORMA (6 vitórias a 1 para a mediana), ambas ainda assim estatisticamente significativas.
+
+Diferentemente da ANP e do NN5, não há, neste conjunto de dados, nenhuma inversão entre o ranqueamento por SMAPE médio e a contagem de vitórias por série: em todas as dez comparações, o método com menor SMAPE médio também vence a maioria ou a totalidade das sete séries individuais contra o método comparado. O CREST perde apenas para o Random Forest (CWT), tanto na média quanto na contagem direta (uma vitória em sete), e vence unanimemente a mediana, o FFORMA e o ADE nas sete séries.
+
+\section{ETTh2} \label{sec:resultados-etth2}
+
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:etth2-individual} apresenta o desempenho médio, entre as 7 séries do ETTh2, de cada um dos dezenove preditores individuais, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais no ETTh2.}
+\label{tab:etth2-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+CatBoost (Original + CWT)            & \textbf{17,94} & 55,90 \\
+CatBoost (FT)                        & 18,30 & 46,58 \\
+Random Forest (FT)                   & 18,44 & 50,93 \\
+CatBoost (CWT)                       & 18,44 & 52,17 \\
+Random Forest (Original)             & 18,58 & 49,69 \\
+Random Forest (CWT)                  & 18,75 & 49,07 \\
+CatBoost (DWT)                       & 19,01 & 54,66 \\
+Random Forest (DWT)                  & 19,50 & \textbf{56,52} \\
+CatBoost (Original + DWT)            & 19,50 & 52,80 \\
+CatBoost (Original + FT)             & 20,02 & 53,42 \\
+Random Forest (Original + DWT)       & 20,50 & 49,69 \\
+Random Forest (Original + CWT)       & 20,86 & 52,17 \\
+Random Forest (Original + FT)        & 21,98 & 51,55 \\
+Naive Moving Average                 & 44,42 & 47,83 \\
+ARIMA                                & 46,34 & 54,66 \\
+Naive Seasonal                       & 61,96 & 51,55 \\
+ETS                                  & 64,35 & 50,93 \\
+Theta                                & 65,55 & 48,45 \\
+CatBoost (Original)                  & 172,70 & 49,07 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O padrão observado no ETTh2 é semelhante ao do ETTh1: os treze modelos de aprendizagem de máquina, com ou sem transformação, ocupam as treze primeiras posições por SMAPE, com valores entre 17,94\% e 21,98\%, enquanto os três modelos estatísticos e os dois métodos ingênuos ficam nas últimas posições, com SMAPE acima de 44\%. O CatBoost (Original + CWT) obtém o menor SMAPE do conjunto. O CatBoost sobre a representação original, sem transformação, volta a apresentar o pior SMAPE entre os dezenove modelos (172,70\%), embora, diferentemente do ETTh1, não atinja o valor máximo de 200\%.
+
+\subsection{Desempenho entre estratégias de combinação}
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação no ETTh2.}
+\label{tab:etth2-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & 18,15 & \textbf{56,52} \\
+Média   & 171,97 & 49,69 \\
+DBA     & 172,57 & 52,80 \\
+FFORMA & 20,35 & \textbf{56,52} \\
+ADE    & 22,61 & \textbf{56,52} \\
+CREST & \textbf{17,94} & 55,28 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth2-estaticas}, o CREST obtém o menor SMAPE (17,94\%), à frente da mediana (18,15\%), do FFORMA (20,35\%) e do ADE (22,61\%); esse valor é, além disso, praticamente idêntico ao do melhor modelo individual do conjunto, o CatBoost (Original + CWT), com diferença apenas na quarta casa decimal (Tabela~\ref{tab:etth2-individual}). A média e o DBA, como já observado no desempenho dos modelos individuais desta seção, atingem SMAPE muito acima das demais estratégias (171,97\% e 172,57\%, respectivamente). Em POCID, a mediana, o FFORMA e o ADE empatam no maior valor entre as seis estratégias (56,52\%), com o CREST logo atrás (55,28\%), à frente da DBA (52,80\%) e da média (49,69\%). Em relação aos modelos individuais, o CREST fica atrás de apenas dois, o Random Forest (DWT) (56,52\%) e o próprio CatBoost (Original + CWT) (55,90\%), superando os dezessete restantes em POCID.
+
+\subsection{Comparação geral e discussão} \label{subsec:etth2-discussao}
+
+A Figura~\ref{fig:mcm-etth2} apresenta a Matriz de Comparação Múltipla entre cinco métodos no ETTh2: o CatBoost (Original + CWT) e o CREST, virtualmente empatados na primeira posição; a mediana; o FFORMA; e o ADE, ordenados pelo SMAPE médio entre as 7 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTH2.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh2, ordenados por SMAPE médio.}
+    \label{fig:mcm-etth2}
+\end{figure}
+
+Ao contrário do ETTh1, em que todas as dez comparações par a par atingiram significância estatística, no ETTh2 nenhuma das dez atinge, com valores de $p$ entre 0,1562 e 0,5781. A comparação entre o CatBoost (Original + CWT) e o CREST ilustra bem esse cenário: a diferença média de SMAPE entre os dois é praticamente nula, e a contagem de vitórias por série é de quatro a três a favor do CatBoost, um resultado próximo do empate ($p = 0,5781$).
+
+A comparação entre o CREST e a mediana é a que mais se destaca pela quantidade de empates: em 4 das 7 séries, os dois produzem exatamente o mesmo SMAPE, a maior proporção de empates observada em qualquer conjunto de dados até aqui, compatível com o CREST recorrer com frequência à mediana pré-semeada em seu histórico, descrita na Seção~\ref{sec:preparacao} do Capítulo~\ref{chp:proposta}, neste conjunto de dados específico. Com a amostra reduzida a apenas 3 séries não empatadas entre os dois métodos, a ausência de significância estatística nesta comparação ($p = 0,4456$) já era esperada.
+
+\section{ETTm1} \label{sec:resultados-ettm1}
+
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:ettm1-individual} apresenta o desempenho médio, entre as 7 séries do ETTm1, de cada um dos dezenove preditores individuais, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais no ETTm1.}
+\label{tab:ettm1-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Random Forest (DWT)                  & \textbf{40,52} & 52,17 \\
+CatBoost (DWT)                       & 50,13 & 53,42 \\
+CatBoost (FT)                        & 50,52 & 44,72 \\
+CatBoost (CWT)                       & 50,72 & 47,83 \\
+Random Forest (Original + DWT)       & 51,45 & \textbf{58,39} \\
+Random Forest (CWT)                  & 52,98 & 54,66 \\
+Random Forest (FT)                   & 52,99 & 43,48 \\
+Random Forest (Original + FT)        & 53,06 & 55,90 \\
+ETS                                  & 54,99 & 48,45 \\
+Theta                                & 55,42 & 52,17 \\
+CatBoost (Original + CWT)            & 60,43 & 54,66 \\
+Random Forest (Original + CWT)       & 60,51 & 54,66 \\
+CatBoost (Original + FT)             & 61,65 & 56,52 \\
+CatBoost (Original + DWT)            & 61,84 & 54,04 \\
+Random Forest (Original)             & 64,22 & 45,34 \\
+Naive Moving Average                 & 65,11 & 41,61 \\
+ARIMA                                & 77,76 & 52,80 \\
+Naive Seasonal                       & 78,40 & 46,58 \\
+CatBoost (Original)                  & 200,00 & 44,72 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O ETTm1 se distingue dos demais ETT pela posição dos modelos estatísticos: ETS e Theta ficam entre os dez primeiros colocados por SMAPE (54,99\% e 55,42\%), à frente de sete dos dezoito modelos de aprendizagem de máquina, algo que não ocorreu no ETTh1 nem no ETTh2. O Random Forest (DWT) obtém o menor SMAPE do conjunto, com uma margem considerável sobre o segundo colocado (40,52\% contra 50,13\%). O CatBoost sobre a representação original volta a atingir o valor máximo de SMAPE, 200,00\%.
+
+% \subsection{Desempenho das combinações estáticas}
+
+\subsection{Desempenho entre estratégias de combinação}
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação no ETTm1.}
+\label{tab:ettm1-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & 54,43 & \textbf{58,39} \\
+Média   & 200,00 & 44,72 \\
+DBA     & 200,00 & 47,20 \\
+FFORMA & \textbf{43,96} & 51,55 \\
+ADE    & 45,72 & 50,93 \\
+CREST & 45,94 & 55,28 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm1-estaticas}, o FFORMA obtém o menor SMAPE (43,96\%), seguido de perto pelo ADE (45,72\%) e pelo CREST (45,94\%), formando um grupo de desempenho próximo entre si. A média e o DBA, em contraste, atingem o valor máximo possível de SMAPE (200,00\%), repetindo o padrão já observado no desempenho dos modelos individuais desta seção. A mediana, embora bem distante da média e do DBA, ainda assim apresenta o maior SMAPE entre as quatro estratégias restantes (54,43\%), um comportamento que se inverte no POCID, métrica em que a mediana obtém o melhor resultado entre as seis (58,39\%), à frente do CREST (55,28\%), do FFORMA (51,55\%) e do ADE (50,93\%). Nenhuma das seis estratégias de combinação supera o melhor modelo individual do conjunto, o Random Forest (DWT), cujo SMAPE é 40,52\% (Tabela~\ref{tab:ettm1-individual}).
+\subsection{Comparação geral e discussão} \label{subsec:ettm1-discussao}
+
+A Figura~\ref{fig:mcm-ettm1} apresenta a Matriz de Comparação Múltipla entre cinco métodos no ETTm1: o Random Forest (DWT), o melhor modelo individual; o FFORMA; o ADE; o CREST; e a mediana, ordenados pelo SMAPE médio entre as 7 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTM1.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm1, ordenados por SMAPE médio.}
+    \label{fig:mcm-ettm1}
+\end{figure}
+
+O ETTm1 é o único conjunto de dados, entre os analisados até aqui, em que a mediana ocupa a última posição do ranqueamento por SMAPE médio entre os cinco métodos da matriz, em vez de figurar entre os primeiros. Ainda assim, das dez comparações par a par possíveis, apenas uma atinge significância estatística: o Random Forest (DWT) supera a mediana nas sete séries simultaneamente ($p = 0,0156$). As demais nove comparações, incluindo as quatro que envolvem a mediana contra o FFORMA, o ADE e o CREST, não atingem significância, com valores de $p$ entre 0,2188 e 1,0000.
+
+A comparação entre o CREST e a mediana ilustra por que a diferença na média não se traduz em significância estatística: apesar de o CREST ter SMAPE médio bem menor (45,94\% contra 54,43\%), a mediana obtém SMAPE menor que o CREST em 4 das 7 séries, contra 3 em que o CREST é melhor, um resultado próximo do empate em contagem direta ($p = 1,0000$). Assim como observado em conjuntos de dados anteriores, uma diferença considerável na média pode ser sustentada por vitórias de grande magnitude em um número pequeno de séries, sem que isso se reflita na maioria das comparações individuais.
+
+\section{ETTm2} \label{sec:resultados-ettm2}
+
+\subsection{Desempenho dos modelos individuais}
+
+A Tabela~\ref{tab:ettm2-individual} apresenta o desempenho médio, entre as 7 séries do ETTm2, de cada um dos dezenove preditores individuais, ordenados por SMAPE crescente.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio dos modelos individuais no ETTm2.}
+\label{tab:ettm2-individual}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Modelo} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Random Forest (DWT)                  & \textbf{7,48} & 32,30 \\
+CatBoost (DWT)                       & 8,54 & 36,65 \\
+CatBoost (CWT)                       & 9,02 & 31,68 \\
+Random Forest (FT)                   & 9,55 & 39,13 \\
+CatBoost (FT)                        & 9,68 & 31,06 \\
+Random Forest (CWT)                  & 20,79 & 44,10 \\
+Random Forest (Original + FT)        & 22,71 & 40,37 \\
+CatBoost (Original + CWT)            & 22,84 & 40,99 \\
+Random Forest (Original)             & 23,22 & 47,20 \\
+CatBoost (Original + FT)             & 23,84 & 40,37 \\
+CatBoost (Original + DWT)            & 24,23 & 41,61 \\
+Random Forest (Original + DWT)       & 25,45 & 47,83 \\
+Random Forest (Original + CWT)       & 27,39 & 42,86 \\
+ARIMA                                & 28,14 & \textbf{48,45} \\
+ETS                                  & 46,24 & 41,61 \\
+Theta                                & 55,43 & 34,78 \\
+Naive Moving Average                 & 91,67 & 35,40 \\
+Naive Seasonal                       & 100,33 & 29,19 \\
+CatBoost (Original)                  & 171,64 & 42,24 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O ETTm2 apresenta a maior separação observada até aqui entre um grupo de destaque e o restante da tabela: as cinco variantes de CatBoost e Random Forest treinadas exclusivamente sobre uma única representação transformada (CWT, DWT ou FT, sem concatenação com a representação original) ocupam as cinco primeiras posições, todas com SMAPE abaixo de 10\%, enquanto a sexta colocada, o Random Forest (CWT), já salta para 20,79\%. O Random Forest (DWT) obtém o menor SMAPE do conjunto (7,48\%). Note-se que o modelo de melhor POCID, o ARIMA (48,45\%), está longe de figurar entre os melhores por SMAPE, reforçando novamente a distinção entre as duas métricas.
+
+\subsection{Desempenho entre estratégias de combinação}
+\begin{table}[H]
+\centering
+\caption{Desempenho médio das estratégias de combinação no ETTm2.}
+\label{tab:ettm2-estaticas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
+\midrule
+Mediana & 19,97 & 39,13 \\
+Média   & 174,05 & 43,48 \\
+DBA     & 174,38 & 37,27 \\
+FFORMA & 16,54 & 31,06 \\
+ADE    & 18,72 & 31,06 \\
+CREST & \textbf{16,10} & \textbf{45,34} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm2-estaticas}, o CREST obtém o menor SMAPE (16,10\%), à frente do FFORMA (16,54\%) e do ADE (18,72\%), e também o maior POCID entre as seis (45,34\%). A mediana, apesar de superar a média e o DBA por uma margem ampla, ainda fica atrás do FFORMA, do ADE e do CREST em SMAPE (19,97\%). A média e o DBA, assim como observado no ETTm1, atingem valores de SMAPE muito acima das demais estratégias (174,05\% e 174,38\%, respectivamente), repetindo o padrão já observado no desempenho dos modelos individuais desta seção. Vale notar que a média, apesar do SMAPE elevado, obtém POCID de 43,48\%, superior ao da mediana (39,13\%) e ao do FFORMA e do ADE (31,06\% para ambos), o único caso entre os sete conjuntos de dados em que a mediana não obtém o maior POCID entre as três combinações estáticas. Nenhuma das seis estratégias supera o melhor modelo individual do conjunto e as outras quatro variantes de destaque em SMAPE (Tabela~\ref{tab:ettm2-individual}). Em POCID, o CREST fica atrás de três modelos individuais, o ARIMA (48,45\%), o Random Forest (Original + DWT) (47,83\%) e o Random Forest (Original) (47,20\%), superando as demais quinze linhas da tabela.
+
+\subsection{Comparação geral e discussão} \label{subsec:ettm2-discussao}
+
+A Figura~\ref{fig:mcm-ettm2} apresenta a Matriz de Comparação Múltipla entre cinco métodos no ETTm2: o Random Forest (DWT), o melhor modelo individual; o CREST; o FFORMA; o ADE; e a mediana, ordenados pelo SMAPE médio entre as 7 séries.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTM2.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm2, ordenados por SMAPE médio.}
+    \label{fig:mcm-ettm2}
+\end{figure}
+
+O Random Forest (DWT) é o único método, entre os cinco desta matriz, que supera todos os demais com significância estatística: as quatro comparações que o envolvem atingem $p \leq 0,0312$, três delas com vitória nas sete séries simultaneamente. Nenhuma das seis comparações restantes, entre CREST, FFORMA, ADE e mediana, atinge significância estatística, com valores de $p$ entre 0,1094 e 0,9375: apesar de haver diferença na média de SMAPE entre esses quatro métodos, entre 16,10\% e 19,97\%, essa diferença não é estatisticamente confiável com a amostra de sete séries disponível.
+
+
+
+\section{Síntese entre conjuntos de dados} \label{sec:resultados-sintese}
+\subsection{Recorrência das transformações entre conjuntos de dados}
+
+Antes de comparar os cinco métodos de combinação, vale destacar um padrão que se repete nas sete tabelas de desempenho dos modelos individuais apresentadas neste capítulo: as variantes de Random Forest e CatBoost treinadas sobre representações obtidas por transformação \textit{wavelet} ou de Fourier, concatenadas à representação original ou isoladas, ocupam a grande maioria das dez primeiras posições por SMAPE em todos os sete conjuntos de dados, conforme a Tabela~\ref{tab:sintese-transformacoes}.
+
+\begin{table}[H]
+\centering
+\caption{Número de variantes com transformação entre os dez melhores modelos individuais, por conjunto de dados.}
+\label{tab:sintese-transformacoes}
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{Variantes com transformação no top 10} \\
+\midrule
+ANP    & 8/10  \\
+NN5    & 9/10  \\
+M4     & 9/10  \\
+ETTh1  & 10/10 \\
+ETTh2  & 9/10  \\
+ETTm1  & 8/10  \\
+ETTm2  & 9/10  \\
+\midrule
+\textbf{Total} & \textbf{62/70 (88,6\%)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Em nenhum dos sete conjuntos de dados menos de oito das dez melhores posições são ocupadas por essas variantes, e no ETTh1 a totalidade das dez melhores posições é ocupada por modelos com alguma forma de transformação. Esse resultado é consistente com a decisão de projeto de ampliar a diversidade do conjunto de preditores por meio de diferentes representações dos dados, discutida na Seção~\ref{sec:formulacao} do Capítulo~\ref{chp:proposta}: a transformação dos dados não apenas contribui com preditores adicionais ao conjunto $\mathcal{M}$, mas contribui, de forma consistente entre domínios distintos, com os preditores de melhor desempenho individual entre os dezenove disponíveis.
+
+\subsection{Ranking por conjunto de dados}
+
+A Tabela~\ref{tab:sintese-ranking} consolida a posição de cada método em cada um dos sete conjuntos de dados, por SMAPE médio, com 1 indicando o melhor desempenho. "Melhor individual" e "melhor estática" referem-se, em cada conjunto de dados, ao modelo individual e à combinação estática de melhor desempenho naquele conjunto especificamente, não a um método fixo: como já discutido seção a seção, o modelo que ocupa essa posição varia conforme o conjunto de dados.
+
+\begin{table}[H]
+\centering
+\caption{Ranking dos métodos por conjunto de dados, segundo o SMAPE médio.}
+\label{tab:sintese-ranking}
+\footnotesize
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{Melhor individual} & \textbf{Melhor estática} & \textbf{FFORMA} & \textbf{ADE} & \textbf{CREST} \\
+\midrule
+ANP    & 1 (Theta)                       & 4 (Mediana) & 2 & 3 & 5 \\
+NN5    & 5 (CatBoost Original + FT)      & 4 (Média)   & 3 & 2 & 1 \\
+M4     & 3 (Random Forest CWT)           & 1 (Mediana) & 4 & 5 & 2 \\
+ETTh1  & 1 (Random Forest CWT)           & 3 (Mediana) & 4 & 5 & 2 \\
+ETTh2  & 1 (CatBoost Original + CWT)     & 3 (Mediana) & 4 & 5 & 2 \\
+ETTm1  & 1 (Random Forest DWT)           & 5 (Mediana) & 2 & 3 & 4 \\
+ETTm2  & 1 (Random Forest DWT)           & 5 (Mediana) & 3 & 4 & 2 \\
+\midrule
+\textbf{Rank médio} & \textbf{1,86} & 3,57 & 3,14 & 3,86 & 2,57 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Nenhum método ocupa a primeira posição em todos os conjuntos de dados. Descontado o melhor modelo individual, cuja posição de destaque no rank médio (1,86) reflete uma escolha retrospectiva, feita conhecendo o resultado de cada um dos dezenove modelos naquele conjunto de dados específico, e não uma decisão que poderia ser tomada de antemão, o CREST obtém o melhor rank médio entre os quatro métodos realmente comparáveis entre si (2,57), à frente do FFORMA (3,14), da melhor combinação estática (3,57) e do ADE (3,86).
+
+Essa posição de destaque no rank médio reflete um padrão de consistência, não de dominância: o CREST ocupa a primeira ou a segunda posição em cinco dos sete conjuntos de dados (NN5, M4, ETTh1, ETTh2 e ETTm2), com duas exceções relevantes, a última posição na ANP e a quarta posição no ETTm1. Em contraste, o FFORMA, apesar do rank médio próximo (3,14), nunca ocupa a primeira posição em nenhum dos sete conjuntos, atingindo no máximo a segunda colocação (ANP e ETTm1); e o ADE ocupa a última posição em três dos sete conjuntos (M4, ETTh1 e ETTh2). Ou seja, o CREST tende a se manter perto do topo do ranqueamento com mais frequência do que os dois métodos de meta-aprendizagem da literatura.
+
+Vale notar que o melhor modelo individual de cada conjunto de dados, apesar de ser por definição o mais forte entre os dezenove preditores daquele conjunto, nem sempre se sustenta como o melhor entre os cinco métodos comparados nesta tabela: no NN5, o CatBoost (Original + FT) ocupa a última posição, superado pela mediana, pelo FFORMA, pelo ADE e pelo CREST, todos métodos de combinação.
+
+As duas subseções seguintes adotam uma definição diferente de melhor individual e melhor estática, por uma exigência estatística, não por inconsistência, pois em vez de recalculados por conjunto de dados, como nesta subseção, passam a ser um único modelo e um único método, fixados uma vez a partir do desempenho médio sobre a totalidade das 680 séries. Essa mudança é necessária porque as comparações pareadas empregadas a seguir, a Matriz de Comparação Múltipla e a contagem de vitórias, exigem que cada método comparado mantenha uma identidade única e constante ao longo de toda a população avaliada, o que uma definição que muda por conjunto de dados não permitiria.
+
+\subsection{MCM agregada entre todos os conjuntos de dados}
+
+A Figura~\ref{fig:mcm-agregado-smape} apresenta a Matriz de Comparação Múltipla por SMAPE, e a Figura~\ref{fig:mcm-agregado-pocid} por POCID, tratando as 680 séries dos sete conjuntos de dados como uma única população de comparação, entre CREST, a melhor combinação estática global (a mediana), o FFORMA, o ADE, e o melhor modelo individual global (o Random Forest treinado sobre a transformação \textit{wavelet} discreta).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_agregado_smape.png}
+    \caption{Matriz de Comparação Múltipla agregada por SMAPE, entre as 680 séries dos sete conjuntos de dados.}
+    \label{fig:mcm-agregado-smape}
+\end{figure}
+
+Por SMAPE, o CREST obtém o menor valor médio entre os cinco métodos (13,76\%), seguido de perto pela mediana (13,79\%) e pelo FFORMA (14,15\%), com o Random Forest (DWT) (14,28\%) e o ADE (14,70\%) nas duas últimas posições. Das dez comparações par a par, seis atingem significância estatística pelo teste de Wilcoxon. O CREST supera o Random Forest (DWT) ($p = 0,0174$) e o ADE ($p = 0,0017$) de forma estatisticamente significativa, mas não há diferença significativa entre o CREST, a mediana ($p = 0,8850$) e o FFORMA ($p = 0,9639$): os três formam um grupo de desempenho equivalente no topo do ranqueamento, seguido pelo Random Forest (DWT) e pelo ADE, que também não diferem significativamente entre si ($p = 0,2175$). A comparação entre o CREST e a mediana é a única desta matriz que registra empates: 103 das 680 séries produzem exatamente o mesmo SMAPE para os dois métodos.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_agregado_pocid.png}
+    \caption{Matriz de Comparação Múltipla agregada por POCID, entre as 680 séries dos sete conjuntos de dados.}
+    \label{fig:mcm-agregado-pocid}
+\end{figure}
+
+
+Por POCID, o FFORMA obtém o maior valor médio (58,21\%), seguido pelo CREST (57,86\%), sem diferença estatisticamente significativa entre os dois ($p = 0,4045$). Os dois formam um grupo de desempenho equivalente à frente da mediana (57,20\%), do ADE (56,37\%) e do Random Forest (DWT) (56,16\%): tanto o FFORMA quanto o CREST superam o ADE e o Random Forest (DWT) com significância estatística, enquanto a diferença entre a mediana e o CREST, assim como entre o ADE e o Random Forest (DWT), não é significativa.
+
+Em conjunto, as duas matrizes agregadas indicam que o CREST integra, na comparação com a totalidade das 680 séries, o grupo de melhor desempenho estatisticamente indistinguível da mediana e do FFORMA tanto por SMAPE quanto por POCID, superando o ADE e o melhor modelo individual isolado nessa comparação agregada. É importante ressalvar, no entanto, que essa vantagem não se repete de forma uniforme conjunto a conjunto: como discutido na Seção~\ref{sec:resultados-sintese}, o CREST ocupa a última posição na ANP e fica atrás de modelos individuais isolados no ETTh1 e no ETTm1, o que indica que seu ganho médio decorre de um desempenho relativamente estável entre a maioria dos conjuntos de dados, e não de uma superioridade absoluta em cada um deles.
+
+\subsection{Contagem de vitórias}
+
+A Tabela~\ref{tab:sintese-vitorias} apresenta o número de séries, entre as 680 séries dos sete conjuntos de dados, em que cada método obteve o menor SMAPE entre os cinco comparados. Diferentemente da Tabela~\ref{tab:sintese-ranking}, em que "melhor individual" e "melhor estática" variam por conjunto de dados, aqui os dois termos referem-se a um único modelo e um único método fixos, escolhidos uma única vez pela menor média de SMAPE entre as 680 séries: o Random Forest (DWT) e a mediana, respectivamente, os mesmos identificados na MCM agregada da Seção anterior.
+
+\begin{table}[H]
+\centering
+\caption{Contagem de vitórias por método, entre as 680 séries dos sete conjuntos de dados.}
+\label{tab:sintese-vitorias}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Método} & \textbf{Vitórias} & \textbf{\%} \\
+\midrule
+Random Forest (DWT) & 201 & 29,56 \\
+CREST                & 152 & 22,35 \\
+ADE                  & 130 & 19,12 \\
+FFORMA               & 103 & 15,15 \\
+Mediana              & 94  & 13,82 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O Random Forest (DWT), apesar de ser um único modelo fixo aplicado indistintamente às 680 séries de domínios tão distintos quanto demanda de combustíveis, séries semanais do M4 e temperatura de transformadores elétricos, vence em quase 30\% delas, a maior contagem entre os cinco métodos. Isso não contradiz o resultado da MCM agregada da Seção anterior, em que o CREST obtém o menor SMAPE médio: um único modelo pode vencer com mais frequência, série a série, sem que isso implique o menor erro médio, caso suas derrotas sejam, em média, maiores em magnitude do que suas vitórias. A ordem obtida pela contagem de vitórias também não coincide inteiramente com a ordem do rank médio da Tabela~\ref{tab:sintese-ranking}: o ADE vence em mais séries que o FFORMA (130 contra 103), mesmo tendo o pior rank médio entre os quatro métodos comparáveis (3,86 contra 3,14) e o pior SMAPE médio agregado da Seção anterior. Esse padrão, já observado repetidamente ao longo deste capítulo em conjuntos de dados individuais, volta a se confirmar na agregação: o desempenho médio do ADE é penalizado por perdas de grande magnitude, notadamente nos três conjuntos ETT em que ocupou a última posição (Tabela~\ref{tab:sintese-ranking}), ainda que vença com mais frequência do que o FFORMA em termos absolutos.
+
+
+\subsection{Erro por passo do horizonte}
+
+A Figura~\ref{fig:erro-horizonte-smape} ilustra a evolução do SMAPE ao longo do horizonte de previsão, e a Figura~\ref{fig:erro-horizonte-pocid} a evolução do POCID, entre os cinco métodos já discutidos: o Random Forest (DWT) e a mediana como modelo e método fixos globais, ao lado do FFORMA, do ADE e do CREST. Cada figura é dividida em dois painéis: o superior apresenta a média de cada método por passo do horizonte, e o inferior o desvio-padrão correspondente, entre as mesmas séries. Como os sete conjuntos de dados têm horizontes de teste diferentes entre si (12 na ANP, 8 no NN5, 13 no M4, e 24 nos quatro ETT), ambas as figuras são restritas aos oito primeiros passos do horizonte, os únicos em que a população de 680 séries dos sete conjuntos de dados permanece constante e integralmente comparável.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/resultados_final/erro_horizonte_smape.png}
+    \caption{SMAPE por passo do horizonte: média (painel superior) e desvio-padrão (painel inferior), restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
+    \label{fig:erro-horizonte-smape}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/resultados_final/erro_horizonte_pocid.png}
+    \caption{POCID por passo do horizonte: média (painel superior) e desvio-padrão (painel inferior), restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
+    \label{fig:erro-horizonte-pocid}
+\end{figure}
+
+No painel superior da Figura~\ref{fig:erro-horizonte-smape}, o SMAPE médio dos cinco métodos cresce de forma moderada e aproximadamente paralela entre o primeiro e o oitavo passo, sem inversões de ordem relevantes: o CREST mantém a segunda posição entre os cinco métodos em ambas as extremidades da faixa (9,26\% no primeiro passo, 14,69\% no oitavo), atrás apenas da mediana no primeiro passo (9,17\%) e do Random Forest (DWT) no oitavo (14,97\%). O painel inferior mostra que o desvio-padrão cresce de forma acompanhada à média, e de maneira muito semelhante entre os cinco métodos, sem que nenhum se distinga como consistentemente mais ou menos variável que os demais ao longo do horizonte.
+
+No painel superior da Figura~\ref{fig:erro-horizonte-pocid}, o POCID médio não apresenta a mesma tendência de crescimento monótono observada no SMAPE: decresce de forma leve ao longo dos oito passos para a maioria dos métodos, de valores entre 59,85\% e 66,18\% no primeiro passo para valores entre 55,29\% e 63,38\% no oitavo. O CREST acompanha essa tendência (65,88\% no primeiro passo, 59,85\% no oitavo), posicionado entre a mediana, que mantém o maior POCID em ambas as extremidades, e o ADE, que mantém o menor. O painel inferior mostra um desvio-padrão elevado e praticamente constante ao longo de todo o horizonte, em torno de 48 pontos percentuais para os cinco métodos, reflexo da natureza binária dessa métrica por observação (acerto ou erro de direção).
+
+A partir do nono passo, a população de séries que alimentaria uma média equivalente deixa de ser constante: o NN5 (horizonte 8) para de contribuir a partir daí, a ANP (horizonte 12) a partir do décimo terceiro passo, e o M4 (horizonte 13) a partir do décimo quarto, restando apenas as 28 séries dos quatro conjuntos ETT do décimo quarto ao vigésimo quarto passo, cerca de 4\% da população original. Por essa razão, o comportamento do erro nessa parte estendida do horizonte não é apresentado nesta seção: qualquer diferença observada ali refletiria majoritariamente a composição dos conjuntos de dados, discutida individualmente nas Seções~\ref{sec:resultados-etth1} a~\ref{sec:resultados-ettm2}, e não um efeito genuíno de acúmulo de erro ao longo da distância de previsão.
+
+\section{Análise do comportamento do agente} \label{sec:resultados-agente}
+
+Esta seção analisa o comportamento do agente combinador ao longo das 680 séries dos sete conjuntos de dados, usando os registros de auditoria descritos na Seção~\ref{sec:aplicacao} do Capítulo~\ref{chp:proposta}.
+
+\subsection{Frequência de uso do catálogo de ações}
+
+Das 24 ações do catálogo, apenas dez foram chamadas ao menos uma vez pelo agente ao longo das 680 séries. A Tabela~\ref{tab:agente-acoes} apresenta a contagem total de chamadas de cada uma dessas dez.
+
+\begin{table}[H]
+\centering
+\caption{Contagem total de chamadas por ação, entre as 680 séries.}
+\label{tab:agente-acoes}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Ação} & \textbf{Chamadas} \\
+\midrule
+Avaliação da estratégia          & 2670 \\
+Poda de redundância               & 780 \\
+Peso pelo erro inverso            & 1643 \\
+Peso por \textit{softmax} do erro & 707 \\
+Peso pela tendência do erro       & 273 \\
+Peso pelo meta-modelo entre séries & 325 \\
+Seleção pelos $k$ melhores        & 28 \\
+Seleção pelos mais estáveis       & 19 \\
+Combinação por DBA                & 1 \\
+Combinação por média aparada      & 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A avaliação da estratégia é, disparadamente, a ação mais chamada, o que é esperado, já que é o único caminho pelo qual uma tentativa passa a integrar o histórico da série, conforme descrito na Seção~\ref{sec:agente}. Entre as ações de preparação, a poda de redundância é usada com uma frequência bem maior que as duas ações de seleção de pool (780 chamadas, contra 28 e 19), e o peso pelo erro inverso é o critério de ponderação mais utilizado, à frente do \textit{softmax} do erro, do peso pelo meta-modelo entre séries e do peso pela tendência do erro.
+
+As catorze ações restantes do catálogo nunca foram chamadas pelo agente em nenhuma das 680 séries. Esse grupo inclui a totalidade das seis ações de diagnóstico (perfil da série, resumo da decomposição, resumo de erro dos preditores, estabilidade do \textit{ranking}, correlação de erro e teste de Diebold-Mariano), o que é compatível com o fato de que essas informações já compõem o contexto inicial fornecido ao agente a cada série, conforme descrito na Seção~\ref{sec:diagnostico}, sem que seja necessário requisitá-las novamente. Também nunca foram chamadas o peso por mínimos quadrados, cuja estimação direta a partir de apenas três observações por preditor tende a ser instável quando o número de preditores no subconjunto se aproxima desse limite, mesmo sob a projeção no simplex de probabilidade; o peso por características da série; as ações de combinação por média, por mediana, ponderada e por seleção de um único preditor; e as duas ações de validação restantes, verificação de sanidade e listagem do histórico, esta última também compatível com o histórico de tentativas já ser fornecido automaticamente a cada turno, sem necessidade de solicitação explícita.
+
+\subsection{Motivo de encerramento do ciclo} \label{subsec:motivo-encerramento}
+
+A Tabela~\ref{tab:agente-encerramento} apresenta a distribuição dos três critérios de encerramento do ciclo de decisão, descritos na Seção~\ref{sec:agente}, entre as 680 séries.
+
+\begin{table}[H]
+\centering
+\caption{Motivo de encerramento do ciclo, entre as 680 séries.}
+\label{tab:agente-encerramento}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Motivo} & \textbf{Séries} & \textbf{\%} \\
+\midrule
+Estagnação            & 341 & 50,15 \\
+Aceite explícito       & 336 & 49,41 \\
+Orçamento esgotado    & 3   & 0,44 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O aceite explícito e a estagnação dividem a quase totalidade das séries de forma praticamente equilibrada, com uma diferença de menos de um ponto percentual entre os dois. O esgotamento do orçamento de iterações, a rede de segurança descrita na Seção~\ref{sec:agente}, ocorre em apenas três das 680 séries (0,44\%), todas concentradas na ANP e no M4, o que indica que o orçamento estabelecido é, na prática, suficiente para que o ciclo se resolva por um dos outros dois critérios na grande maioria dos casos.
+
+% \subsection{Confiança estatística da escolha}
+
+% Em nenhuma das 336 séries com aceite explícito o teste de reamostragem pareada foi considerado confiável (\texttt{bootstrap\_reliable} é falso em todos os casos), consequência direta de todas as séries deste estudo disporem de apenas três janelas de validação, conforme antecipado na Seção~\ref{subsec:auditoria} do Capítulo~\ref{chp:proposta}: o veredito estatístico reportado ao longo deste capítulo baseia-se, em todos os casos, exclusivamente no teste de Diebold-Mariano.
+% \subsection{Redutibilidade}
+
+% Conforme descrito na Seção~\ref{subsec:auditoria} do Capítulo~\ref{chp:proposta}, o mecanismo de redutibilidade identifica pares de estratégias numericamente equivalentes no histórico de cada série, evitando que o teste de confiança estatística compare a estratégia vencedora contra uma cópia numérica disfarçada de si mesma. Como subproduto, esse mecanismo também permite quantificar, por conjunto de dados, em que proporção das séries a estratégia final vencedora corresponde numericamente a uma combinação mais simples do que seu nome sugere, apresentada na Tabela~\ref{tab:agente-redutibilidade}.
+
+% \begin{table}[H]
+% \centering
+% \caption{Percentual de séries com estratégia final redutível, por conjunto de dados.}
+% \label{tab:agente-redutibilidade}
+% \begin{tabular}{@{}lrr@{}}
+% \toprule
+% \textbf{Conjunto de dados} & \textbf{Séries redutíveis} & \textbf{\%} \\
+% \midrule
+% ANP    & 75/182  & 41,21 \\
+% NN5    & 61/111  & 54,95 \\
+% M4     & 199/359 & 55,43 \\
+% ETTh1  & 4/7     & 57,14 \\
+% ETTh2  & 1/7     & 14,29 \\
+% ETTm1  & 3/7     & 42,86 \\
+% ETTm2  & 3/7     & 42,86 \\
+% \midrule
+% \textbf{Total} & \textbf{346/680} & \textbf{50,88} \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+% Quase metade das séries (50,88\%) tem, como estratégia final, uma combinação redutível a algo mais simples do que seu nome sugere. O ETTh2 é o único conjunto de dados abaixo de 41\% (14,29\%, uma única série); nos demais, a proporção varia entre 41,21\% e 57,14\%.
+
+
+\subsection{Estudo de caso ilustrativo} \label{subsec:estudo-caso-trajetoria}
+
+Esta subseção ilustra o funcionamento do ciclo de decisão do agente a partir de duas séries reais da ANP: uma em que a estratégia final aceita já constava entre as sementes pré-testadas (série de índice 2), e outra em que a estratégia final resultou de uma proposta do próprio agente (série de índice 1).
+
+Na série de índice 2, o agente testou, ao longo de onze iterações, uma sucessão de alternativas: poda de redundância, pesos pelo meta-modelo entre séries sobre diferentes subconjuntos podados, e pesos por \textit{softmax} do erro com e sem variação por horizonte. Ao final, aceitou a estratégia \texttt{a10}, pesos pelo erro inverso sobre o conjunto completo, a primeira alternativa testada e já presente entre as sementes semeadas. Nenhuma das dez alternativas exploradas nas iterações seguintes a superou.
+
+Na série de índice 1, o agente também iniciou pela poda de redundância; nas iterações restantes, testou pesos pelo erro inverso, por \textit{softmax} do erro, e pelo meta-modelo entre séries sobre diferentes subconjuntos obtidos por poda repetida, e aceitou como estratégia final a \texttt{a12}, pesos pelo meta-modelo entre séries sobre o subconjunto mais estável. Diferentemente do Caso 1, essa estratégia final tem origem em uma proposta do próprio agente, e não em uma das sementes pré-testadas.
+
+Em ambos os casos, a justificativa textual do agente cita o mesmo par de fatores como motivo da escolha final: a força da tendência da série e o risco de sobreajuste às poucas janelas de validação. Essa coincidência, à primeira vista, poderia sugerir um padrão de vocabulário fixo entre justificativas; a Seção~\ref{subsec:rastreabilidade} apresenta uma análise quantitativa dessa questão sobre a totalidade das séries com estratégia final de origem no agente, não apenas estes dois casos.
+
+Os dois casos ilustram o mesmo padrão observado de forma agregada nas seções seguintes: o ciclo de raciocínio do agente frequentemente envolve testar múltiplas hipóteses de ponderação sobre subconjuntos podados do conjunto de preditores antes de convergir para uma decisão final, que pode ou não superar o que já estava disponível antes de o agente começar a atuar.
+
+\subsection{Interpretabilidade das previsões: um caso de sucesso e um de fracasso} \label{subsec:interpretabilidade-previsoes}
+
+Para ilustrar concretamente como a estratégia final se traduz em previsões, esta subseção apresenta duas séries em extremos opostos de desempenho, ambas com estratégia final de origem no próprio agente, e ambas combinando múltiplos preditores por peso, não um único modelo isolado.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_sucesso.png}
+    \caption{Previsões individuais, valor real e combinação final do CREST na série 103 da ANP, o caso de menor SMAPE entre as séries com estratégia de origem no agente.}
+    \label{fig:caso-sucesso}
+\end{figure}
+
+Na série 103 da ANP (Figura~\ref{fig:caso-sucesso}), o CREST obtém SMAPE de 2,73\% e POCID de 81,82\%, combinando cinco modelos (Random Forest e CatBoost, em variantes original e transformada) por média ponderada, com pesos bem distribuídos entre 0,18 e 0,23. As cinco previsões individuais já acompanham de perto a tendência de alta e queda da série ao longo do horizonte, e a combinação suaviza as divergências pontuais entre elas sem se afastar de nenhuma. A justificativa real do agente para este caso foi: \textit{"The series has very strong trend (0.9863) and moderate seasonality (0.7128), yet model ranking is unstable across windows $\tau \approx 0.06$. A robust weighted combination of the most stable models mitigates overfitting to the few validation windows and handles correlated errors, yielding the best performance so far."} 
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_fracasso.png}
+    \caption{Previsões individuais, valor real e combinação final do CREST na série 109 do NN5, um dos casos de maior SMAPE entre as séries com estratégia de origem no agente.}
+    \label{fig:caso-fracasso}
+\end{figure}
+
+Na série 109 do NN5 (Figura~\ref{fig:caso-fracasso}), o CREST obtém SMAPE de 38,98\% e POCID de 28,57\%, combinando oito modelos por média ponderada. Diferentemente do caso anterior, a figura revela por que a combinação não teve sucesso: o valor real oscila abruptamente entre aproximadamente 70 e 320 ao longo do horizonte, enquanto todas as oito previsões individuais permanecem confinadas a uma faixa estreita, entre 110 e 190, incapazes de capturar essa volatilidade. Como nenhum dos preditores do subconjunto antecipa os picos e vales da série real, nenhuma combinação linear entre eles poderia fazê-lo: o problema, neste caso, está a montante da decisão de combinação, na incapacidade dos modelos individuais disponíveis de representar o padrão da série, não na escolha de pesos em si.
+
+Nesse caso, a justificativa do agente foi: \textit{"The series has strong trend and seasonality but unstable model rankings and significant error correlation. Pool4 removes redundant models, and error-trend weighting concentrates on the most improving models, yielding the lowest RMSE (40.98) and best score (0.5859)."}.
+
+
+% É importante notar que a semelhança na estrutura das duas justificativas (ambas mencionam tendência, sazonalidade, e estabilidade do \textit{ranking} antes de recomendar uma combinação ponderada) não deve ser tomada como evidência de que as justificativas do agente sejam intercambiáveis entre séries: a análise quantitativa apresentada na Seção~\ref{subsec:rastreabilidade} mostra que essa semelhança estrutural convive com uma variação substancial de conteúdo entre as 273 séries cuja estratégia final tem origem no agente.
+
+
+\subsection{Distribuição da melhoria relativa}
+
+Para cada uma das 680 séries, comparou-se a pontuação da estratégia final com a menor pontuação entre as estratégias semeadas, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao} do Capítulo~\ref{chp:proposta}. Em nenhuma das 680 séries a estratégia final apresentou pontuação pior que a melhor semente (0\%), confirmando empiricamente, sobre a totalidade das séries deste estudo, a garantia de que a estratégia final nunca é pior que o piso estabelecido pelas sementes, descrita na Seção~\ref{sec:aplicacao}. Em 265 séries (38,97\%), a estratégia final iguala essa melhor semente. Nas demais 415 séries (61,03\%), a estratégia final apresenta pontuação estritamente melhor, indicando que a exploração do agente, ou a própria composição do histórico de tentativas, produziu uma estratégia superior às dez sementes testadas antes de sua atuação. A maior melhoria observada ocorre em uma série do M4, na qual a pontuação final é 0,285 menor que a da melhor semente.
+
+\subsection{Custo computacional}
+
+A Tabela~\ref{tab:agente-custo} apresenta o tempo médio de processamento por série, do início ao fim do ciclo de decisão do agente, por conjunto de dados.
+
+\begin{table}[H]
+\centering
+\caption{Tempo médio de decisão por série, por conjunto de dados.}
+\label{tab:agente-custo}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{Tempo médio (s)} & \textbf{Desvio-padrão (s)} \\
+\midrule
+ETTm2  & 102,55 & 143,11 \\
+ANP    & 74,83  & 122,66 \\
+NN5    & 67,16  & 141,56 \\
+M4     & 58,60  & 96,07  \\
+ETTh2  & 41,55  & 7,25   \\
+ETTh1  & 41,29  & 10,32  \\
+ETTm1  & 39,05  & 11,28  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O tempo médio de decisão varia de aproximadamente 39 a 103 segundos por série, dependendo do conjunto de dados, um custo não trivial quando comparado ao tempo de execução dos modelos individuais, das combinações estáticas e dos métodos de meta-aprendizagem da literatura, tipicamente da ordem de frações de segundo a poucos segundos por série. Chama atenção o desvio-padrão elevado, em alguns casos superior à própria média, o que indica grande variação no tempo de decisão entre séries de um mesmo conjunto de dados, compatível com o número variável de iterações consumidas por cada série antes do encerramento do ciclo, descrito na Seção~\ref{subsec:motivo-encerramento}.
+
+\subsection{Rastreabilidade da decisão do agente} \label{subsec:rastreabilidade}
+
+Além da comparação de acurácia agregada discutida nas seções anteriores, o CREST oferece uma vantagem qualitativa que os métodos de meta-aprendizagem revisados no Capítulo~\ref{chp:revisao} não replicam: cada decisão de combinação é acompanhada de um histórico de tentativas e de uma justificativa textual explícita, auditável a posteriori, como ilustrado nas Seções~\ref{subsec:estudo-caso-trajetoria} e~\ref{subsec:interpretabilidade-previsoes} desta seção. Nem o FFORMA nem o ADE produzem um artefato equivalente: suas decisões de combinação resultam de um modelo estatístico ou de pesos aprendidos, sem uma explicação interpretável do motivo pelo qual uma determinada combinação foi escolhida para uma série específica.
+
+Essa auditabilidade é particularmente relevante em contextos de aplicação em que a decisão de combinação precisa ser justificada a um usuário humano, ou em que a checagem manual das séries de maior impacto é viável, dois cenários em que os métodos de meta-aprendizagem tradicionais oferecem pouco além do valor previsto pelo modelo. Essa vantagem, no entanto, deve ser lida com uma ressalva, quantificada sobre as 273 séries cuja estratégia final tem origem no próprio agente. A similaridade textual entre pares dessas justificativas, medida pelo coeficiente de Jaccard sobre o conjunto de palavras de conteúdo, é de 0,19 em média entre pares aleatórios, e sobe para 0,23 entre pares que compartilham exatamente a mesma estratégia numérica, contra 0,19 entre pares com estratégias diferentes: uma diferença pequena, mas na direção esperada, indicando que o texto acompanha, ainda que fracamente, a decisão real, e não é puro ruído desconectado dela.
+
+Há, ainda assim, um vocabulário de abertura recorrente: variações da frase "a série é dominada por tendência" aparecem em cerca de um quarto das 273 justificativas, e, agrupando por semelhança textual em vez de correspondência exata, um único agrupamento cobre 118 das 273 séries (43\%), com as demais 155 séries distribuídas por 94 outros padrões distintos, a maioria deles ocorrendo uma única vez. Esse padrão é compatível com o vocabulário fechado do diagnóstico interpretativo descrito na Seção~\ref{sec:diagnostico} do Capítulo~\ref{chp:proposta}, que entrega ao agente quatro categorias fixas (regime, previsibilidade, indicação de combinação, riscos) a preencher por leitura das evidências, em vez de texto livre: parte da semelhança estrutural entre justificativas é, portanto, esperada por construção, e não indica necessariamente que o agente ignore as particularidades de cada série ao redigir sua justificativa.
+
+
+
+
+\section{Estudo de ablação: contribuição do agente na seleção das estratégias} \label{sec:ablacao-agente}
+
+As seções anteriores mostram que a estratégia final do CREST nunca obtém pontuação de validação pior que a melhor entre as dez estratégias fixas semeadas (Seção~\ref{sec:resultados-agente}). Para isolar a contribuição do agente sobre essa fase determinística, foi conduzido um experimento de ablação: a mesma preparação por conjunto de dados e o mesmo diagnóstico por série foram executados até o fim, mas sem que o agente atuasse em nenhuma série, de modo que a estratégia final de cada série passa a ser simplesmente a de menor pontuação entre as dez sementes.
+
+\subsection{Desempenho agregado}
+
+A Tabela~\ref{tab:ablacao-desempenho} compara o SMAPE e o POCID médios do CREST completo e do CREST sem o agente, por conjunto de dados.
+
+\begin{table}[H]
+\centering
+\caption{Desempenho médio do CREST completo e do CREST sem o agente (só a fase determinística), por conjunto de dados.}
+\label{tab:ablacao-desempenho}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{SMAPE (\%)}} & \multicolumn{2}{c}{\textbf{POCID (\%)}} \\
+\textbf{Conjunto de dados} & \textbf{CREST} & \textbf{sem agente} & \textbf{CREST} & \textbf{sem agente} \\
+\midrule
+ANP    & 22,09 & 21,97 & 64,59 & 64,54 \\
+NN5    & 11,77 & 11,57 & 43,76 & 46,33 \\
+M4     & 9,23  & 9,14  & 59,05 & 59,40 \\
+ETTh1  & 22,76 & 22,62 & 62,73 & 61,49 \\
+ETTh2  & 17,94 & 17,99 & 55,28 & 55,28 \\
+ETTm1  & 45,94 & 46,04 & 55,28 & 55,28 \\
+ETTm2  & 16,10 & 20,30 & 45,34 & 45,34 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Na maioria dos conjuntos de dados, a diferença entre as duas versões é pequena, em ambas as direções. O ETTm2 se destaca como o caso em que a atuação do agente traz o ganho mais expressivo: SMAPE de 16,10\% com o agente, contra 20,30\% sem ele, a maior diferença absoluta da tabela.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/resultados_final/mcm_agente_vs_sem_agente_smape.png}
+    \caption{Matriz de Comparação Múltipla entre o CREST completo e o CREST sem o agente, por SMAPE, entre as 680 séries dos sete conjuntos de dados.}
+    \label{fig:mcm-ablacao-smape}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/resultados_final/mcm_agente_vs_sem_agente_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre o CREST completo e o CREST sem o agente, por POCID, entre as 680 séries dos sete conjuntos de dados.}
+    \label{fig:mcm-ablacao-pocid}
+\end{figure}
+
+Tratando as 680 séries como uma população única, o SMAPE e o POCID médios das duas versões são estatisticamente indistinguíveis pelo teste de Wilcoxon ($p = 0,1403$ e $p = 0,0785$, respectivamente): a fase determinística isolada já estabelece um piso de desempenho sólido, sobre o qual o agente atua.
+
+\subsection{Quando o agente muda a decisão}
+
+Em 373 das 680 séries (54,9\%), a estratégia final é idêntica entre as duas versões, indicando que a fase determinística, por si só, já converge para a decisão correta em mais da metade dos casos. Nas 307 séries restantes (45,1\%), em que o agente de fato propõe algo diferente, o resultado na janela de teste é misto: melhor em 130 séries (42,3\%), pior em 158 (51,5\%), com 19 empates. Essa divisão, mais equilibrada do que desigual, é compatível com a limitação de apenas três janelas de validação disponíveis para fundamentar a decisão (Seção~\ref{sec:formulacao} do Capítulo~\ref{chp:proposta}): uma vantagem observada nas janelas de validação nem sempre se sustenta na janela de teste, nunca vista durante a decisão. Ainda assim, o ganho mais expressivo do experimento inteiro, tanto em direção positiva quanto negativa, veio de uma decisão do agente: a maior melhoria (ETTm2, índice 5, de 45,31\% para 22,51\% de SMAPE) supera em magnitude a maior piora (M4, índice 338, de 15,37\% para 29,91\%), reforçando que a contribuição do agente, quando se manifesta, pode ser substancial, ainda que não uniformemente positiva.
+
+\section{Considerações finais}
+
+Os resultados apresentados neste capítulo mostram que nenhum método isolado domina em todos os sete conjuntos de dados. O CREST obtém o melhor rank médio por SMAPE entre os métodos comparáveis (2,57, Tabela~\ref{tab:sintese-ranking}), ocupando a primeira ou a segunda posição em cinco dos sete conjuntos de dados, e integra o grupo de melhor desempenho, estatisticamente indistinguível da mediana e do FFORMA, na MCM agregada (Seção~\ref{sec:resultados-sintese}). Ainda assim, essa vantagem não é absoluta: o CREST fica atrás do melhor modelo individual isolado em cinco dos sete conjuntos de dados, e ocupa a última posição do ranqueamento na ANP.
+
+A análise do comportamento do agente combinador (Seção~\ref{sec:resultados-agente}) indica que parte de seu ganho decorre da exploração de estratégias de ponderação sobre subconjuntos podados do conjunto de preditores, e não apenas da repetição das combinações estáticas semeadas: em 61,03\% das séries, a estratégia final aceita supera estritamente a melhor semente pré-testada. Além do desempenho em acurácia, o CREST oferece uma vantagem qualitativa que os métodos de meta-aprendizagem da literatura não replicam: um histórico de decisão interpretável e auditável por construção (Seção~\ref{sec:resultados-agente}). Esse benefício, porém, tem contrapartida em custo computacional: o ciclo de decisão do agente consome de 39 a 103 segundos por série, uma a duas ordens de magnitude mais lento que os métodos de combinação da literatura. Esses pontos, o ganho estatisticamente limitado em parte dos conjuntos de dados e o custo computacional, são limitações identificadas que devem orientar os próximos passos deste trabalho.
