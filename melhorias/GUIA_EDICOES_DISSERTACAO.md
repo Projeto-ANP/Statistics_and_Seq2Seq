@@ -12,7 +12,7 @@ melhor pontuação do histórico e esforço de raciocínio médio.
 
 ## Numeração e controle de aplicação
 
-Cada alteração tem um código estável, de E01 a E74. A coluna Revisão do índice
+Cada alteração tem um código estável, de E01 a E75. A coluna Revisão do índice
 abaixo indica os itens que mudaram depois da primeira versão do guia: se você
 colou o guia antes da data indicada, reaplique o item (o bloco REMOVER de cada
 um mostra o texto antigo exato que está no seu documento). A coluna Colado em é
@@ -60,7 +60,7 @@ revisões do guia eu aponto apenas os códigos afetados.
 | E54 | 2.5.1 | Frequência de uso do catálogo |  |  |
 | E55 | 2.5.2 | Motivo de encerramento do ciclo |  |  |
 | E56 | 2.5.3 | Estudo de caso (ANP 8 e ANP 5) | texto final em 16/10 |  |
-| E57 | 2.5.4 | Interpretabilidade (ANP 95 e ANP 64) | texto final em 16/10 |  |
+| E57 | 2.5.4 | Interpretabilidade (M4 206 e ANP 13) | texto final em 16/10 |  |
 | E58 | 2.5.5 | Distribuição da melhoria relativa |  |  |
 | E59 | 2.5.6 | Custo computacional |  |  |
 | E60 | 2.5.7 | Rastreabilidade da decisão |  |  |
@@ -78,11 +78,15 @@ revisões do guia eu aponto apenas os códigos afetados.
 | E72 | 2.3b | Discussão da MCM do ETTm1 (frase do p) | novo em 16/10 |  |
 | E73 | 2.3b | Discussão da MCM do ETTm2 (ordem, contagens e p) | novo em 16/10 |  |
 | E74 | 2.4 | Linhas da tabela de ranking (negrito no rank 1) | novo em 16/10 |  |
+| E75 | 2.5.2b | Nova subseção: passo a passo de uma decisão (M4 206) | novo em 16/10 |  |
 
 ### Histórico de revisões do guia
 
 - 16/10 (esta revisão): apenas E56 e E57 mudaram de conteúdo; antes eles traziam somente a instrução de que os casos precisavam ser trocados, então não existe versão antiga desses blocos para desfazer, basta colar os textos finais agora. As figuras dos casos agora exibem também ADE, FFORMA, mediana e DBA, e as fontes das figuras de linha (casos, horizonte e vitórias) foram ampliadas, com as legendas fora da área de plotagem (os textos de E57 citam os SMAPE desses métodos nas duas séries; se você colou E57 na primeira versão de hoje, reaplique). A Seção 2.7 e a Parte 4 também foram atualizadas (figuras de horizonte e de caso prontas, bloco opcional da figura de vitórias). Os itens de colagem alterados depois desta revisão estão listados na entrada seguinte (auditoria de números).
 - 16/10 (auditoria de números): correções em E12 (p-valores do gpt-oss contra o Qwen3.8, agora no mesmo método de Wilcoxon do restante do capítulo, com os empates tratados como nas MCM), E25 (instrução errada sobre o DBA), E42 (ADE em três conjuntos) e E53 (CREST e mediana empatados em segundo, não terceiro); e nova Seção 2.3b com os blocos completos das sete discussões das MCM (E67 a E73), porque os parágrafos do texto antigo usavam números da rodada anterior.
+- 16/10 (figuras dos casos): as figuras de sucesso e fracasso passaram a ter dois painéis: escala completa (com os modelos individuais em cinza, como antes) e ampliação na faixa das estratégias de combinação (sem eles, para o detalhe entre os métodos ficar visível); o texto cita as previsões individuais como antes, e a figura da trajetória (séries 5 e 8) foi descartada.
+- 16/10 (nova subseção): criado o passo a passo completo de uma decisão (E75), com a trajetória da série 206 do M4 desde as sementes até o aceite, pensamentos em cada iteração e citações literais; a 2.5.3 volta ao resumo dos dois casos.
+- 16/10 (casos da 2.5.4): as séries foram trocadas para M4 206 (sucesso) e ANP 13 (fracasso), buscando séries visualmente mais limpas e maior contraste entre o CREST e as demais combinações; legendas e parágrafos atualizados.
 - 16/10 (negrito em tabelas): convenção do melhor resultado aplicada às tabelas que faltavam: contagem de vitórias (E46, negrito em 199/29,26), tabela da ablação (AB01) e busca sem LLM (AB05) no guia de ablação, e tabela de ranking (E39 e E74, negrito no rank 1 de cada linha). Em empates, os dois valores ficam em negrito.
 - 16/10 (guia de ablação): a Seção 2.6 virou o arquivo dedicado `melhorias/GUIA_ABLACAO.md` (AB01 a AB07), com a estrutura final da seção de ablação e as duas subseções novas.
 - Correções anteriores (já incorporadas nesta versão): contagem de vitórias (E46 a E51), colunas de gpt-oss e Qwen3.8 nas tabelas da Subseção 2.1 (E11 e E13), linha do Random Forest (DWT) na MCM agregada (E43 e E44) e p-valores agregados da ablação (E63). Se você colou o guia antes dessas correções, reaplique os itens marcados na coluna Revisão.
@@ -535,17 +539,23 @@ ETTh1:
 ETTh2:
 
 - (E33) REMOVER `o CREST obtém o menor SMAPE (17,94\%)` e SUBSTITUIR POR `o CREST obtém o menor SMAPE (17,99\%)`.
+- (E33, continuação) No mesmo parágrafo, REMOVER `com diferença apenas na quarta casa decimal` e SUBSTITUIR POR `com diferença de apenas 0,05 ponto percentual`.
 
 ETTm1:
 
 - (E34) REMOVER `e pelo CREST (45,94\%)` e SUBSTITUIR POR `e pelo CREST (45,98\%)`.
+- (E34, continuação) No parágrafo dos modelos individuais, REMOVER `à frente de sete dos dezoito modelos de aprendizagem de máquina` e SUBSTITUIR POR `à frente de seis dos catorze modelos de aprendizagem de máquina`.
 - (E35) REMOVER `a mediana obtém SMAPE menor que o CREST em 4 das 7 séries, contra 3 em que o CREST é melhor` e SUBSTITUIR POR `a mediana obtém SMAPE menor que o CREST em 5 das 7 séries, contra 2 em que o CREST é melhor`.
 
 ETTm2 (mudança de argumento):
 
 - (E36) REMOVER o trecho `o CREST obtém o menor SMAPE (16,10\%), à frente do FFORMA (16,54\%) e do ADE (18,72\%), e também o maior POCID entre as seis (45,34\%)` e SUBSTITUIR POR `o FFORMA obtém o menor SMAPE (16,54\%), seguido do ADE (18,72\%) e da mediana (19,97\%), com o CREST em quarto lugar (20,30\%) mas mantendo o maior POCID entre as seis (45,34\%)`.
+- (E36, continuação) Na tabela, a linha do FFORMA passa a ter o negrito no menor SMAPE: `FFORMA & \textbf{16,54} & 31,06 \\` (o CREST deixa de ser o de menor SMAPE).
 - (E37) REMOVER `entre 16,10\% e 19,97\%` e SUBSTITUIR POR `entre 16,54\% e 20,30\%`.
-- (E38) No parágrafo final do conjunto, ajustar a frase sobre o CREST à nova posição (quarto lugar em SMAPE, primeiro em POCID).
+- (E38) No parágrafo final do conjunto, três frases precisam de ajuste:
+  - REMOVER `ainda fica atrás do FFORMA, do ADE e do CREST em SMAPE (19,97\%)` e SUBSTITUIR POR `ainda fica atrás do FFORMA e do ADE em SMAPE (19,97\%), mas supera o CREST (20,30\%)` (o CREST deixa de estar à frente da mediana em SMAPE).
+  - REMOVER `o único caso entre os sete conjuntos de dados em que a mediana não obtém o maior POCID entre as três combinações estáticas` e SUBSTITUIR POR `um dos dois casos entre os sete conjuntos de dados em que a mediana não obtém o maior POCID entre as três combinações estáticas, junto com o NN5`.
+  - REMOVER `superando as demais quinze linhas da tabela` e SUBSTITUIR POR `superando as demais dezesseis linhas da tabela`.
 
 Valores da MCM regenerada para a linha do CREST, por dataset (p da matriz em
 `outputs/resultados/item_05/mcm_<DATASET>.csv`; o diff e a contagem V/T/D
@@ -633,12 +643,20 @@ Nenhuma das quatro comparações envolvendo o CREST atinge significância estat�
 SUBSTITUIR POR:
 
 ```latex
-Duas das quatro comparações envolvendo o CREST atingem significância estatística pelo teste de Wilcoxon: contra a média ($p = 0,0347$) e contra o CatBoost (Original + FT) ($p = 0,0375$), o melhor modelo individual; contra o ADE e o FFORMA, os valores de $p$ são 0,2598 e 0,0785. Nas duas comparações significativas, a vantagem do CREST na média não se traduz em superioridade na maioria das séries: a média obtém SMAPE menor em 59 das 111 séries (53,2\%), contra 42 em que o CREST é melhor, e o CatBoost vence em 68, contra 43 do CREST, um padrão em que o ganho médio decorre da magnitude das vitórias, não da frequência com que elas ocorrem.
+Duas das quatro comparações envolvendo o CREST atingem significância estatística pelo teste de Wilcoxon: contra a média ($p = 0,0347$) e contra o CatBoost (Original + FT) ($p = 0,0375$), o melhor modelo individual; contra o ADE e o FFORMA, os valores de $p$ são 0,2598 e 0,0785. Nas duas comparações significativas, a vantagem do CREST na média se sustenta também na contagem de vitórias por série: o CREST obtém SMAPE menor que a média em 59 das 111 séries (53,2\%), contra 42 em que a média é melhor, e vence o CatBoost em 68 séries, contra 43.
 ```
 
-No segundo parágrafo, REMOVER `Entre as dez comparações par a par possíveis, apenas uma atinge significância estatística: o FFORMA supera a média ($p \leq 0,0001$).` e SUBSTITUIR POR `Além dessas duas, apenas uma outra comparação atinge significância estatística: o FFORMA supera a média ($p \leq 0,0001$).`
+REMOVER o segundo parágrafo inteiro:
 
-No segundo parágrafo, REMOVER `Assim como já observado na comparação entre o FFORMA e o CREST na ANP (Seção~\ref{subsec:anp-discussao}), uma diferença estatisticamente significativa na média não implica superioridade na maioria das séries individuais:` e SUBSTITUIR POR `Como nas duas comparações do CREST nesta mesma matriz, uma diferença estatisticamente significativa na média não implica superioridade na maioria das séries individuais:`.
+```
+Entre as dez comparações par a par possíveis, apenas uma atinge significância estatística: o FFORMA supera a média ($p \leq 0,0001$). Essa diferença, no entanto, é a menor diferença média observada em toda a matriz (0,0003 ponto percentual de SMAPE), e a contagem de vitórias por série mostra o padrão oposto ao que a significância sugere: a média obtém SMAPE menor que o FFORMA em 84 das 111 séries (75,7\%), contra apenas 27 séries em que o FFORMA é melhor. Assim como já observado na comparação entre o FFORMA e o CREST na ANP (Seção~\ref{subsec:anp-discussao}), uma diferença estatisticamente significativa na média não implica superioridade na maioria das séries individuais: aqui, a significância decorre da magnitude das vitórias do FFORMA nas poucas séries em que ele vence, não da frequência com que vence.
+```
+
+SUBSTITUIR POR:
+
+```latex
+Além dessas duas, apenas uma outra comparação atinge significância estatística: o FFORMA supera a média ($p \leq 0,0001$). É a menor diferença média observada em toda a matriz (0,03 ponto percentual de SMAPE), mas ela se sustenta ao longo das séries, e não apenas em poucas vitórias de grande magnitude: o FFORMA obtém SMAPE menor que a média em 84 das 111 séries (75,7\%), contra apenas 27 séries em que a média é melhor.
+```
 
 No terceiro parágrafo, REMOVER `em 9 das 111 séries` e SUBSTITUIR POR `em 10 das 111 séries`.
 
@@ -699,6 +717,8 @@ REMOVER `amostra reduzida a apenas 3 séries não empatadas entre os dois métod
 #### E72. ETTm1
 
 REMOVER `um resultado próximo do empate em contagem direta ($p = 1,0000$)` e SUBSTITUIR POR `um resultado próximo do empate em contagem direta ($p = 0,9375$)`.
+
+No mesmo parágrafo, REMOVER `incluindo as quatro que envolvem a mediana contra o FFORMA, o ADE e o CREST` e SUBSTITUIR POR `incluindo as três que envolvem a mediana contra o FFORMA, o ADE e o CREST`.
 
 #### E73. ETTm2
 
@@ -902,6 +922,14 @@ Peso pela tendência do erro            & 10 \\
 O peso pelo erro inverso é o critério de ponderação mais utilizado, seguido da avaliação da estratégia, o único caminho pelo qual uma tentativa entra no histórico, e da poda de redundância. Entre as ações de seleção de subconjunto, a seleção pelos $k$ melhores lidera, à frente da seleção pelos mais estáveis e da seleção gulosa; entre as receitas adicionais de ponderação, a seleção gulosa e a média dos melhores por passo aparecem mais que o melhor preditor por passo. O equilíbrio entre exploração e preparação acompanha o comportamento conservador do agente neste protocolo: em média, pouco mais de meia avaliação de estratégia por série.
 ```
 
+(E54, adição opcional) Para explicar a concentração das três ações mais usadas com base nos pensamentos do agente, ADICIONAR ao final da subseção:
+
+```latex
+Uma leitura dos pensamentos que antecedem cada chamada, combinada à distribuição das ações entre as séries, ajuda a explicar essa concentração. Das 680 séries, 225 (33\%) terminam no aceite de uma estratégia já semeada sem nenhuma chamada adicional, e a mediana de passos por série é de 2: a tabela reflete, portanto, o que o agente faz quando decide ir além das sementes, e nesse subconjunto o roteiro típico de intervenção é podar, ponderar e avaliar. A poda de redundância é a ação de seleção mais usada (304 séries, 45\%) e tende a abrir o ciclo: em 74\% das séries que a usam, ela é a primeira chamada. Em 88\% das suas chamadas, os pensamentos citam erros correlacionados, 86\% citam redundância e 42\% descrevem o ranqueamento como instável, como neste exemplo real, em uma série da ANP: \textit{"The series has unstable ranking and many correlated errors; pruning redundant models should reduce noise, and then inverse-error weighting on the cleaned pool may improve performance."} O peso pelo erro inverso é a receita de ponderação padrão do roteiro (269 séries, 40\%): em 85\% dos pensamentos que o antecedem a própria expressão aparece, 92\% citam o erro dos preditores e 57\% mencionam a média vigente, quase sempre como a referência a ser batida. A avaliação da estratégia, única via de entrada no histórico de tentativas, ocorre em 194 séries (29\%), justamente aquelas em que o agente testa uma proposta: entre elas, 70\% passam também pela poda e 77\% pelo erro inverso, e 64\% dos pensamentos que antecedem a avaliação citam pesos, refletindo o padrão de testar uma receita de ponderação e registrá-la. Nas ações menos frequentes, o motivo é mais específico: a seleção pelos mais estáveis aparece com o ranqueamento instável citado em 76\% dos casos, o peso pela tendência do erro cita a tendência em 100\% deles, o peso pelo meta-modelo cita o conhecimento entre séries em 90\%, e as duas receitas por passo do horizonte citam o horizonte em 100\% deles. A concentração do catálogo, portanto, não indica preferência do agente por ferramentas específicas: ela reflete o roteiro de poda, ponderação e avaliação das séries em que o agente decide ir além das sementes.
+```
+
+Fonte: `outputs/resultados/item_10/motivacao_acoes.md` (script `outputs/resultados/scripts/motivacao_acoes.py`). As contagens por ação das trajetórias batem exatamente com a Tabela~\ref{tab:agente-acoes} quando se excluem as 9 chamadas com erro de argumento registradas (contagens por série verificadas à parte).
+
 ### 2.5.2. Motivo de encerramento do ciclo — E55
 
 SUBSTITUIR a subseção inteira por:
@@ -929,6 +957,75 @@ Orçamento esgotado    & 1   & 0,15  \\
 O aceite explícito encerra a quase totalidade das séries (98,68\%), e a estagnação responde pelas oito restantes, distribuídas entre ANP, NN5, M4 e ETTh1. O esgotamento do orçamento de iterações, a rede de segurança descrita na Seção~\ref{sec:agente}, ocorre em uma única série (NN5), o que indica que o orçamento estabelecido é, na prática, mais que suficiente: o agente encerra o ciclo por decisão própria bem antes do limite.
 ```
 
+(E55, adição opcional) Para comentar o caso da única série que esgota o orçamento, ADICIONAR ao final da subseção:
+
+```latex
+Vale registrar o comportamento da única série que esgota o orçamento, no NN5. O agente encontra uma liderança logo na segunda iteração, ao testar o peso pelo erro inverso sobre um subconjunto estável (pontuação 0,6586), e em seguida testa, sem superá-la, uma média dos melhores por passo, uma mediana e um peso pelo erro inverso sobre o conjunto podado. Como o líder não se separa com margem confiável, o ciclo continua e, na décima iteração, o agente encontra uma nova melhor pontuação, com o peso pela tendência do erro (0,6582); a melhora marginal reinicia a janela de estagnação, a tentativa seguinte não supera o novo líder e o ciclo atinge o limite de doze iterações antes de acumular quatro avaliações consecutivas sem melhora. A decisão final recai sobre a melhor tentativa do histórico, como previsto pelo mecanismo: o teto de iterações funciona como a rede de segurança que encerra o ciclo mesmo quando o agente preferiria continuar explorando.
+```
+
+Fonte: trajetória da série 27 do NN5 no run final (`react_trajectory_json`), 12 iterações, motivo `iteration_budget_exhausted`; conferido contra `outputs/resultados/item_11/motivo_encerramento.csv`.
+
+### 2.5.2b. Nova subseção: passo a passo de uma decisão — E75
+
+ADICIONAR como nova subseção logo depois de "Motivo de encerramento do ciclo" (E55) e antes de "Estudo de caso ilustrativo" (E56). Ela percorre a trajetória completa da série 206 do M4, a mesma do caso de sucesso da Subseção 2.5.4, desde as sementes até o aceite, com o pensamento de cada iteração. A numeração das subseções seguintes se ajusta automaticamente no LaTeX.
+
+SUBSTITUIR POR:
+
+```latex
+\subsection{Passo a passo de uma decisão: da semente ao aceite} \label{subsec:transcricao-decisao}
+
+Esta subseção acompanha, iteração a iteração, a decisão do agente para a série 206 do M4, a mesma do caso de sucesso da Subseção~\ref{subsec:interpretabilidade-previsoes}, desde o ponto de partida determinístico até o aceite final. Os pensamentos são apresentados em tradução livre na Tabela~\ref{tab:transcricao-decisao}, e os trechos decisivos são citados literalmente no texto. Todos os escores e posições citados até o aceite são de validação, calculados sobre as três janelas usadas na decisão; as métricas de teste aparecem apenas no fecho desta subseção. Para evitar ambiguidade, os identificadores são os registrados pelo próprio método: pool1, pool2 e pool3 são os subconjuntos dos 5, 7 e 9 modelos mais estáveis, preparados antes do ciclo, e pool4 em diante são os subconjuntos criados pelas ações de seleção durante o ciclo (na série, o pool3 reúne os 9 modelos mais estáveis e a primeira poda dá origem ao pool4, com 7); w$N$ denota um vetor de pesos calculado na série, e a$N$ denota a $N$-ésima tentativa do histórico, com as dez sementes ocupando a1 a a10 e a estratégia final sendo sempre a de melhor pontuação entre todas.
+
+Antes de o agente atuar, dez estratégias fixas são avaliadas e registradas no histórico da série. A melhor delas é a média aparada sobre o pool3 (a9), com pontuação de validação 0,4099, à frente da média (0,4177), da mediana (0,4385) e da combinação ponderada semeada (0,6516); o DBA fica bem atrás (0,8106). É esse piso de 0,4099 que o agente precisa superar.
+
+\begin{table}[H]
+\centering
+\caption{Transcrição da trajetória de decisão do agente na série 206 do M4.}
+\label{tab:transcricao-decisao}
+\footnotesize
+\begin{tabular}{@{}cp{6.2cm}p{3.8cm}p{3.2cm}@{}}
+\toprule
+\textbf{Iter.} & \textbf{Pensamento (tradução livre)} & \textbf{Ação} & \textbf{Resultado (validação)} \\
+\midrule
+1 & O líder é uma média aparada no pool3, mas o diagnóstico sugere que uma combinação ponderada pode melhorar; testar o peso pelo erro inverso no pool3 com pequeno encolhimento para reduzir a variância das três janelas. & Peso pelo erro inverso (pool3, encolhimento 0,1) & w2 registrado (9 de 9 modelos) \\
+2 & O líder é uma média aparada no pool3, mas a correlação de erros mostra grupos redundantes; podar deve reduzir o ruído e permitir que a ponderação supere a média aparada. & Poda de redundância (pool3) & pool4: 9 para 7 modelos \\
+3 & Testar a combinação ponderada com o w2 no pool3 para ver se a média ponderada regularizada supera a média aparada. & Avaliação do w2 (pool3) & 2º de 11 (0,4142); líder: a9 (média aparada no pool3) \\
+4 & Reduzir os erros correlacionados podando e reponderando o conjunto reduzido; o erro inverso no pool4 pode superar o líder. & Peso pelo erro inverso (pool4, encolhimento 0) & w3 registrado (7 de 7 modelos) \\
+5 & O líder é a média aparada no pool3; uma média ponderada com os pesos do w3 no pool4 pode reduzir a variância, já que o pool4 contém os modelos mais estáveis e não redundantes. & Avaliação do w3 (pool4) & 1º de 12 (0,378; melhor até aqui) \\
+6 & O melhor até aqui (ponderação no pool4 com w3) é estatisticamente indistinguível do segundo colocado e nenhuma outra estratégia deve superá-lo. & Aceite & a12 aceito \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O primeiro pensamento já antecipa o desfecho: \textit{"The current leader is a trimmed-mean on pool3, but the diagnostics suggest a weighted combination could improve performance. I'll try inverse-error weights on pool3 with a small shrinkage to reduce variance from only three windows."} A decisão que muda a liderança vem na quinta iteração: \textit{"The current leader is a trimmed-mean on pool3. A weighted average using the inverse-error weights on the pruned pool4 might reduce variance and improve over the trimmed-mean, especially since pool4 contains the most stable, non-redundant models."} E o aceite é acompanhado de \textit{"The current best weighted pool4 w3 is statistically indistinguishable from the runner-up, and no further strategy is likely to beat it."}, com a justificativa registrada: \textit{"Weighted pool4 w3 achieves the lowest score and is not statistically worse than the runner-up; accepting it is the prudent choice."}
+
+Em seis iterações e duas avaliações, o agente substitui a média aparada semeada por uma combinação ponderada pelo erro inverso sobre o subconjunto podado. A Tabela~\ref{tab:transcricao-validacao-teste} compara as duas estratégias nas duas janelas.
+
+\begin{table}[H]
+\centering
+\caption{Pontuação de validação e métricas de teste da melhor semente e da estratégia aceita, na série 206 do M4.}
+\label{tab:transcricao-validacao-teste}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Estratégia} & \textbf{Pontuação (validação)} & \textbf{SMAPE (teste, \%)} & \textbf{POCID (teste, \%)} \\
+\midrule
+Melhor semente (a9)     & 0,4099 & 10,93 & \textbf{50,00} \\
+Estratégia aceita (a12) & \textbf{0,3780} & \textbf{10,37} & \textbf{50,00} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A melhora de 0,0319 na validação se confirmou na direção no teste: o SMAPE cai de 10,93\% na melhor semente para 10,37\% na estratégia aceita, uma diferença de 0,56 ponto percentual, enquanto o POCID permanece idêntico (50,00\%). A trajetória ilustra o padrão descrito nas subseções anteriores: o agente parte do diagnóstico, testa a receita de ponderação sobre o conjunto disponível, compara cada proposta com o líder vigente e aceita a melhor pontuação do histórico quando a margem é indistinguível.
+```
+
+Fonte: trajetória da série 206 do M4 no run final (`react_trajectory_json`) e `baseline_results_json` (escores das sementes); 6 iterações, 2 avaliações, veredito `indistinguishable`.
+
+(E75, adição opcional) Se quiser deixar explícito o conteúdo dos pools desta série, acrescente ao fim da frase da notação, depois de "melhor pontuação entre todas.", a nota de rodapé:
+
+```latex
+\footnote{Para a série 206, o pool1 reúne DWT\_rf, CWT\_catboost, FT\_catboost, ONLY\_DWT\_catboost e ONLY\_DWT\_rf; o pool2 acrescenta rf e FT\_rf; o pool3 acrescenta DWT\_catboost e ONLY\_CWT\_catboost; e a poda da segunda iteração remove rf e ONLY\_CWT\_catboost, deixando o pool4 com os sete modelos restantes.}
+```
+
 ### 2.5.3. Estudo de caso ilustrativo — E56 (texto final nesta revisão)
 
 ATENÇÃO: com a configuração final, as séries 2 e 1 da ANP usadas no texto atual terminaram com estratégia de origem semeadas, não do agente. Casos escolhidos: ANP 8 (origem semeadas, aceitou a mediana a2) e ANP 5 (origem no agente, mediana sobre o subconjunto podado que ele mesmo construiu; maior melhoria da ablação, −2,09pp). Trajetórias completas em `outputs/resultados/item_15/candidatos_estudo_caso.json`.
@@ -953,7 +1050,7 @@ Os dois casos ilustram o mesmo padrão observado de forma agregada nas seções 
 
 ### 2.5.4. Interpretabilidade das previsões — E57 (texto final nesta revisão)
 
-Casos escolhidos: ANP 95 (sucesso; SMAPE 3,53\%, POCID 81,82\%, weighted pelo erro inverso com 7 modelos) e ANP 64 (fracasso; SMAPE 45,47\%, POCID 63,64\%, weighted pelo erro inverso sobre os 19 modelos do conjunto completo). O script `interpretabilidade_casos.py` foi atualizado (séries novas, curvas de ADE, FFORMA, mediana e DBA e fontes ampliadas) e gerou os JSONs e as figuras em `outputs/resultados/interpretabilidade/figuras/`, já copiadas para `overleaf/resultados_final/`.
+Casos escolhidos: M4 206 (sucesso; maior vantagem do CREST sobre as demais combinações entre as 47 séries de origem no agente: SMAPE 10,37\% contra 13,90\% do segundo melhor, com série real sem oscilações extremas) e ANP 13 (fracasso; queda e recuperação que a combinação não acompanha, SMAPE 21,55\% com as cinco estratégias na mesma faixa; escolhida por ter oscilações bem menos extremas do que a antiga ANP 64). O script `interpretabilidade_casos.py` foi atualizado (séries novas, curvas de ADE, FFORMA, mediana e DBA, fontes ampliadas, modelos individuais no painel superior, como antes, e painel inferior de ampliação na faixa das combinações, sem os individuais) e gerou os JSONs e as figuras em `outputs/resultados/interpretabilidade/figuras/`, já copiadas para `overleaf/resultados_final/`.
 
 REMOVER a subseção inteira, do `\subsection{Interpretabilidade das previsões...}` até a linha anterior ao `\subsection{Distribuição da melhoria relativa}`, incluindo o parágrafo comentado (%) que antecede a próxima subseção.
 
@@ -962,27 +1059,25 @@ SUBSTITUIR POR:
 ```latex
 \subsection{Interpretabilidade das previsões: um caso de sucesso e um de fracasso} \label{subsec:interpretabilidade-previsoes}
 
-Para ilustrar concretamente como a estratégia final se traduz em previsões, esta subseção apresenta duas séries da ANP em extremos opostos de desempenho, ambas com estratégia final de origem no próprio agente, e ambas combinando múltiplos preditores por peso, não um único modelo isolado.
+Para ilustrar concretamente como a estratégia final se traduz em previsões, esta subseção apresenta duas outras séries em extremos opostos de desempenho, uma do M4 semanal (série 206) e uma da ANP (série 13), ambas com estratégia final de origem no próprio agente, e ambas combinando múltiplos preditores por peso, não um único modelo isolado.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_sucesso.png}
-    \caption{Previsões individuais, valor real, combinação final do CREST e demais métodos de combinação na série 95 da ANP, um dos menores SMAPE entre as séries com estratégia de origem no agente.}
+    \caption{Previsões individuais, valor real, combinação final do CREST e demais métodos de combinação na série 206 do M4, a série com a maior vantagem do CREST sobre os demais métodos de combinação entre as séries com estratégia de origem no agente; o painel inferior amplia a faixa das estratégias de combinação.}
     \label{fig:caso-sucesso}
 \end{figure}
 
-Na série 95 da ANP (Figura~\ref{fig:caso-sucesso}), o CREST obtém SMAPE de 3,53\% e POCID de 81,82\%, combinando sete modelos (Random Forest e CatBoost em diferentes representações, Theta e ETS) por média ponderada pelo erro inverso, com pesos médios entre 0,14 e 0,15 e sem concentração em um único modelo. As sete previsões individuais acompanham o nível geral da série, mas divergem entre si nos picos e vales ao longo do horizonte; a combinação suaviza essas divergências e segue de perto o valor real na maior parte dos passos. No vale pronunciado do terceiro passo, quando o valor real recua abaixo de todas as previsões individuais, a combinação fica no centro do feixe e erra para cima, um dos poucos momentos em que se afasta do valor observado. As demais estratégias de combinação do capítulo (ADE, FFORMA, mediana e DBA) produzem previsões próximas entre si e da do CREST ao longo do horizonte, e o CREST obtém o menor SMAPE do grupo nesta série: 3,53\%, contra 3,54\% do FFORMA, 3,66\% da mediana, 3,73\% do ADE e 3,80\% do DBA. A justificativa real do agente para este caso foi: \textit{"Inverse-error weighting on the most stable pool exploits the strong trend and seasonality while mitigating ranking instability; the leader's indistinguishable margin indicates no statistically better alternative exists."}
+Na série 206 do M4 (Figura~\ref{fig:caso-sucesso}), o CREST obtém SMAPE de 10,37\%, combinando sete modelos (Random Forest e CatBoost sobre as transformações wavelet contínua e discreta e de Fourier) por média ponderada, com pesos médios entre 0,11 e 0,18 e sem concentração em um único modelo. As sete previsões individuais acompanham o nível geral da série, mas divergem entre si nos picos e vales ao longo do horizonte; a combinação final segue a tendência de alta de forma mais fiel que as demais estratégias de combinação, e é o único método cujo intervalo de previsão se estende acima de 14.000, aproximando-se do patamar atingido pelo valor real, enquanto todas as demais combinações permanecem abaixo de 13.500. No pico isolado do sexto passo, nenhuma previsão de combinação acompanha o salto da série, um dos poucos momentos em que o CREST se afasta do valor observado. As demais estratégias de combinação ficam bem atrás nesta série: contra 10,37\% do CREST, o ADE obtém 13,90\%, o FFORMA, 14,15\%, a mediana, 15,39\%, e o DBA, 21,87\%. A justificativa real do agente para este caso foi: \textit{"Weighted pool4 w3 achieves the lowest score and is not statistically worse than the runner-up; accepting it is the prudent choice."}
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_fracasso.png}
-    \caption{Previsões individuais, valor real, combinação final do CREST e demais métodos de combinação na série 64 da ANP, o maior SMAPE entre as séries com estratégia de origem no agente.}
+    \caption{Previsões individuais, valor real, combinação final do CREST e demais métodos de combinação na série 13 da ANP, um dos maiores SMAPE entre as séries com estratégia de origem no agente; o painel inferior amplia a faixa das estratégias de combinação.}
     \label{fig:caso-fracasso}
 \end{figure}
 
-Na série 64 da ANP (Figura~\ref{fig:caso-fracasso}), o CREST obtém SMAPE de 45,47\% e POCID de 63,64\%, combinando os dezenove modelos do conjunto completo por média ponderada pelo erro inverso, com pesos praticamente uniformes, entre 0,04 e 0,06. Diferentemente do caso anterior, a figura revela por que a combinação não teve sucesso: o valor real oscila abruptamente entre aproximadamente 14 e 107 ao longo do horizonte e, embora as previsões individuais, tomadas em conjunto, cheguem a cobrir boa parte dessa amplitude, entre 13,8 e 84,3, nenhuma delas acompanha a série ao longo de todo o horizonte. A ponderação pelo erro inverso, praticamente uniforme, resulta em uma combinação ainda mais suavizada, confinada entre 42,8 e 53,4, que não reproduz nem os picos nem os vales. Como nenhum preditor do conjunto antecipa os movimentos extremos da série real, nenhuma combinação linear entre eles poderia fazê-lo: o problema, neste caso, está a montante da decisão de combinação, na incapacidade dos modelos individuais disponíveis de representar a volatilidade da série, não na escolha de pesos em si, ainda que a estratégia tenha sido a de melhor pontuação nas janelas de validação. As demais estratégias de combinação reforçam esse diagnóstico: FFORMA (45,05\%), ADE (45,23\%), CREST (45,47\%), mediana (47,18\%) e DBA (48,12\%) erram na mesma faixa nesta série, e nenhuma delas reproduz os movimentos extremos do valor real.
-
-Nesse caso, a justificativa do agente foi: \textit{"The series is trend-dominated with unstable model ranking and high error correlation; inverse-error weighting on the full pool (w2) yields the lowest validation score and is statistically indistinguishable from the runner-up, so accepting it is the safest choice."}.
+Na série 13 da ANP (Figura~\ref{fig:caso-fracasso}), o CREST obtém SMAPE de 21,55\%, combinando nove modelos (ARIMA e ETS, Random Forest e CatBoost em representações originais e transformadas, e o Naive Seasonal) por média ponderada, com pesos médios entre 0,09 e 0,14 e sem concentração em um único modelo. A figura revela por que a combinação não teve sucesso: o valor real recua de aproximadamente 1.540 para pouco mais de 900 nos primeiros passos, recupera-se parcialmente e volta a subir até 1.884 no fim do horizonte, enquanto a maioria das previsões individuais permanece numa faixa estreita e a combinação final fica confinada entre 1.370 e 1.536, sem reproduzir nem o vale nem a recuperação. A ponderação pelo erro inverso, com pesos espalhados por nove modelos, dilui os poucos preditores que acompanham a mudança de nível e resulta em uma previsão suavizada que não segue nenhum dos extremos; o melhor modelo individual isolado, o ETS, teria obtido 16,31\% de SMAPE nesta série. As demais estratégias de combinação erram na mesma faixa do CREST: FFORMA (21,17\%), DBA (21,82\%), mediana (21,98\%) e ADE (22,27\%), e nenhuma delas reproduz os movimentos da série. Nesse caso, a justificativa do agente foi: \textit{"trend-dominated series with unstable ranking; the weighted pool4 w2 strategy gives the lowest RMSE and is statistically indistinguishable from the runner-up, so it is the optimal choice."}
 ```
 
 ### 2.5.5. Distribuição da melhoria relativa — E58
@@ -992,6 +1087,31 @@ SUBSTITUIR o parágrafo inteiro por:
 ```latex
 Para cada uma das 680 séries, comparou-se a pontuação da estratégia final com a menor pontuação entre as estratégias semeadas, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao} do Capítulo~\ref{chp:proposta}. Em nenhuma das 680 séries a estratégia final apresentou pontuação pior que a melhor semente (0\%), confirmando empiricamente, sobre a totalidade das séries deste estudo, a garantia de que a estratégia final nunca é pior que o piso estabelecido pelas sementes, descrita na Seção~\ref{sec:aplicacao}. Em 351 séries (51,6\%), a estratégia final iguala essa melhor semente, dentro da precisão de registro dos escores. Nas demais 329 séries (48,4\%), a estratégia final apresenta pontuação estritamente melhor, o que reflete tanto propostas do agente quanto a escolha entre as estratégias de estabilidade semeadas. A maior melhoria observada ocorre em uma série do M4, na qual a pontuação final é 0,345 menor que a da melhor semente.
 ```
+
+(E58, adição opcional) Para detalhar a distribuição dos ganhos em tabela, ADICIONAR depois do parágrafo:
+
+```latex
+\begin{table}[H]
+\centering
+\caption{Distribuição das 329 séries com melhoria estrita, por faixa de ganho na pontuação.}
+\label{tab:melhoria-faixas}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Faixa de ganho} & \textbf{Séries} & \textbf{\% das 680} \\
+\midrule
+até 0,001        & 14  & 2,1  \\
+0,001 a 0,01     & 108 & 15,9 \\
+0,01 a 0,05      & 150 & 22,1 \\
+0,05 a 0,10      & 38  & 5,6  \\
+acima de 0,10    & 19  & 2,8  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:melhoria-faixas} detalha esses ganhos: a maioria das 329 séries com melhoria estrita apresenta ganho de até 0,05 ponto de pontuação (272 séries, 40\% das 680), e apenas 19 séries (2,8\%) superam 0,10; entre as 329, a mediana do ganho é de 0,017 e as dez maiores melhorias concentram 20\% do ganho total.
+```
+
+Fonte: `outputs/resultados/item_16/melhoria_relativa.csv` (versão de 16/10; não usar `item_16_melhoria_relativa.csv`, que é da rodada antiga). Tolerância de 1e-4 para os empates, compatível com a precisão de registro dos escores.
 
 ### 2.5.6. Custo computacional — E59
 
@@ -1027,9 +1147,24 @@ SUBSTITUIR os dois parágrafos por:
 ```latex
 Além da comparação de acurácia agregada discutida nas seções anteriores, o CREST oferece uma vantagem qualitativa que os métodos de meta-aprendizagem revisados no Capítulo~\ref{chp:revisao} não replicam: cada decisão de combinação é acompanhada de um histórico de tentativas e de uma justificativa textual explícita, auditável a posteriori, como ilustrado nas Seções~\ref{subsec:estudo-caso-trajetoria} e~\ref{subsec:interpretabilidade-previsoes} desta seção. Nem o FFORMA nem o ADE produzem um artefato equivalente: suas decisões de combinação resultam de um modelo estatístico ou de pesos aprendidos, sem uma explicação interpretável do motivo pelo qual uma determinada combinação foi escolhida para uma série específica.
 
-Essa auditabilidade é particularmente relevante em contextos de aplicação em que a decisão de combinação precisa ser justificada a um usuário humano, ou em que a checagem manual das séries de maior impacto é viável, dois cenários em que os métodos de meta-aprendizagem tradicionais oferecem pouco além do valor previsto pelo modelo. Essa vantagem, no entanto, deve ser lida com uma ressalva, quantificada sobre as 47 séries cuja estratégia final tem origem no próprio agente. A similaridade textual entre pares dessas justificativas, medida pelo coeficiente de Jaccard sobre o conjunto de palavras de conteúdo, é de 0,13 em média entre todos os pares de séries, e sobe para 0,24 entre pares que compartilham exatamente a mesma estratégia, contra 0,13 entre pares com estratégias diferentes: uma diferença pequena, mas na direção esperada, indicando que o texto acompanha, ainda que fracamente, a decisão real, e não é puro ruído desconectado dela.
+Essa auditabilidade é particularmente relevante em contextos de aplicação em que a decisão de combinação precisa ser justificada a um usuário humano, ou em que a checagem manual das séries de maior impacto é viável, dois cenários em que os métodos de meta-aprendizagem tradicionais oferecem pouco além do valor previsto pelo modelo. Essa vantagem, no entanto, deve ser lida com uma ressalva, quantificada sobre as 47 séries cuja estratégia final tem origem no próprio agente. A similaridade textual entre pares dessas justificativas, medida pelo coeficiente de Jaccard \citep{jaccard1912} (a razão entre a interseção e a união dos conjuntos de palavras de conteúdo das duas justificativas), é de 0,13 em média entre todos os pares de séries, e sobe para 0,24 entre pares que compartilham exatamente a mesma estratégia, contra 0,13 entre pares com estratégias diferentes: uma diferença pequena, mas na direção esperada, indicando que o texto acompanha, ainda que fracamente, a decisão real, e não é puro ruído desconectado dela.
 
-Não há repetição de frases longas: nenhum trecho de cinco a oito palavras aparece em mais de 20\% das justificativas. A abertura, no entanto, é mais repetitiva que o corpo: por correspondência exata, as primeiras frases se distribuem em 46 moldes distintos entre as 47 séries, e, agrupando por quase-duplicata, 30 moldes cobrem 38 das 47 séries. Esse padrão é compatível com o vocabulário fechado do diagnóstico interpretativo descrito na Seção~\ref{sec:diagnostico} do Capítulo~\ref{chp:proposta}, que entrega ao agente quatro categorias fixas (regime, previsibilidade, indicação de combinação, riscos) a preencher por leitura das evidências, em vez de texto livre: parte da semelhança estrutural entre justificativas é, portanto, esperada por construção, e não indica necessariamente que o agente ignore as particularidades de cada série ao redigir sua justificativa.
+Não há repetição de frases longas: nenhum trecho de cinco a oito palavras aparece em mais de 20\% das justificativas. A abertura, no entanto, é mais repetitiva que o corpo: por correspondência exata, as primeiras frases se distribuem em 46 moldes distintos entre as 47 séries, e, agrupando por quase-duplicata, 30 moldes cobrem 38 das 47 séries. Esse padrão é compatível com o vocabulário fechado do diagnóstico interpretativo descrito na Seção~\ref{sec:diagnostico} do Capítulo~\ref{chp:proposta}, que entrega ao agente quatro categorias de vocabulário fechado (regime, previsibilidade, indicação de combinação, riscos), preenchidas no diagnóstico a partir das evidências: parte da semelhança estrutural entre justificativas é, portanto, esperada por construção, e não indica necessariamente que o agente ignore as particularidades de cada série ao redigir sua justificativa.
+```
+
+Se usar a citação, acrescente ao `.bib` do Overleaf:
+
+```bibtex
+@article{jaccard1912,
+  author  = {Jaccard, Paul},
+  title   = {The Distribution of the Flora in the Alpine Zone},
+  journal = {New Phytologist},
+  volume  = {11},
+  number  = {2},
+  pages   = {37--50},
+  year    = {1912},
+  doi     = {10.1111/j.1469-8137.1912.tb05611.x}
+}
 ```
 
 Notas de consistência para 2.5 (E61):
@@ -1111,7 +1246,7 @@ Verificação feita: a subseção "Recorrência das transformações entre conju
 
 # Parte 4. Pendências executáveis antes de fechar a escrita
 
-1. Gemma4: rodar com a configuração final (mesma do gpt-oss e do Qwen3.8) e preencher a coluna nas duas tabelas da Subseção 2.1. Atenção: o Gemma4 não aceita níveis de raciocínio, apenas on/off, então o comando usa --reasoning on ou omite o parâmetro; registre essa diferença no texto. Os casos e as figuras de sucesso e fracasso (Subseção 2.5.4) foram atualizados para as séries ANP 95 e ANP 64.
+1. Gemma4: rodar com a configuração final (mesma do gpt-oss e do Qwen3.8) e preencher a coluna nas duas tabelas da Subseção 2.1. Atenção: o Gemma4 não aceita níveis de raciocínio, apenas on/off, então o comando usa --reasoning on ou omite o parâmetro; registre essa diferença no texto. Os casos e as figuras de sucesso e fracasso (Subseção 2.5.4) foram atualizados para as séries M4 206 e ANP 13.
 2. Figuras do erro por passo do horizonte: geradas pelo novo script `outputs/resultados/scripts/figuras_horizonte.py` e já copiadas para `overleaf/resultados_final/` (inclui as duas de dois painéis, a de média com 8 passos e a de horizonte completo).
 3. Figuras de MCM: as por conjunto e as agregadas já foram regeneradas com a configuração final (`outputs/resultados/item_05/` e `outputs/resultados/item_07/`); basta substituir os arquivos no overleaf conforme a Seção 2.7.
 4. Busca sem LLM: o espaço de busca atual é um superconjunto do catálogo final;

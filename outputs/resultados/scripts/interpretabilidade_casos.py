@@ -2,20 +2,26 @@
 
 Diferente do item_15 (foco na trajetoria de raciocinio), aqui o foco e nos
 NUMEROS da previsao: serie real, previsao de cada modelo individual que
-compos a estrategia final vencedora, previsao combinada, metodo/pesos.
+compos a estrategia final vencedora, previsao combinada, metodo/pesos. A
+figura tem dois paineis: a escala completa (com os modelos individuais em
+cinza) e a ampliacao na faixa das estrategias de combinacao (sem eles, para o
+detalhe entre os metodos ficar visivel).
 
 Selecao dos candidatos: entre as 47 series cuja estrategia final tem origem
 no proprio agente na configuracao final (as series do texto antigo, ANP 103
 e NN5 109, terminaram com estrategia de origem semeada e nao servem mais),
 exigindo que a estrategia combine multiplos preditores -- nao um unico
 modelo isolado:
-- Sucesso: ANP_MONTHLY, dataset_index=95. SMAPE=0.0353, POCID=81.82,
-  estrategia "weighted" (erro inverso) sobre 7 modelos; esta entre os
-  menores SMAPE das 47 series com combinacao multi-modelo do agente.
-- Fracasso: ANP_MONTHLY, dataset_index=64. SMAPE=0.4547, o maior entre as
-  47 series de origem no agente, estrategia "weighted" (erro inverso)
-  sobre os 19 modelos do conjunto completo -- evita de proposito as duas
-  series de M4_WEEKLY_DATASET (idx 208 e 75) entre as piores do CREST
+- Sucesso: M4_WEEKLY_DATASET, dataset_index=206. Maior vantagem do CREST
+  sobre as demais combinacoes entre as 47 series de origem no agente
+  (SMAPE=0.1037, contra 0.1390 do segundo melhor), com a serie real sem
+  oscilacoes extremas e estrategia "weighted" sobre 7 modelos.
+- Fracasso: ANP_MONTHLY, dataset_index=13. Serie com queda e recuperacao
+  claras que a combinacao nao acompanha (SMAPE=0.2155), com as cinco
+  estrategias de combinacao errando na mesma faixa (0.2117 a 0.2227),
+  estrategia "weighted" sobre 9 modelos; evita de proposito as series com
+  oscilacoes extremas (como a antiga ANP 64, de 13,8 a 107,3) e as duas
+  series de M4_WEEKLY_DATASET (idx 208 e 75) entre as piores do CREST,
   porque essas duas coincidem com a patologia de alvo de treino corrompido
   ja documentada em outputs/diagnostico/RESUMO_passo7_rf_m4.md (um bug de
   normalizacao de janela, no upstream dos modelos individuais, nao do
@@ -37,8 +43,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C
 
 CASES = {
-    "caso_sucesso": ("ANP_MONTHLY", 95),
-    "caso_fracasso": ("ANP_MONTHLY", 64),
+    "caso_sucesso": ("M4_WEEKLY_DATASET", 206),
+    "caso_fracasso": ("ANP_MONTHLY", 13),
 }
 
 OUTRAS_COMBINACOES = {
@@ -120,31 +126,51 @@ def plot_case(case: dict, out_path: str) -> None:
         "legend.fontsize": 16,
     })
 
-    fig, ax = plt.subplots(figsize=(9.5, 6.0))
+    import numpy as np
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(9.5, 9.6), sharex=True,
+        gridspec_kw={"height_ratios": [1.15, 1.0]},
+    )
     steps = list(range(1, len(case["test"]) + 1))
 
-    primeiro = True
-    for pred in case["modelos_individuais_predictions"].values():
-        ax.plot(steps, pred, color="#BBBBBB", lw=1.1, zorder=2,
-                label="Individuais" if primeiro else None)
-        primeiro = False
+    def desenhar(ax, individuais=False):
+        if individuais:
+            primeiro = True
+            for pred in case["modelos_individuais_predictions"].values():
+                ax.plot(steps, pred, color="#BBBBBB", lw=1.0, zorder=2,
+                        label="Individuais" if primeiro else None)
+                primeiro = False
+        ax.plot(steps, case["test"], color="#4C72B0", lw=2.6, marker="o", ms=6.5,
+                zorder=4, label="Valor real")
+        for name, data in case["outras_combinacoes"].items():
+            ax.plot(steps, data["predictions"], zorder=3, label=name,
+                    **COMBINACOES_STYLE[name])
+        ax.plot(steps, case["predicao_combinada_final"], color="black", lw=3.0,
+                zorder=5, label="CREST")
+        ax.set_ylabel("Valor")
+        ax.set_xticks(steps)
+        ax.grid(alpha=0.25, lw=0.6)
 
-    ax.plot(steps, case["test"], color="#4C72B0", lw=2.6, marker="o", ms=6.5, zorder=4,
-            label="Valor real")
+    desenhar(ax1, individuais=True)
+    desenhar(ax2)
+    ax1.set_title("Escala completa", loc="left", fontsize=20)
+    ax2.set_title("Detalhe das estratégias de combinação", loc="left", fontsize=20)
+    ax2.set_xlabel("Passo do horizonte")
 
-    for name, data in case["outras_combinacoes"].items():
-        ax.plot(steps, data["predictions"], zorder=3, label=name, **COMBINACOES_STYLE[name])
+    cinco = [case["predicao_combinada_final"]] + [
+        d["predictions"] for d in case["outras_combinacoes"].values()
+    ]
+    lo = min(float(np.min(v)) for v in cinco)
+    hi = max(float(np.max(v)) for v in cinco)
+    margem = 0.06 * (hi - lo) if hi > lo else 1.0
+    ax2.set_ylim(lo - margem, hi + margem)
 
-    ax.plot(steps, case["predicao_combinada_final"], color="black", lw=3.0, zorder=5,
-            label="CREST")
-
-    ax.set_xlabel("Passo do horizonte")
-    ax.set_ylabel("Valor")
-    ax.set_xticks(steps)
-    ax.grid(alpha=0.25, lw=0.6)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=4, frameon=False,
-              handlelength=1.4, columnspacing=1.2, handletextpad=0.5)
-    fig.tight_layout()
+    handles, labels = ax1.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.045),
+               ncol=4, frameon=False, handlelength=1.4, columnspacing=1.2,
+               handletextpad=0.5)
+    fig.tight_layout(rect=(0, 0.055, 1, 1))
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
