@@ -1511,3 +1511,65 @@ def test_reduced_seeding_drops_full_pool_mean_and_median_only():
     assert ("dba", "pool_full") in reduced
     assert len(full) - len(reduced) == 2
     assert [x for x in full if x not in (("mean", "pool_full"), ("median", "pool_full"))] == reduced
+
+
+def test_top3_agent_runs_all_turns_and_chooses_after_the_exploration():
+    cfg = ReactConfig(
+        max_iterations=5, early_stop_patience=1,
+        final_strategy="top3_agent", prompt_v3=True,
+    )
+    s, series, pool = prepared(cfg)
+    llm = ScriptedLLM(
+        [step("list_attempts", {}) for _ in range(5)]
+        + [
+            '{"choice":"A","confidence":"high","series_pattern":"trend with stable ranking",'
+            '"why_choice":"weighted on the pruned pool fits the diagnostics",'
+            '"why_not_others":"the median ignores the clear model differences"}'
+        ]
+    )
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.iterations_used == 5
+    assert r.early_stopped is False
+    assert r.final_source == "agent_top3"
+    assert len(r.top3_candidates) == 3
+    assert r.top3_choice.startswith("A:")
+    assert r.final_attempt.attempt_id == r.top3_candidates[0]["attempt_id"]
+    assert "final decision-maker" in llm.calls[-1]["system"]
+
+
+def test_top3_agent_does_not_end_on_accept():
+    cfg = ReactConfig(
+        max_iterations=3, early_stop_patience=1,
+        final_strategy="top3_agent", prompt_v3=True,
+    )
+    s, series, pool = prepared(cfg)
+    target = s.best_attempt().attempt_id
+    llm = ScriptedLLM(
+        [
+            step("accept", {"attempt_id": target}),
+            step("list_attempts", {}),
+            step("list_attempts", {}),
+            '{"choice":"B","confidence":"low","series_pattern":"noisy",'
+            '"why_choice":"robust median on the stable pool",'
+            '"why_not_others":"the leader may be overfit"}',
+        ]
+    )
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.iterations_used == 3
+    assert "ERROR accept" in r.trajectory[0]["observation_summary"]
+    assert r.final_source == "agent_top3"
+
+
+def test_top3_agent_falls_back_on_invalid_choice():
+    cfg = ReactConfig(
+        max_iterations=2, early_stop_patience=1,
+        final_strategy="top3_agent", prompt_v3=True,
+    )
+    s, series, pool = prepared(cfg)
+    llm = ScriptedLLM(
+        [step("list_attempts", {}) for _ in range(2)]
+        + ['{"choice":"Z","confidence":"low"}']
+    )
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.final_source == "top3_fallback"
+    assert r.final_attempt is not None

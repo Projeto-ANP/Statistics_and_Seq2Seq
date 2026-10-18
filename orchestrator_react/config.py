@@ -129,6 +129,9 @@ class ReactConfig:
     #: catalog grouped by phase, two worked examples with different kinds of
     #: strategy, and an explicit stop rule that reads the leader diagnostics.
     prompt_v2: bool = False
+    #: Experiment: explore all turns (no accept, no early stop) and let the agent
+    #: choose the final strategy among the top-3 validation candidates.
+    prompt_v3: bool = False
     extra_actions: bool = True
     #: Catalog experiments. Each is independent and OFF by default, so a default
     #: config reproduces the published behaviour; they exist to be turned on one at
@@ -200,7 +203,7 @@ class ReactConfig:
     #: instead of picking its top entry. It exists for the measured failure mode:
     #: first and second place are indistinguishable in most series, and betting on
     #: the top one keeps losing to the deterministic floor. See `ReactState.apply_mcs`.
-    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
+    final_strategy: Literal["argmin", "top3_agent", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the

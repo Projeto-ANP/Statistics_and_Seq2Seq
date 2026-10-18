@@ -19,6 +19,7 @@ Guarantees this module enforces, so the loop cannot damage the result:
 
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,7 +29,7 @@ import numpy as np
 
 from orchestrator_react import prompts as P
 from orchestrator_react.config import ReactConfig
-from orchestrator_react.llm import AgentStep, LLMClient, LLMError, parse_agent_step, split_think
+from orchestrator_react.llm import AgentStep, LLMClient, LLMError, extract_json, parse_agent_step, split_think
 from orchestrator_react.registry import (
     TERMINAL_ACTION,
     call_tool,
@@ -91,6 +92,13 @@ class ReactResult:
     accept_confidence: Optional[float] = None
     justification: str = ""
     overridden: bool = False
+    final_source: str = "argmin"
+    top3_candidates: List[Dict[str, Any]] = field(default_factory=list)
+    top3_choice: str = ""
+    top3_confidence: str = ""
+    top3_series_pattern: str = ""
+    top3_why: str = ""
+    top3_why_not: str = ""
     llm_model: str = "none"
     elapsed_s: float = 0.0
     tools: Dict[str, Any] = field(default_factory=dict)
@@ -138,6 +146,13 @@ class ReactResult:
             "agent_accepted_id": self.agent_accepted_id,
             "accept_confidence": self.accept_confidence,
             "overridden": self.overridden,
+            "final_source": self.final_source,
+            "top3_candidates": list(self.top3_candidates),
+            "top3_choice": self.top3_choice,
+            "top3_confidence": self.top3_confidence,
+            "top3_series_pattern": self.top3_series_pattern,
+            "top3_why": self.top3_why,
+            "top3_why_not": self.top3_why_not,
             "llm_model": self.llm_model,
             "n_trajectory_steps": len(self.trajectory),
             "empty_responses": self.empty_responses,
@@ -210,11 +225,13 @@ def run_react_loop(
 
     withheld = withheld_tools(config, state.n_windows, state=state)
     result.withheld_tools = dict(withheld)
-    if getattr(config, "prompt_v2", False):
+    top3_mode = getattr(config, "final_strategy", "argmin") == "top3_agent"
+    if getattr(config, "prompt_v2", False) or getattr(config, "prompt_v3", False) or top3_mode:
         system = P.build_system_prompt_v2(
             include_history_rules=config.show_attempt_history, withheld_tools=withheld,
             prompt_format=config.prompt_format,
             reorder_weight_tools=config.reorder_weight_tools,
+            top3_mode=top3_mode,
         )
     else:
         system = P.build_system_prompt(
@@ -245,6 +262,8 @@ def run_react_loop(
             leader=(
                 _leader_diagnostics(state)
                 if getattr(config, "prompt_v2", False)
+                or getattr(config, "prompt_v3", False)
+                or top3_mode
                 else None
             ),
         )
@@ -388,6 +407,17 @@ def run_react_loop(
             continue
 
         # ── terminal action ──────────────────────────────────────────────────
+        if step.action.strip().lower() == TERMINAL_ACTION and top3_mode:
+            result.errors.append(
+                f"iteration {iteration}: accept is not available in top3_agent mode; "
+                "the final choice is made after the exploration"
+            )
+            entry["observation_summary"] = "ERROR accept: not available in top3_agent mode"
+            last_observation = {"error": "accept_unavailable", "detail": "top3_agent"}
+            result.trajectory.append(entry)
+            _emit(on_step, state, entry)
+            continue
+
         if step.action.strip().lower() == TERMINAL_ACTION:
             accepted, confidence, justification, problem = _read_accept(state, step)
             if problem:
@@ -470,7 +500,7 @@ def run_react_loop(
                 stale = 0
             else:
                 stale += 1
-            if stale >= max(1, int(config.early_stop_patience)):
+            if not top3_mode and stale >= max(1, int(config.early_stop_patience)):
                 result.early_stopped = True
                 result.stop_reason = (
                     f"no improvement in {stale} consecutive proposals"
@@ -479,15 +509,76 @@ def run_react_loop(
     else:
         result.stop_reason = "iteration_budget_exhausted"
 
-    # ── principle 5: the applied strategy is the best of the whole history ───
+    # ── principle 5: final strategy ─────────────────────────────────────────
     best = state.best_attempt()
-    result.final_attempt = best
-    if result.agent_accepted_id and best and result.agent_accepted_id != best.attempt_id:
-        result.overridden = True
-        result.errors.append(
-            f"agent accepted {result.agent_accepted_id} but {best.attempt_id} scores better; "
-            "applied the better one"
+    if top3_mode and client is not None:
+        ranked = state.ranked_attempts()
+        top = ranked[:3]
+        rng = random.Random(int(getattr(state, "dataset_index", 0) or 0) * 1000003 + len(top))
+        order = list(range(len(top)))
+        rng.shuffle(order)
+        cands = [top[i] for i in order]
+        labels = "ABC"[: len(cands)]
+        payload: Dict[str, Any] = {}
+        choice = ""
+        attempt = best
+        try:
+            system3, user3 = P.build_top3_decision_prompt(
+                state, series_card, pool_card, diagnosis,
+                [
+                    {
+                        "spec": a.spec,
+                        "family": P._family_of(state, a.spec),
+                        "score": a.score,
+                        "per_window_scores": list(getattr(a, "per_window_scores", []) or []),
+                        "gap": float(a.score) - float(best.score) if best is not None else 0.0,
+                        "origin": a.origin,
+                        "rationale": a.rationale,
+                    }
+                    for a in cands
+                ],
+            )
+            raw3 = client.complete(system3, user3)
+            payload = extract_json(raw3) or {}
+            choice = str(payload.get("choice") or "").strip().upper()
+            if choice in labels:
+                attempt = cands[labels.index(choice)]
+                result.final_source = "agent_top3"
+            else:
+                result.final_source = "top3_fallback"
+                result.errors.append(f"top3 choice invalid: {choice!r}")
+        except Exception as exc:
+            result.final_source = "top3_fallback"
+            result.errors.append(f"top3 decision failed: {type(exc).__name__}: {exc}")
+        result.final_attempt = attempt
+        result.top3_candidates = [
+            {
+                "label": label,
+                "attempt_id": a.attempt_id,
+                "spec": a.spec,
+                "family": P._family_of(state, a.spec),
+                "validation_score": float(a.score),
+            }
+            for label, a in zip(labels, cands)
+        ]
+        result.top3_choice = f"{choice}:{attempt.attempt_id}" if choice else attempt.attempt_id
+        result.top3_confidence = str(payload.get("confidence") or "")
+        result.top3_series_pattern = str(payload.get("series_pattern") or "")
+        result.top3_why = str(payload.get("why_choice") or "")
+        result.top3_why_not = str(payload.get("why_not_others") or "")
+        result.justification = result.top3_why or _fallback_justification(
+            state, series_card, pool_card
         )
+        result.overridden = False
+    else:
+        result.final_attempt = best
+        result.final_source = "argmin"
+        if result.agent_accepted_id and best and result.agent_accepted_id != best.attempt_id:
+            result.overridden = True
+            result.errors.append(
+                f"agent accepted {result.agent_accepted_id} but {best.attempt_id} scores better; "
+                "applied the better one"
+            )
     if not result.justification:
         result.justification = _fallback_justification(state, series_card, pool_card)
 

@@ -106,6 +106,7 @@ def build_system_prompt(
     withheld_tools: Optional[Dict[str, str]] = None,
     prompt_format: str = "text",
     reorder_weight_tools: bool = False,
+    top3_mode: bool = False,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -130,7 +131,11 @@ def build_system_prompt(
         "",
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
         catalog,
-        f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        *(
+            []
+            if top3_mode
+            else [f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt"]
+        ),
         "",
         "OUTPUT FORMAT - exactly three lines, nothing else:",
         "Thought: <one or two sentences on what you want to learn or test next>",
@@ -237,6 +242,7 @@ def build_system_prompt_v2(
     withheld_tools: Optional[Dict[str, str]] = None,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
+    top3_mode: bool = False,
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -288,9 +294,19 @@ def build_system_prompt_v2(
         "time series. Your job is to decide HOW TO COMBINE them for the blind test",
         "window. You never write forecast numbers and you never write weights: you",
         "call tools, and the tools compute. Every strategy is scored by the harness",
-        "on validation windows, and the strategy applied at the end is the",
-        "best-scoring one of the whole history, seeded baselines included, so",
-        "testing a hypothesis cannot make the final result worse.",
+        *(
+            [
+                "on validation windows. At the end of the exploration, the three best",
+                "validation candidates will be shown to you and you will choose the",
+                "final strategy among them. The test window is never visible.",
+            ]
+            if top3_mode
+            else [
+                "on validation windows, and the strategy applied at the end is the",
+                "best-scoring one of the whole history, seeded baselines included, so",
+                "testing a hypothesis cannot make the final result worse.",
+            ]
+        ),
         "",
         "WHAT YOU RECEIVE EVERY TURN:",
         "  - SERIES PROFILE: shape of the series (trend, seasonality, stationarity, outliers).",
@@ -305,11 +321,22 @@ def build_system_prompt_v2(
         "  2. Test it with evaluate_strategy, building a pool or weights handle first",
         "     only when the hypothesis needs a subset or a fitted weighting.",
         "  3. Read the result against the attempt history and the leader diagnostics.",
-        "  4. Either test a DIFFERENT kind of strategy, or accept the leader.",
+        *(
+            [
+                "  4. Test different kinds of strategies until the turn budget is",
+                "     exhausted; the final choice comes after the exploration.",
+            ]
+            if top3_mode
+            else ["  4. Either test a DIFFERENT kind of strategy, or accept the leader."]
+        ),
         "",
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
         *catalog,
-        f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        *(
+            []
+            if top3_mode
+            else [f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt"]
+        ),
         "",
         "OUTPUT FORMAT - exactly three lines, nothing else:",
         "Thought: <one or two sentences on what you want to learn or test next>",
@@ -331,13 +358,26 @@ def build_system_prompt_v2(
         "    Action: evaluate_strategy",
         '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
         "",
-        "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
-        "  - If the leader is a SEED and the verdict is 'indistinguishable', accept it.",
-        "    The runner-up is not statistically better and more turns rarely turn",
-        "    noise into a real gain.",
-        "  - If a strategy you tested leads with a 'separated' margin, accept it.",
-        "  - If your last proposals returned 'SAME forecasts' notes or near-uniform",
-        "    weights, change the POOL or the KIND of combination, not the weighting.",
+        *(
+            [
+                "WHEN TO STOP:",
+                "  - You do not stop early in this run: use the turns to produce the",
+                "    strongest set of candidates. The final choice is made after the",
+                "    exploration, from the three best validation candidates.",
+                "  - If your last proposals returned 'SAME forecasts' notes or near-uniform",
+                "    weights, change the POOL or the KIND of combination, not the weighting.",
+            ]
+            if top3_mode
+            else [
+                "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
+                "  - If the leader is a SEED and the verdict is 'indistinguishable', accept it.",
+                "    The runner-up is not statistically better and more turns rarely turn",
+                "    noise into a real gain.",
+                "  - If a strategy you tested leads with a 'separated' margin, accept it.",
+                "  - If your last proposals returned 'SAME forecasts' notes or near-uniform",
+                "    weights, change the POOL or the KIND of combination, not the weighting.",
+            ]
+        ),
         "",
         "RULES:",
         "- Weight tools return a HANDLE (w1, w2, ...); pass it to evaluate_strategy",
@@ -345,9 +385,19 @@ def build_system_prompt_v2(
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
         "- Never assume w1 or pool1 exists: create it in this run before you refer to it.",
-        "- When you accept, justify the choice in terms of OBSERVABLE SERIES",
-        "  CHARACTERISTICS (trend, seasonality, ranking stability, redundancy), not",
-        "  just 'it had the lowest error'.",
+        *(
+            [
+                "- At the end you will choose one of the three best validation",
+                "  candidates; justify it by the series characteristics, not by the",
+                "  validation score alone.",
+            ]
+            if top3_mode
+            else [
+                "- When you accept, justify the choice in terms of OBSERVABLE SERIES",
+                "  CHARACTERISTICS (trend, seasonality, ranking stability, redundancy), not",
+                "  just 'it had the lowest error'.",
+            ]
+        ),
     ]
     if include_history_rules:
         lines += [
@@ -704,3 +754,73 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
     if action == "list_attempts":
         return f"{observation.get('total')} attempts, best={observation.get('best')}"
     return _compact(observation, limit=160)
+
+
+def _family_of(state: ReactState, spec: Dict[str, Any]) -> str:
+    combine = spec.get("combine", "?")
+    if combine == "weighted":
+        try:
+            method = state.get_weights_recipe(spec.get("weights")).method
+        except Exception:
+            method = "?"
+        return f"weighted:{method}"
+    if combine == "trimmed_mean":
+        return "trimmed_mean"
+    return str(combine)
+
+
+def build_top3_decision_prompt(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    pool_card: Dict[str, Any],
+    diagnosis: Optional[Dict[str, Any]],
+    candidates,
+) -> tuple:
+    """Prompt da decisao final: escolher um dos tres melhores da validacao."""
+    system = "\n".join(
+        [
+            "You are the final decision-maker for a forecast-combination task.",
+            "Three candidate strategies passed the validation screen for one series.",
+            "Choose the one you expect to generalize best to the blind test window.",
+            "",
+            "Rules:",
+            "- The validation score is a noisy estimate over three windows. The leader",
+            "  may be overfit. Do not choose based on the validation score alone.",
+            "- Use the series profile, the diagnosis, the pool diagnostics and the",
+            "  assumptions of each candidate. Prefer the candidate whose assumptions",
+            "  match the series (robust for noisy/unstable ranking, weighted for clear",
+            "  consistent differences, selective for a dominant model, full-pool for",
+            "  similar models) and whose validation performance is stable across windows.",
+            "- You may choose a candidate that is not the validation leader. If you do,",
+            "  explain why the leader looks less appropriate.",
+            "- Choose exactly one of A, B, C. The test is not available.",
+            "",
+            "Return only a JSON object:",
+            '{"choice":"A|B|C","confidence":"low|medium|high","series_pattern":"...",'
+            '"why_choice":"...","why_not_others":"..."}',
+        ]
+    )
+    parts = [
+        "SERIES PROFILE:",
+        _compact(_slim_series_card(series_card)),
+        "",
+        "MODEL POOL:",
+        _compact(_slim_pool_card(pool_card)),
+    ]
+    card = build_dataset_card(state)
+    if card:
+        parts += ["", "DATASET CARD (other series, validation only):", _compact(card, limit=900)]
+    if diagnosis:
+        parts += ["", "DIAGNOSIS:", _compact(_slim_diagnosis(diagnosis), limit=700)]
+    parts += ["", "CANDIDATES (the three best validation scores; the order is arbitrary):"]
+    for label, c in zip("ABC", candidates):
+        spec = c.get("spec") or {}
+        parts.append(
+            f"{label}: strategy={json.dumps(spec, ensure_ascii=False, default=str)}; "
+            f"family={c.get('family')}; validation_score={float(c.get('score', float('nan'))):.4f}; "
+            f"per_window={c.get('per_window_scores')}; "
+            f"gap_to_best={float(c.get('gap', float('nan'))):.4f}; "
+            f"origin={c.get('origin')}; rationale={c.get('rationale', '')}"
+        )
+    parts += ["", "Return the JSON object only."]
+    return system, "\n".join(parts)

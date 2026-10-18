@@ -198,6 +198,7 @@ def exec_dataset_orchestrator(
     reduced_seeding: bool = False,
     catalog_v2: bool = False,
     prompt_v2: bool = False,
+    prompt_v3: bool = False,
     extra_actions: bool = True,
     calibration_gate: bool = False,
     indices: Optional[Sequence[int]] = None,
@@ -378,6 +379,7 @@ def exec_dataset_orchestrator(
     cfg.reduced_seeding = bool(reduced_seeding)
     cfg.catalog_v2 = bool(catalog_v2)
     cfg.prompt_v2 = bool(prompt_v2)
+    cfg.prompt_v3 = bool(prompt_v3)
     cfg.extra_actions = bool(extra_actions)
     cfg.calibration_gate = bool(calibration_gate)
 
@@ -781,9 +783,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "validation windows (default 5; --windows 3 withholds it)")
     p.add_argument("--max-iterations", type=int, default=12)
     p.add_argument("--early-stop-patience", type=int, default=4)
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
+    p.add_argument("--final-strategy",
+                   choices=["argmin", "top3_agent", "ensemble", "seed_gate", "mcs"],
                    default="argmin",
-                   help="argmin (default) applies the best-scoring attempt; ensemble "
+                   help="argmin (default) applies the best-scoring attempt; top3_agent "
+                        "runs the exploration and lets the agent choose among the three best "
+                        "validation candidates; ensemble "
                         "averages the top --final-top-m; mcs averages the confidence "
                         "set the validation cannot separate from the leader "
                         "(--mcs-alpha); seed_gate keeps the best seeded baseline "
@@ -833,6 +838,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-v2", action="store_true",
                    help="v2 prompt: procedure, grouped catalog, two worked examples and "
                         "the LEADER DIAGNOSTICS block in every turn")
+    p.add_argument("--prompt-v3", action="store_true",
+                   help="experiment: top3_agent exploration prompt; no accept, no early "
+                        "stop, and the final choice is made among the top-3 validation candidates")
     p.add_argument("--no-extra-actions", dest="extra_actions", action="store_false",
                    default=True,
                    help="ablation: hide the per-horizon and forward-selection recipes, "
@@ -933,6 +941,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             reduced_seeding=args.reduced_seeding,
             catalog_v2=args.catalog_v2,
             prompt_v2=args.prompt_v2,
+            prompt_v3=args.prompt_v3,
             extra_actions=args.extra_actions,
             calibration_gate=args.calibration_gate,
             indices=args.indices,
