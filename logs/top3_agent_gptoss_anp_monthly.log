@@ -3437,3 +3437,49 @@ Install h5py to use hdf5 features: http://docs.h5py.org/
 [  69]   iter 9 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.5}
 [  69]     think: The current best is a robust median on a stable subset. To see if a fitted weighted approach can beat it, try inverse‑error weighting on that same pool with moderate shrinkage to reduce variance.
 [  69]     obs  : handle w7 mode=inverse_error active=7/7 conc=0.001
+[  69]   iter 10 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  69]     think: The current best is median over all 19 models. A robust strategy may gain by pruning highly correlated models and combining only the most independent ones. I will prune the redundant models, then t...
+[  69]     obs  : pool pool4 19->12 models, dropped ['ONLY_DWT_catboost', 'NaiveMovingAverage', 'THETA', 'FT_catboost']
+[  69]   iter 11 | evaluate_strategy {"combine": "weighted", "weights": "w6", "rationale": "test meta-model weighting"}
+[  69]     think: Evaluate a weighted combination using the existing meta‑model handle w6 to see if cross‑series knowledge improves over the median baseline.
+[  69]     obs  : rank 7/12 score=0.7076 rmse=5352.6665, leader is a2 (median) [already tested]
+[  69]   iter 12 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w7", "rationale": "inverse_error on pool2"}
+[  69]     think: Test a weighted inverse‑error combination on the stable pool2 and on the pruned pool4 to see if emphasizing the low‑error models can beat the robust median.
+[  69]     obs  : rank 10/13 score=0.7206 rmse=5442.3645, leader is a2 (median)
+[  69]   iter 13 | select_forward {"max_steps": 20, "metric": "rmse"}
+[  69]     think: Let's build a complementary pool via forward selection and weight it with inverse-error.
+[  69]     obs  : pool pool5 k=2 ['ONLY_FT_rf', 'DWT_catboost']
+[  69]   iter 14 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.5}
+[  69]     think: Compute inverse-error weights with moderate shrinkage on the stable subset pool2 to get a robust weighted combination.
+[  69]     obs  : handle w7 mode=inverse_error active=7/7 conc=0.001
+[  69]   iter 15 | evaluate_strategy {"combine": "median", "rationale": "accept best strategy"}
+[  69]     think: Accept the best strategy a2 – median over the full pool, which currently has the lowest validation score.
+[  69]     obs  : rank 1/13 score=0.6004 rmse=5049.9796 (best so far) [already tested]
+[  69] median         score= 0.6004 origin=baseline iters=15 stop=iteration_budget_exhausted
+         TEST  smape=0.9523  rmse=1637.3550  pocid=63.64  mape=1.4443
+         FORECAST [114.325, 110.156, 106.681, 107.193, 112.375, 104.535, 115.715, 115.228, 113.016, 118.348, 119.487, 125.557]
+         PROVENANCE tools=15 evaluate_calls=5 pool=19 effective=1 ok=True
+[  70]   iter 1 | prune_redundant {"pool": "pool_full", "corr_threshold": 0.95, "metric": "rmse"}
+[  70]     think: The high error correlation suggests pruning redundant models may reduce variance. Then using inverse‑error weights with a bit of shrinkage should give a robust weighted average that respects the st...
+[  70]     obs  : pool pool4 19->5 models, dropped ['ARIMA', 'ETS', 'THETA', 'rf']
+[  70]   iter 2 | select_stable {"k": 7, "metric": "rmse"}
+[  70]     think: Use a robust median on a pool of the most stable models to reduce the impact of unstable rankings and correlated errors.
+[  70]     obs  : pool pool2 k=7 ['DWT_rf', 'FT_catboost', 'DWT_catboost', 'ONLY_DWT_rf', 'FT_rf']
+[  70]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool2", "rationale": "robust median on the most stable subset"}
+[  70]     think: The current leader uses a robust median on the full pool; try a robust median on the stable subset (pool2) to see if it reduces error further.
+[  70]     obs  : rank 1/11 score=0.7073 rmse=18564.5444 (best so far)
+[  70]   iter 4 | select_top_k {"k": 3, "metric": "rmse"}
+[  70]     think: Create a new pool with the top 3 models to test a selective median strategy.
+[  70]     obs  : pool pool5 k=3 ['ONLY_DWT_rf', 'DWT_rf', 'FT_catboost']
+[  70]   iter 5 | weights_inverse_error {"pool": "pool2", "metric": "rmse", "shrinkage": 0.0}
+[  70]     think: Create inverse-error weights for the stable pool2 to see if weighting improves over the median baseline.
+[  70]     obs  : handle w2 mode=inverse_error active=7/7 conc=0.0
+[  70]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w2", "rationale": "test inverse-error weighting on the...
+[  70]     think: Evaluate the inverse-error weighted combination on pool2 to see if it outperforms the current median leader.
+[  70]     obs  : rank 6/12 score=0.7281 rmse=19040.8124, leader is a11 (median pool=pool2)
+[  70]   iter 7 | weights_meta_model {"pool": "pool2", "scope": "dataset", "metric": "smape", "eta": 1.0}
+[  70]     think: Create a few new weight handles that use cross‑series meta‑modeling and forward selection, then test a handful of promising combinations (median pool5, weighted pool5 with inverse and meta weights,...
+[  70]     obs  : handle w3 mode=pooled_meta_model active=7/7 conc=0.025
+[  70]   iter 8 | evaluate_strategy {"combine": "weighted", "pool": "pool2", "weights": "w3", "rationale": "test meta‑model weights on the most...
+[  70]     think: Evaluate the pooled‑meta‑model weighted combination on the stable pool (pool2) to see if it beats the current median leader.
+[  70]     obs  : rank 3/13 score=0.7193 rmse=18924.8924, leader is a11 (median pool=pool2)
