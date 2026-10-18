@@ -513,12 +513,13 @@ def run_react_loop(
     best = state.best_attempt()
     if top3_mode and client is not None:
         ranked = state.ranked_attempts()
-        top = ranked[:3]
+        top_k = max(1, int(getattr(config, "top_k", 3)))
+        top = ranked[:top_k]
         rng = random.Random(int(getattr(state, "dataset_index", 0) or 0) * 1000003 + len(top))
         order = list(range(len(top)))
         rng.shuffle(order)
         cands = [top[i] for i in order]
-        labels = "ABC"[: len(cands)]
+        labels = "ABCDEFGHIJ"[: len(cands)]
         payload: Dict[str, Any] = {}
         choice = ""
         attempt = best

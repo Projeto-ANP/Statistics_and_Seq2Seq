@@ -552,6 +552,22 @@ def run_series(
     if not outcome.sanity.get("ok"):
         outcome.warnings.extend(outcome.sanity.get("warnings", []))
 
+    # Post-hoc analysis only: the test metrics of the shortlist are computed
+    # AFTER the decision, so they can never leak into the agent's prompt.
+    if outcome.react and getattr(outcome.react, "top3_candidates", None):
+        try:
+            from orchestrator_react.csv_writer import compute_metrics
+            for cand in outcome.react.top3_candidates:
+                try:
+                    cand_forecast, _ = state.apply_to_test(cand["spec"])
+                    metrics = compute_metrics(cand_forecast, ingested.test_values)
+                    cand["test_smape"] = float(100.0 * metrics["smape"])
+                    cand["test_pocid"] = float(metrics["pocid"])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     if read_external_baselines:
         outcome.external_baselines = ingest_mod.read_external_baselines(
             dataset, dataset_index, results_dir=results_dir

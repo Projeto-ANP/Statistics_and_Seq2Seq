@@ -204,6 +204,8 @@ class ReactConfig:
     #: first and second place are indistinguishable in most series, and betting on
     #: the top one keeps losing to the deterministic floor. See `ReactState.apply_mcs`.
     final_strategy: Literal["argmin", "top3_agent", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
+    #: Number of validation candidates shown to the agent in top3_agent mode.
+    top_k: int = 3
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the
