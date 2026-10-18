@@ -11,9 +11,9 @@ Nenhuma subseção existente é removida. A seção mantém o texto de abertura 
 | 1 | Abertura da seção | Mantém como está, nada a mudar |
 | 2 | Desempenho agregado | Mantém; AB01, AB02 e AB03 trocam tabela, parágrafo e p-valores |
 | 3 | Quando o agente muda a decisão | Mantém; AB04 troca o parágrafo inteiro |
-| 4 | Busca sem LLM: o agente contra buscas simples | NOVA; AB05 (colar ao final da seção) |
+| 4 | Busca sem LLM: o agente contra buscas simples | NOVA; AB05 (pronta em 18/10) |
 | 5 | Vencedor versus melhor semente no teste | NOVA; AB06 (pronta em 16/10) |
-| 6 | O teto do espaço de busca: oráculo condicional e winner's curse | NOVA; AB08 (pronta em 17/10) |
+| 6 | O teto do espaço de busca: oráculo de validação e oráculo de teste | NOVA; AB08 (pronta em 17/10) |
 | 7 | `\section{Considerações finais}` | Continua no lugar; ajustes de números no guia principal (E65) e o parágrafo de fecho em AB07 |
 
 Índice das edições:
@@ -24,10 +24,10 @@ Nenhuma subseção existente é removida. A seção mantém o texto de abertura 
 | AB02 | Parágrafo após a tabela | Reescrito (sem o destaque do ETTm2) | Pronto |
 | AB03 | Parágrafo dos p-valores agregados | p do SMAPE de 0,1403 para 0,3080 | Pronto |
 | AB04 | Subseção "Quando o agente muda a decisão" | Texto final (633 e 47 séries; ANP 5 e ANP 137) | Pronto |
-| AB05 | Nova subseção ao final da seção | Busca sem LLM com números atuais | Pronto, com decisão pendente (ver abaixo) |
+| AB05 | Nova subseção ao final da seção | Busca sem LLM com o run restrito e tempos | Pronta em 18/10 |
 | AB06 | Nova subseção ao final da seção | Vencedor versus melhor semente | Pronta em 16/10 (replay final rodou) |
 | AB07 | Considerações finais | Parágrafo de fecho (consequência de AB05) | Depende de AB05 |
-| AB08 | Nova subseção ao final da seção | Oráculo condicional aos pools do agente e winner's curse | Pronta em 17/10 |
+| AB08 | Nova subseção ao final da seção | Oráculo de validação e oráculo de teste | Pronta em 17/10 |
 
 ---
 
@@ -103,18 +103,18 @@ Em 633 das 680 séries (93,1\%), a estratégia final é idêntica entre as duas 
 
 ## AB05. Subseção nova: "Busca sem LLM: o agente contra buscas simples"
 
-ADICIONAR ao final da seção de ablação, imediatamente antes de `\section{Considerações finais}`.
+PRONTA (18/10): o run restrito `catalogo_final` terminou. As tabelas de acurácia usam os braços de `orchestrator_search_catalogo_final/` e o CREST da configuração final (Tabela~\ref{tab:ablacao-desempenho}); a coluna CREST do `analise_busca.csv` é da rodada antiga (v5) e não deve ser usada. Os tempos dos braços vêm de `logs/catalogo_final_busca.log`; o do CREST, de `item_17/custo_computacional.csv`.
 
-DECISÃO PENDENTE: os números das duas tabelas abaixo vêm da execução atual dos braços de busca, cujo espaço de candidatos é um superconjunto do catálogo final do agente (sementes, busca aleatória, busca gulosa e UCB sobre o mesmo orçamento de avaliações). Há duas opções: descrever o protocolo como está (espaço comparável, mesma ordem de grandeza de orçamento) ou restringir o espaço ao catálogo final e reexecutar a busca (determinística, barata, comandos ao final desta seção). Enquanto a decisão não for tomada, este bloco fica pronto para colar com os números atuais.
+ADICIONAR ao final da seção de ablação, depois do AB04 e antes do AB06.
 
 SUBSTITUIR POR:
 
 ```latex
 \subsection{Busca sem LLM: o agente contra buscas simples}
 
-Para isolar o efeito do modelo de linguagem, esta subseção compara o CREST a três mecanismos de busca que não utilizam LLM, mas partem das mesmas dez sementes, usam o mesmo orçamento de avaliações por série e aplicam a mesma garantia de que a estratégia final é a de melhor pontuação do histórico: uma busca aleatória, uma busca gulosa e uma seleção por bandit (UCB). A única diferença entre os braços é o mecanismo que propõe novas estratégias.
+Para isolar o efeito do modelo de linguagem, esta subseção compara o CREST a três buscas sem LLM que partem das mesmas dez sementes, usam o mesmo orçamento de avaliações por série e aplicam a mesma regra final, a melhor pontuação do histórico: a busca aleatória, a busca gulosa e a seleção por bandit (UCB). Os braços usam as mesmas ferramentas e receitas do agente, com uma grade fixa de parâmetros; o agente pode escolher fora dessa grade, então o espaço dos braços é um subconjunto do espaço do agente. Entre os braços, muda apenas o mecanismo que propõe novas estratégias.
 
-A Tabela~\ref{tab:busca-nao-llm} apresenta o SMAPE médio de cada braço por conjunto de dados, do melhor braço escolhido pela pontuação de validação e do próprio CREST, e a Tabela~\ref{tab:busca-nao-llm-pocid} apresenta o POCID médio na mesma estrutura. A escolha do melhor braço é feita na validação, e os valores das tabelas são da janela de teste; a última linha de cada tabela traz o agregado das 680 séries, como média ponderada pelo número de séries de cada conjunto de dados.
+A Tabela~\ref{tab:busca-nao-llm} mostra o SMAPE médio por conjunto de dados para as sementes, para cada braço, para o melhor braço escolhido na validação e para o CREST; a Tabela~\ref{tab:busca-nao-llm-pocid} repete a estrutura para o POCID. O melhor braço é escolhido na validação e as tabelas reportam o teste; a última linha traz o agregado das 680 séries, ponderado pelo número de séries de cada conjunto.
 
 \begin{table}[H]
 \centering
@@ -124,21 +124,18 @@ A Tabela~\ref{tab:busca-nao-llm} apresenta o SMAPE médio de cada braço por con
 \toprule
 \textbf{Conjunto de dados} & \textbf{Sementes} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} & \textbf{CREST} \\
 \midrule
-ANP    & 21,97 & 22,26 & \textbf{21,93} & 22,19 & 22,17 & 21,97 \\
-ETTh1  & 22,62 & 22,03 & 22,53 & 22,50 & \textbf{22,02} & 22,72 \\
-ETTh2  & 17,99 & \textbf{17,53} & 19,26 & 18,85 & 19,19 & 17,99 \\
-ETTm1  & 46,04 & 45,41 & \textbf{45,31} & 45,41 & 45,45 & 45,98 \\
-ETTm2  & 20,30 & \textbf{19,44} & 20,29 & 20,46 & 20,79 & 20,30 \\
-M4     & \textbf{9,14} & 9,45  & 9,32  & 9,40  & 9,56  & 9,15  \\
-NN5    & \textbf{11,57} & 12,10 & 11,81 & 12,15 & 12,07 & \textbf{11,57} \\
+ANP    & \textbf{21,97} & 22,24 & 21,99 & 22,20 & 22,18 & \textbf{21,97} \\
+ETTh1  & 22,62 & 24,70 & 24,70 & 22,50 & \textbf{22,48} & 22,72 \\
+ETTh2  & 17,99 & \textbf{17,64} & 17,70 & 18,85 & 18,82 & 17,99 \\
+ETTm1  & 46,04 & 46,37 & \textbf{45,30} & 45,41 & 45,98 & 45,98 \\
+ETTm2  & 20,30 & \textbf{19,49} & 20,22 & 20,46 & 20,84 & 20,30 \\
+M4     & \textbf{9,14} & 9,45 & 9,38 & 9,37 & 9,56 & 9,15 \\
+NN5    & \textbf{11,57} & 12,19 & 11,90 & 12,06 & 12,20 & \textbf{11,57} \\
 \midrule
-Agregado (680 séries) & \textbf{13,69} & 14,00 & 13,82 & 13,99 & 14,06 & 13,70 \\
+Agregado (680 séries) & \textbf{13,69} & 14,05 & 13,89 & 13,96 & 14,09 & 13,70 \\
 \bottomrule
-
 \end{tabular}
 \end{table}
-
-Convenção: o negrito marca o menor SMAPE de cada linha; em empates, os dois valores ficam em negrito.
 
 \begin{table}[H]
 \centering
@@ -148,36 +145,48 @@ Convenção: o negrito marca o menor SMAPE de cada linha; em empates, os dois va
 \toprule
 \textbf{Conjunto de dados} & \textbf{Sementes} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} & \textbf{CREST} \\
 \midrule
-ANP    & 64,54 & 64,39 & \textbf{64,79} & 63,94 & 64,74 & \textbf{64,79} \\
-ETTh1  & 61,49 & 62,11 & 60,87 & 60,25 & 61,49 & \textbf{63,35} \\
-ETTh2  & 55,28 & 53,42 & 54,66 & \textbf{55,90} & 53,42 & 55,28 \\
-ETTm1  & 55,28 & 53,42 & 55,90 & \textbf{59,01} & 53,42 & 55,28 \\
-ETTm2  & \textbf{45,34} & 44,72 & 44,10 & 42,24 & 44,10 & \textbf{45,34} \\
-M4     & \textbf{59,40} & 55,59 & 58,61 & 56,22 & 56,13 & 59,03 \\
-NN5    & \textbf{46,33} & 44,27 & 43,24 & 40,80 & 41,06 & 45,95 \\
+ANP    & 64,54 & \textbf{64,84} & 64,79 & 63,79 & 64,54 & 64,79 \\
+ETTh1  & 61,49 & 62,11 & 61,49 & 60,25 & 60,87 & \textbf{63,35} \\
+ETTh2  & 55,28 & 54,04 & 55,28 & \textbf{55,90} & 54,66 & 55,28 \\
+ETTm1  & 55,28 & 54,04 & 57,14 & \textbf{59,01} & 53,42 & 55,28 \\
+ETTm2  & \textbf{45,34} & \textbf{45,34} & 44,10 & 42,24 & 44,72 & \textbf{45,34} \\
+M4     & \textbf{59,40} & 55,87 & 58,75 & 56,27 & 56,59 & 59,03 \\
+NN5    & \textbf{46,33} & 43,89 & 43,24 & 40,80 & 42,21 & 45,95 \\
 \midrule
-Agregado (680 séries) & \textbf{58,43} & 56,01 & 57,56 & 55,69 & 55,85 & 58,26 \\
+Agregado (680 séries) & \textbf{58,43} & 56,23 & 57,66 & 55,68 & 56,24 & 58,26 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Convenção: o negrito marca o maior POCID de cada linha; em empates, os dois valores ficam em negrito.
+No agregado, o melhor braço fica em 14,09\% de SMAPE, contra 13,69\% da semente e 13,70\% do CREST. Em POCID, a semente lidera (58,43\%), à frente do CREST (58,26\%) e do melhor braço (56,24\%). Nenhuma diferença entre os braços e a semente é significativa após correção para as comparações múltiplas, nem no SMAPE nem no POCID; os p-valores brutos abaixo de 0,05 são todos pioras, no NN5 e no M4, e nenhum sobrevive à correção. O agente fica próximo do piso determinístico e as buscas simples não trazem vantagem consistente: o ganho observável não vem do mecanismo de busca, mas da fase determinística de preparação, isto é, das sementes e do meta-modelo entre séries, como na ablação anterior.
 
-Na linha de agregado, o melhor braço fica em 14,06\% de SMAPE, contra 13,69\% do piso determinístico e 13,70\% do CREST; em POCID, o piso determinístico mantém o maior valor agregado (58,43\%), à frente do CREST (58,26\%). Em nenhum conjunto de dados as diferenças entre os braços e o piso são estatisticamente significativas no SMAPE após correção de Holm para as comparações múltiplas, e no POCID a única diferença significativa é uma piora: a busca aleatória no M4 fica 3,81 pontos percentuais abaixo do piso ($p_{Holm} = 0,041$). A leitura conjunta, com agente e buscas simples indistinguíveis entre si e todas próximas do piso determinístico, indica que, neste protocolo, o ganho observável não decorre do mecanismo de busca, e sim da fase determinística de preparação, isto é, das sementes e do meta-modelo entre séries, de forma consistente com a ablação das subseções anteriores.
+\begin{table}[H]
+\centering
+\caption{Tempo médio por série (s) do CREST e dos braços de busca, por conjunto de dados.}
+\label{tab:busca-tempo}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{CREST} & \textbf{Sementes} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} \\
+\midrule
+ANP    & 10,32 & 0,24 & 0,33 & 0,82 & 0,24 \\
+ETTh1  & 14,43 & 0,06 & 0,10 & 0,10 & 0,10 \\
+ETTh2  & 14,34 & 0,04 & 0,10 & 0,10 & 0,10 \\
+ETTm1  & 6,19  & 0,00 & 0,10 & 0,10 & 0,10 \\
+ETTm2  & 7,69  & 0,03 & 0,10 & 0,11 & 0,10 \\
+M4     & 8,26  & 0,92 & 1,79 & 3,30 & 1,03 \\
+NN5    & 10,04 & 0,10 & 0,20 & 0,27 & 0,13 \\
+\midrule
+Agregado (680 séries) & 9,20 & 0,57 & 1,07 & 2,01 & 0,63 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Os braços custam de 0,6 a 2,0 s por série, contra 9,2 s do laço do CREST; a diferença é o custo das chamadas ao LLM. A soma dos quatro braços nas 680 séries é 0,81 h, contra 1,74 h do laço do CREST. Os braços são mais baratos, mas não melhores em acurácia: o custo do agente não se traduz em ganho.
 ```
 
-Se a decisão for reexecutar com o espaço restrito (comandos, no servidor):
+------------------------_
 
-```bash
-conda activate agno
-cd ~/Statistics_and_Seq2Seq
-for ds in ANP_MONTHLY NN5_WEEKLY_DATASET M4_WEEKLY_DATASET ETTH1 ETTH2 ETTM1 ETTM2; do
-    python3 aprovacao_solida/01_busca_nao_llm/run_search.py --dataset "$ds" --version restrito --methods seeds,random,greedy,ucb
-done
-python3 aprovacao_solida/01_busca_nao_llm/analyze_search.py --results-dir outputs/resultados/aprovacao_solida > /dev/null
-```
-
-Depois de rodar, regenerar a Tabela~\ref{tab:busca-nao-llm} a partir do CSV novo (a análise grava em `outputs/resultados/aprovacao_solida/analise_busca.csv`; os valores por braço e por conjunto estão nas colunas `mean_method` e `p_holm`).
+Reprodução: o run restrito foi gerado com `aprovacao_solida/01_busca_nao_llm/run_catalogo_final.py` (version `catalogo_final`) no servidor; o log completo está em `logs/catalogo_final_busca.log`; a análise em `outputs/resultados/aprovacao_solida/analise_busca.csv`. Os tempos dos braços são as linhas `(Xs)` do log; o do CREST é o `elapsed_s` do laço em `item_17`.
 
 ## AB06. Subseção nova: "Vencedor versus melhor semente no teste"
 
@@ -227,7 +236,7 @@ nohup python3 aprovacao_solida/02_replay_winner_curse/replay_gate.py \
     --run orchestrator_react_v2_medium_x1_gpt-oss-20b > logs/replay_gate_final.log 2>&1 &
 ```
 
-## AB08. Subseção nova: "O teto do espaço de busca: oráculo condicional e *winner's curse*"
+## AB08. Subseção nova: "O teto do espaço de busca: oráculo de validação e oráculo de teste"
 
 ADICIONAR ao final da seção de ablação, depois do bloco do AB06, imediatamente antes de `\section{Considerações finais}`.
 
@@ -238,24 +247,24 @@ DEPOIS: `\section{Considerações finais}` (o texto que começa com "Os resultad
 SUBSTITUIR POR:
 
 ```latex
-\subsection{O teto do espaço de busca: oráculo condicional e \textit{winner's curse}}
+\subsection{O teto do espaço de busca: oráculo de validação e oráculo de teste}
 \label{subsec:oraculo-condicional}
 
-A subseção anterior comparou o vencedor aplicado com a melhor semente. Esta subseção faz uma pergunta distinta: qual seria a melhor estratégia de validação que o agente teria à disposição e quanto ela valeria no teste? Para isso, constrói um oráculo condicional aos pools que o próprio agente utilizou ou criou. O universo $U$ reúne o pool completo, os pools referenciados nas tentativas do agente, os pools criados por suas ações e o pool da melhor semente. Sobre esses pools, a enumeração cobre média, mediana, média aparada com \textit{trim} de 0 a 0,4 em passos de 0,1, DBA, melhor modelo individual para cada um dos dezenove modelos e média ponderada com as receitas \textit{inverse} (shrinkage de 0 a 0,5 em passos de 0,1), \textit{error trend}, \textit{best per horizon}, \textit{top-k per horizon} e \textit{forward selection}; em média, $U$ contém 56 estratégias por série. A receita \textit{pooled}/meta, que depende do pré-passo entre séries, e as receitas \textit{softmax}, \textit{feature-based} e OLS ficaram fora da enumeração; a \textit{pooled}/meta aparece em quatro estratégias finais e não altera a comparação entre agente e semente.
+A subseção anterior comparou o vencedor aplicado com a melhor semente. Esta subseção faz uma pergunta distinta: qual seria a melhor estratégia de validação que o agente teria à disposição e quanto ela valeria no teste? Para isso, define o universo $U$ com o pool completo, os pools referenciados nas tentativas do agente, os pools criados por suas ações e o pool da melhor semente. Sobre esses pools, a enumeração cobre média, mediana, média aparada com \textit{trim} de 0 a 0,4 em passos de 0,1, DBA, melhor modelo individual para cada um dos dezenove modelos e média ponderada com as receitas \textit{inverse} (shrinkage de 0 a 0,5 em passos de 0,1), \textit{error trend}, \textit{best per horizon}, \textit{top-k per horizon} e \textit{forward selection}; em média, $U$ contém 56 estratégias por série. A receita \textit{pooled}/meta, que depende do pré-passo entre séries, e as receitas \textit{softmax}, \textit{feature-based} e OLS ficaram fora da enumeração; a \textit{pooled}/meta aparece em quatro estratégias finais e não altera a comparação entre agente e semente.
 
-Dois oráculos são calculados sobre $U$. O oráculo de validação escolhe a estratégia de menor score de validação, usando o mesmo score composto do agente, e só depois a aplica à janela de teste; ele representa a melhor decisão possível com a informação disponível no momento da escolha. O oráculo de teste escolhe, por série, a estratégia de menor SMAPE e a de maior POCID na própria janela de teste; ele é um teto retrospectivo, que usa informação indisponível na decisão e, por isso, não é um método implantável.
+Dois oráculos são calculados sobre $U$. O oráculo de validação escolhe a estratégia de menor score de validação, usando o mesmo score composto do agente, e só depois a aplica à janela de teste; ele representa a melhor decisão possível com a informação disponível no momento da escolha. O oráculo de teste escolhe, por série, a estratégia de menor SMAPE e a de maior POCID na própria janela de teste; ele é retrospectivo (um teto): usa informação indisponível na decisão e, por isso, não é um método implantável.
 
 A Tabela~\ref{tab:oraculo-condicional} apresenta os dois oráculos. Os valores do agente e da melhor semente já foram apresentados na Tabela~\ref{tab:ablacao-desempenho} e na subseção anterior; no agregado, eles ficam em 13,70\% e 13,69\% de SMAPE, e 58,26\% e 58,43\% de POCID.
 
 \begin{table}[H]
 \centering
 \small
-\caption{SMAPE e POCID médios (\%) no teste do oráculo de validação e do teto retrospectivo, por conjunto de dados.}
+\caption{SMAPE e POCID médios (\%) no teste do oráculo de validação e do oráculo de teste, por conjunto de dados.}
 \label{tab:oraculo-condicional}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \multicolumn{3}{c}{\textbf{SMAPE (\%)}} \\
-\textbf{Conjunto de dados} & \textbf{Oráculo de validação} & \textbf{Teto retrospectivo} \\
+\textbf{Conjunto de dados} & \textbf{Oráculo de validação} & \textbf{Oráculo de teste} \\
 \midrule
 ANP    & 21,91 & 17,24 \\
 NN5    & 12,38 & 9,17  \\
@@ -268,7 +277,7 @@ ETTm2  & 23,01 & 13,68 \\
 Agregado (680 séries) & 14,45 & 9,75 \\
 \midrule
 \multicolumn{3}{c}{\textbf{POCID (\%)}} \\
-\textbf{Conjunto de dados} & \textbf{Oráculo de validação} & \textbf{Teto retrospectivo} \\
+\textbf{Conjunto de dados} & \textbf{Oráculo de validação} & \textbf{Oráculo de teste} \\
 \midrule
 ANP    & 62,84 & 82,02 \\
 NN5    & 44,14 & 78,76 \\
@@ -283,14 +292,14 @@ Agregado (680 séries) & 56,86 & 80,11 \\
 \end{tabular}
 \end{table}
 
-Convenção: o oráculo de validação escolhe a melhor estratégia de validação em $U$ e a aplica ao teste; o teto retrospectivo escolhe, por série, a melhor estratégia no próprio teste (menor SMAPE e maior POCID) e não é uma estratégia implantável. Por construção, o teto é sempre o melhor valor da linha, e por isso não é destacado em negrito.
+Na validação, o oráculo encontra uma estratégia com score menor que o do agente em 93,8\% das séries, com ganho médio de 0,061. No teste, porém, essa vantagem não se traduz em melhor desempenho: o oráculo de validação supera o agente em apenas 39,1\% das séries pelo SMAPE e 29,3\% pelo POCID, e fica, em média, 0,75 ponto percentual pior no SMAPE e 1,4 ponto percentual pior no POCID. No agregado, 14,45\% e 56,86\%, contra 13,70\% e 58,26\% do agente e 13,69\% e 58,43\% da semente. O oráculo de teste fica em 9,75\% e 80,11\%.
 
-Na validação, o oráculo encontra uma estratégia com score menor que o do agente em 93,8\% das séries, com ganho médio de 0,061. No teste, porém, essa vantagem não se traduz em melhor desempenho: o oráculo de validação supera o agente em apenas 39,1\% das séries pelo SMAPE e 29,3\% pelo POCID, e fica, em média, 0,75 ponto percentual pior no SMAPE e 1,4 ponto percentual pior no POCID. No agregado, 14,45\% e 56,86\%, contra 13,70\% e 58,26\% do agente e 13,69\% e 58,43\% da semente. O teto retrospectivo fica em 9,75\% e 80,11\%.
-
-Esse é o \textit{winner's curse} em sua forma mais clara. Com apenas três janelas de validação, o máximo de um conjunto que tem, em média, 56 candidatos é uma estatística extrema: parte do ganho de validação é ruído específico dessas janelas e não se repete no teste. Quanto maior o conjunto em que se escolhe o máximo, maior a parcela de ruído capturada. O agente, que avalia um conjunto menor (as dez sementes e no máximo doze propostas), é na prática mais regularizado que o oráculo; sua escolha não é a melhor da validação em $U$, mas generaliza melhor que a do oráculo, embora ainda não supere a semente. O teto retrospectivo mostra que existe espaço para melhorar (3,95 pontos percentuais no SMAPE e 21,85 no POCID), mas também que esse espaço não é alcançável por seleção na validação com o protocolo atual.
+Esse é o \textit{winner's curse} em sua forma mais clara. Com apenas três janelas de validação, o máximo de um conjunto que tem, em média, 56 candidatos é uma estatística extrema: parte do ganho de validação é ruído específico dessas janelas e não se repete no teste. Quanto maior o conjunto em que se escolhe o máximo, maior a parcela de ruído capturada. O agente, que avalia um conjunto menor (as dez sementes e no máximo doze propostas), é na prática mais regularizado que o oráculo; sua escolha não é a melhor da validação em $U$, mas generaliza melhor que a do oráculo, embora ainda não supere a semente. O oráculo de teste mostra que existe espaço para melhorar (3,95 pontos percentuais no SMAPE e 21,85 no POCID), mas também que esse espaço não é alcançável por seleção na validação com o protocolo atual.
 
 A leitura conjunta com o replay anterior é coerente com a ablação: o agente não encontra o ótimo global, e uma busca mais ampla no mesmo sinal de validação não melhora o teste. O que o agente oferece não é a escolha do melhor entre todas as estratégias possíveis, e sim uma escolha conservadora, auditável e limitada ao histórico que ele próprio construiu.
 ```
+
+------------------------_
 
 Fontes: `outputs/resultados/scripts/oraculo_condicional.py` e `outputs/resultados/oraculo_condicional/por_serie.csv`.
 
@@ -326,6 +335,8 @@ A pasta `overleaf/resultados_final/` agora contém todas as imagens de resultado
 - `outputs/resultados/ablacao/desempenho_sem_agente_por_dataset.csv`: CREST sem agente por conjunto (AB01 e AB02).
 - `outputs/resultados/ablacao/mcm_agente_vs_sem_agente_*.csv`: p-valores agregados (AB03).
 - `outputs/resultados/ablacao/pareado_por_serie.csv` (regenerado) e o pareamento por série da configuração final: contagens de 633 e 47 e as séries 5 e 137 da ANP (AB04).
-- `outputs/resultados/aprovacao_solida/analise_busca.csv`: busca sem LLM (AB05).
-- `outputs/resultados/scripts/oraculo_condicional.py` e `outputs/resultados/oraculo_condicional/por_serie.csv`: oráculo condicional e teto retrospectivo (AB08). O arquivo guarda colunas `mean_method` e `p_holm` por conjunto, método e métrica; a coluna de CREST desse arquivo é da rodada antiga e não deve ser usada (na tabela, o CREST vem dos resultados por conjunto da configuração final).
-- `outputs/resultados/aprovacao_solida/replay_gate_orchestrator_react_v5*.csv`: apenas referência da rodada antiga; aguardando reexecução (AB06).
+- `outputs/resultados/aprovacao_solida/analise_busca.csv`: busca sem LLM (AB05). Guarda `mean_method` e `p_holm` por conjunto, método e métrica; a coluna CREST é da rodada antiga e não deve ser usada (o CREST vem da configuração final, Tabela AB01).
+- `timeseries/mestrado/resultados/orchestrator_search_catalogo_final/`: CSVs do run restrito dos braços (AB05).
+- `logs/catalogo_final_busca.log`: tempos por série dos braços (AB05); `outputs/resultados/item_17/custo_computacional.csv`: `elapsed_s` do CREST (AB05).
+- `outputs/resultados/scripts/oraculo_condicional.py` e `outputs/resultados/oraculo_condicional/por_serie.csv`: oráculo de validação e oráculo de teste (AB08).
+- `outputs/resultados/aprovacao_solida/replay_gate_orchestrator_react_v2_medium_x1_gpt-oss-20b*.csv`: replay final (AB06).

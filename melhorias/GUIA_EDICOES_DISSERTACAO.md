@@ -424,19 +424,21 @@ Antes de apresentar os resultados por conjunto de dados, é necessário justific
 & \multicolumn{3}{c}{\textbf{SMAPE (\%)}} & \multicolumn{3}{c}{\textbf{POCID (\%)}} \\
 \textbf{Conjunto de dados} & \textbf{gpt-oss} & \textbf{Qwen3.8} & \textbf{Gemma4} & \textbf{gpt-oss} & \textbf{Qwen3.8} & \textbf{Gemma4} \\
 \midrule
-ANP    & 21,97 & \textbf{21,88} & -- & \textbf{64,79} & 64,39 & -- \\
-NN5    & \textbf{11,57} & 11,84 & -- & \textbf{45,95} & 45,30 & -- \\
-M4     & \textbf{9,15}  & 9,20  & -- & 59,03 & \textbf{59,40} & -- \\
-ETTh1  & \textbf{22,72} & 24,75 & -- & \textbf{63,35} & 62,11 & -- \\
-ETTh2  & 17,99 & \textbf{17,62} & -- & 55,28 & \textbf{56,52} & -- \\
-ETTm1  & \textbf{45,98} & 46,64 & -- & 55,28 & \textbf{57,14} & -- \\
-ETTm2  & 20,30 & \textbf{18,95} & -- & \textbf{45,34} & 43,48 & -- \\
+ANP    & 21,97 & \textbf{21,88} & 21,96 & \textbf{64,79} & 64,39 & 64,69 \\
+NN5    & \textbf{11,57} & 11,84 & 11,64 & \textbf{45,95} & 45,30 & 45,43 \\
+M4     & \textbf{9,15}  & 9,20  & 9,25  & 59,03 & \textbf{59,40} & 59,35 \\
+ETTh1  & \textbf{22,72} & 24,75 & 22,80 & \textbf{63,35} & 62,11 & 62,73 \\
+ETTh2  & 17,99 & \textbf{17,62} & 17,99 & 55,28 & \textbf{56,52} & \textbf{56,52} \\
+ETTm1  & 45,98 & 46,64 & \textbf{45,35} & 55,28 & \textbf{57,14} & 55,90 \\
+ETTm2  & 20,30 & \textbf{18,95} & 20,17 & \textbf{45,34} & 43,48 & 44,72 \\
+\midrule
+Agregado (680 séries) & \textbf{13,70} & 13,76 & 13,75 & 58,26 & 58,24 & \textbf{58,33} \\
 \bottomrule
 \end{tabular}
 \end{table}
 ```
 
-Convenção: o negrito marca o melhor valor de cada comparação na linha (menor SMAPE e maior POCID). Nota: as colunas de gpt-oss e Qwen3.8 são da configuração final e foram conferidas com os scripts de geração das tabelas. As células do Gemma4 ficam com -- até a nova execução; não reaproveite os valores antigos, que são de outra configuração.
+As três colunas são da configuração final; a linha "Agregado (680 séries)" é a média ponderada pelo número de séries de cada conjunto.
 
 (E12) REMOVER o parágrafo que começa em:
 
@@ -447,7 +449,7 @@ Na maior parte dos sete conjuntos de dados, as diferenças entre os três modelo
 SUBSTITUIR POR:
 
 ```latex
-As diferenças entre o gpt-oss e o Qwen3.8 permanecem pequenas na maior parte dos conjuntos de dados, abaixo de um ponto percentual em cinco dos sete, e os dois modelos trocam vitórias entre conjuntos: o Qwen3.8 é melhor na ANP, no ETTh2 e no ETTm2, enquanto o gpt-oss é melhor na NN5, no M4, no ETTh1 e no ETTm1. No agregado das 680 séries, as duas versões são estatisticamente indistinguíveis (SMAPE $p = 0{,}7595$, POCID $p = 0{,}5264$), com 67 séries em que o gpt-oss vence, 64 em que o Qwen3.8 vence e 549 empates em SMAPE. A maior diferença por conjunto ocorre na NN5 em SMAPE, a favor do gpt-oss (média de 0,27 ponto percentual, $p = 0{,}0781$), e nenhuma das quatorze comparações por conjunto atinge significância estatística. Em nenhum caso a diferença altera a ordem de mérito relativa entre os métodos de combinação discutida nas seções anteriores.
+As diferenças entre o gpt-oss e o Qwen3.8 permanecem pequenas na maior parte dos conjuntos de dados, abaixo de um ponto percentual em cinco dos sete, e os dois modelos trocam vitórias entre conjuntos: o Qwen3.8 é melhor na ANP, no ETTh2 e no ETTm2, enquanto o gpt-oss é melhor na NN5, no M4, no ETTh1 e no ETTm1. No agregado das 680 séries, as duas versões são estatisticamente indistinguíveis (SMAPE $p = 0{,}7595$, POCID $p = 0{,}5264$), com 67 séries em que o gpt-oss vence, 64 em que o Qwen3.8 vence e 549 empates em SMAPE. A maior diferença por conjunto ocorre na NN5 em SMAPE, a favor do gpt-oss (média de 0,27 ponto percentual, $p = 0{,}0781$), e nenhuma das quatorze comparações por conjunto atinge significância estatística. No agregado das 680 séries, o Gemma4 fica em 13,75\% de SMAPE e 58,33\% de POCID, contra 13,70\% e 58,26\% do gpt-oss e 13,76\% e 58,24\% do Qwen3.8. O gpt-oss é o melhor dos três no SMAPE e o Gemma4 no POCID, com diferenças de 0,05 a 0,09 ponto percentual. O Gemma4 é o melhor dos três apenas no ETTm1 em SMAPE (45,35\% contra 45,98\% do gpt-oss e 46,64\% do Qwen3.8); nos demais conjuntos, fica entre os dois ou próximo deles, com empate no POCID do ETTh2. As diferenças entre os três são pequenas e não alteram a ordem de mérito relativa entre os métodos de combinação discutida nas seções anteriores.
 ```
 
 (E13) REMOVER a Tabela~\ref{tab:escolha-llm-custo} inteira e SUBSTITUIR POR:
@@ -462,19 +464,19 @@ As diferenças entre o gpt-oss e o Qwen3.8 permanecem pequenas na maior parte do
 & \multicolumn{3}{c}{\textbf{Média}} & \multicolumn{3}{c}{\textbf{Desvio-padrão}} \\
 \textbf{Conjunto de dados} & \textbf{gpt-oss} & \textbf{Qwen3.8} & \textbf{Gemma4} & \textbf{gpt-oss} & \textbf{Qwen3.8} & \textbf{Gemma4} \\
 \midrule
-ANP    & 10,3 & \textbf{9,5}  & -- & 13,9 & 9,4  & -- \\
-NN5    & \textbf{10,0} & 11,6 & -- & 12,5 & 11,7 & -- \\
-M4     & \textbf{8,3}  & 18,5 & -- & 8,7  & 16,5 & -- \\
-ETTh1  & \textbf{14,4} & 27,1 & -- & 22,0 & 25,4 & -- \\
-ETTh2  & \textbf{14,3} & 29,7 & -- & 7,5  & 34,9 & -- \\
-ETTm1  & \textbf{6,2}  & 29,3 & -- & 7,7  & 11,5 & -- \\
-ETTm2  & \textbf{7,7}  & 47,9 & -- & 9,4  & 27,2 & -- \\
+ANP    & 10,3 & \textbf{9,5}  & 113,8 & 13,9 & 9,4  & 45,4 \\
+NN5    & \textbf{10,0} & 11,6 & 116,9 & 12,5 & 11,7 & 51,6 \\
+M4     & \textbf{8,3}  & 18,5 & 131,9 & 8,7  & 16,5 & 43,6 \\
+ETTh1  & \textbf{14,4} & 27,1 & 107,6 & 22,0 & 25,4 & 30,9 \\
+ETTh2  & \textbf{14,3} & 29,7 & 165,5 & 7,5  & 34,9 & 44,9 \\
+ETTm1  & \textbf{6,2}  & 29,3 & 165,1 & 7,7  & 11,5 & 58,5 \\
+ETTm2  & \textbf{7,7}  & 47,9 & 180,6 & 9,4  & 27,2 & 47,5 \\
 \bottomrule
 \end{tabular}
 \end{table}
 ```
 
-Convenção: o negrito marca o menor tempo médio de cada linha; o desvio-padrão não entra na comparação.
+O desvio-padrão não entra na comparação; a média é o tempo de decisão por série.
 
 (E14) REMOVER o parágrafo que começa em:
 
@@ -485,13 +487,13 @@ O gpt-oss:20b é o mais rápido dos três em todos os sete conjuntos de dados
 SUBSTITUIR POR:
 
 ```latex
-O gpt-oss é o mais rápido dos modelos avaliados em todos os conjuntos de dados, com médias entre 6 e 15 segundos por série. O Qwen3.8 é de duas a seis vezes mais lento, com médias entre 9 e 48 segundos, e responde por tempos mais altos nos conjuntos ETT. O Gemma4 completa a comparação após a execução pendente.
+O gpt-oss é o mais rápido em seis dos sete conjuntos de dados; a exceção é a ANP, em que o Qwen3.8 é ligeiramente mais rápido (9,5 contra 10,3 segundos). Nos demais conjuntos, o Qwen3.8 é de duas a seis vezes mais lento que o gpt-oss. O Gemma4 é o mais lento em todos os sete, com médias entre 107,6 e 180,6 segundos por série, cerca de 10 a 25 vezes o tempo do gpt-oss.
 ```
 
 (E15) REMOVER o parágrafo da subseção "Modelo escolhido" e SUBSTITUIR POR:
 
 ```latex
-Como o desempenho preditivo dos modelos é equivalente (as duas versões avaliadas são estatisticamente indistinguíveis no agregado) e o custo computacional do gpt-oss é o menor entre os avaliados, sem contrapartida de ganho de acurácia por parte do Qwen3.8, o gpt-oss foi adotado como modelo de linguagem do agente em todos os demais resultados apresentados neste capítulo.
+O desempenho dos três modelos é equivalente no agregado das 680 séries: 13,70\% (gpt-oss), 13,76\% (Qwen3.8) e 13,75\% (Gemma4) de SMAPE, e 58,26\%, 58,24\% e 58,33\% de POCID. O gpt-oss é o melhor no SMAPE e o Gemma4 no POCID; a maior diferença é 0,09 ponto percentual. O custo do Gemma4, porém, é de 10 a 25 vezes o do gpt-oss. Como não há ganho de acurácia que compense esse custo, o gpt-oss:20b foi adotado como modelo de linguagem do agente em todos os demais resultados deste capítulo.
 ```
 
 ## 2.2. Tabelas por conjunto de dados
