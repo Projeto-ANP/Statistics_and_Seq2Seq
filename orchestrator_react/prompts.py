@@ -804,11 +804,14 @@ def build_top3_decision_prompt(
     diagnosis: Optional[Dict[str, Any]],
     candidates,
 ) -> tuple:
-    """Prompt da decisao final: escolher um dos tres melhores da validacao."""
+    """Prompt da decisao final: escolher um dos melhores da validacao."""
+    labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"[: len(candidates)])
+    label_text = ", ".join(labels)
+    choice_schema = "|".join(labels)
     system = "\n".join(
         [
             "You are the final decision-maker for a forecast-combination task.",
-            "Three candidate strategies passed the validation screen for one series.",
+            f"{len(candidates)} candidate strategies passed the validation screen for one series.",
             "Choose the one you expect to generalize best to the blind test window.",
             "",
             "Rules:",
@@ -818,6 +821,18 @@ def build_top3_decision_prompt(
             "  (lower is better); per_window shows the three windows, and a candidate",
             "  that is consistently good is safer than one carried by a single window;",
             "  gap_to_best is the difference to the leader, and tiny gaps are noise.",
+            "- The evaluation scores both SMAPE and POCID. The validation leader is often",
+            "  the safest SMAPE bet; a challenger with stable per-window errors and a",
+            "  robust family can improve POCID. Weigh both, not only the validation mean.",
+            "- FAMILY PRIOR (weak, from the portfolio, not from this test): when the",
+            "  validation scores are close, weighted:inverse_error and median have been",
+            "  more robust than plain mean/trimmed_mean; weighted:pooled_meta_model can",
+            "  help when the dataset card shows enough series. Keep mean/trimmed when",
+            "  they have a clear and stable validation advantage; use the prior as a",
+            "  tie-break, not as a rule.",
+            "- Treat a gap_to_best of a few thousandths of the normalized score as a tie;",
+            "  decide on family, per-window stability and the diagnosis, not on the third",
+            "  decimal.",
             "- family names the combination (mean, median, trimmed_mean, dba,",
             "  best_single or weighted:<method>); the strategy JSON has the pool and",
             "  weights; origin says seeded baseline or agent proposal; rationale is",
@@ -829,10 +844,10 @@ def build_top3_decision_prompt(
             "  similar models) and whose validation performance is stable across windows.",
             "- You may choose a candidate that is not the validation leader. If you do,",
             "  explain why the leader looks less appropriate.",
-            "- Choose exactly one of A, B, C. The test is not available.",
+            f"- Choose exactly one of {label_text}. The test is not available.",
             "",
             "Return only a JSON object:",
-            '{"choice":"A|B|C","confidence":"low|medium|high","series_pattern":"...",'
+            f'{{"choice":"{choice_schema}","confidence":"low|medium|high","series_pattern":"...",'
             '"why_choice":"...","why_not_others":"..."}',
         ]
     )
@@ -848,8 +863,8 @@ def build_top3_decision_prompt(
         parts += ["", "DATASET CARD (other series, validation only):", _compact(card, limit=900)]
     if diagnosis:
         parts += ["", "DIAGNOSIS:", _compact(_slim_diagnosis(diagnosis), limit=700)]
-    parts += ["", "CANDIDATES (the three best validation scores; the order is arbitrary):"]
-    for label, c in zip("ABC", candidates):
+    parts += ["", "CANDIDATES (the best validation scores; the order is arbitrary):"]
+    for label, c in zip(labels, candidates):
         spec = c.get("spec") or {}
         parts.append(
             f"{label}: strategy={json.dumps(spec, ensure_ascii=False, default=str)}; "

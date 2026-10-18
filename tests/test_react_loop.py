@@ -1537,6 +1537,51 @@ def test_top3_agent_runs_all_turns_and_chooses_after_the_exploration():
     assert "final decision-maker" in llm.calls[-1]["system"]
 
 
+def test_top3_decision_prompt_guides_family_and_two_metrics():
+    s, series, pool = prepared()
+    cands = [
+        {
+            "spec": {"combine": "mean", "pool": "pool_full"},
+            "family": "mean",
+            "score": 0.100 + i * 0.001,
+            "per_window_scores": [0.10, 0.11, 0.12],
+            "gap": i * 0.001,
+            "origin": "baseline",
+            "rationale": "test candidate",
+        }
+        for i in range(3)
+    ]
+    system, user = P.build_top3_decision_prompt(s, series, pool, None, cands)
+    assert "FAMILY PRIOR" in system
+    assert "POCID" in system
+    assert "weighted:inverse_error" in system
+    assert "mean/trimmed" in system
+    assert "Choose exactly one of A, B, C" in system
+    assert user.count("strategy=") == 3
+    assert "\nC:" in user
+
+
+def test_top3_decision_prompt_labels_are_dynamic_for_top5():
+    s, series, pool = prepared()
+    cands = [
+        {
+            "spec": {"combine": "mean", "pool": "pool_full"},
+            "family": "mean",
+            "score": 0.100 + i * 0.001,
+            "per_window_scores": [0.10, 0.11, 0.12],
+            "gap": i * 0.001,
+            "origin": "baseline",
+            "rationale": "test candidate",
+        }
+        for i in range(5)
+    ]
+    system, user = P.build_top3_decision_prompt(s, series, pool, None, cands)
+    assert "5 candidate strategies" in system
+    assert "Choose exactly one of A, B, C, D, E" in system
+    assert user.count("strategy=") == 5
+    assert "\nE:" in user
+
+
 def test_top3_agent_does_not_end_on_accept():
     cfg = ReactConfig(
         max_iterations=3, early_stop_patience=1,
