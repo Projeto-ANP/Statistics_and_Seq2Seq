@@ -38,6 +38,7 @@ FINAL_SCORE_PRESETS: tuple[str, ...] = (
     "smape60_pocid40",
     "smape40_pocid60",
 )
+SEED_TEST_PRESETS: tuple[str, ...] = FINAL_SCORE_PRESETS + ("smape_only",)
 
 
 PoolMode = Literal["full", "top_k_error", "top_k_stable"]
@@ -322,6 +323,7 @@ class ReactConfig:
     #: choice; `None` means all of them.
     score_preset: str = "balanced"
     score_auto_candidates: Optional[List[str]] = None
+    allow_agent_score_preset: bool = True
     multi_preset_final: bool = False
     no_seed_attempts: bool = False
     n_validation_windows: int = 3

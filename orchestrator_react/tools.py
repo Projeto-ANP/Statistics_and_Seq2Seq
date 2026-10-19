@@ -948,6 +948,10 @@ def evaluate_strategy(
 
     preset = score_preset if score_preset is not None else spec.pop("score_preset", None)
     if preset is not None:
+        if not getattr(state.config, "allow_agent_score_preset", True):
+            raise ValueError(
+                "the scoring criterion is fixed for this run; do not pass score_preset"
+            )
         if getattr(state.config, "multi_preset_final", False):
             raise ValueError(
                 "the scoring preset is chosen only at the final decision in this run; "

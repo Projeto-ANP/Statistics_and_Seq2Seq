@@ -198,6 +198,7 @@ def exec_dataset_orchestrator(
     score_auto_candidates: Optional[Sequence[str]] = None,
     multi_preset_final: bool = False,
     no_seed_attempts: bool = False,
+    allow_agent_score_preset: bool = True,
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
@@ -384,6 +385,7 @@ def exec_dataset_orchestrator(
     cfg.score_auto_candidates = list(score_auto_candidates) if score_auto_candidates else None
     cfg.multi_preset_final = bool(multi_preset_final)
     cfg.no_seed_attempts = bool(no_seed_attempts)
+    cfg.allow_agent_score_preset = bool(allow_agent_score_preset)
     if cfg.multi_preset_final:
         cfg.score_preset = "smape_pocid_50_50"
         cfg.score_window_mode = "weighted"
@@ -898,6 +900,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "one at the final decision")
     p.add_argument("--no-seed-attempts", action="store_true",
                    help="agent-only ablation: do not seed any baseline attempts")
+    p.add_argument("--no-agent-score-preset", dest="agent_score_preset",
+                   action="store_false",
+                   help="fix the scoring criterion; the agent cannot pass score_preset")
     p.add_argument("--no-history", action="store_true", help="ablation 4: hide the attempt history")
     p.add_argument("--calibration-gate", action="store_true")
 
@@ -971,6 +976,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             score_auto_candidates=args.score_auto_candidates,
             multi_preset_final=args.multi_preset_final,
             no_seed_attempts=args.no_seed_attempts,
+            allow_agent_score_preset=args.agent_score_preset,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,
             reorder_weight_tools=args.reorder_weight_tools,

@@ -413,6 +413,15 @@ def test_smape_pocid_preset_ignores_rmse_and_mape():
     assert abs(M.composite_score(agg, base, weights) - expected) < 1e-12
 
 
+def test_smape_only_preset_ignores_pocid_and_other_errors():
+    base = {"RMSE": 1.0, "SMAPE": 0.10, "MAPE": 0.10, "POCID": 50.0}
+    a = {"RMSE": 999.0, "SMAPE": 0.20, "MAPE": 0.30, "POCID": 0.0}
+    b = {"RMSE": 1.0, "SMAPE": 0.20, "MAPE": 0.10, "POCID": 100.0}
+    weights = {"a_rmse": 0.0, "b_smape": 1.0, "c_mape": 0.0, "d_pocid": 0.0}
+    assert abs(M.composite_score(a, base, weights) - 2.0) < 1e-12
+    assert abs(M.composite_score(b, base, weights) - 2.0) < 1e-12
+
+
 def test_window_score_modes():
     s, _, _ = prepared()
     assert s._window_score([1.0, 2.0, 3.0]) == 2.0

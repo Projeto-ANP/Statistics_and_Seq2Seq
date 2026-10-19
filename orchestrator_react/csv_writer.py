@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from orchestrator_react.config import FINAL_SCORE_PRESETS
+from orchestrator_react.config import FINAL_SCORE_PRESETS, SEED_TEST_PRESETS
 
 
 #: Section 4.1 — never rename, never reorder, never change how these are computed.
@@ -427,6 +427,116 @@ def _agent_trace(outcome: Any) -> Dict[str, Any]:
     }
 
 
+def _avg_ranks(values: Sequence[float]) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    order = np.argsort(arr, kind="mergesort")
+    ranks = np.empty(len(arr), dtype=float)
+    i = 0
+    while i < len(order):
+        j = i + 1
+        while j < len(order) and np.isclose(arr[order[j]], arr[order[i]], equal_nan=True):
+            j += 1
+        ranks[order[i:j]] = (i + 1 + j) / 2.0
+        i = j
+    return ranks
+
+
+def _ranking_trace(outcome: Any) -> Dict[str, Any]:
+    state = getattr(outcome, "state", None)
+    react = getattr(outcome, "react", None)
+    if state is None or react is None:
+        return {}
+    actual = list(outcome.test_values or [])
+    if not actual:
+        return {}
+    rows: List[Dict[str, Any]] = []
+    for attempt in state.attempts:
+        try:
+            forecast, _ = state.apply_to_test(attempt.spec)
+            metrics = compute_metrics(forecast, actual)
+        except Exception as exc:
+            rows.append({
+                "id": attempt.attempt_id,
+                "origin": attempt.origin,
+                "spec": attempt.spec,
+                "validation_score": _finite(attempt.score),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            continue
+        rows.append({
+            "id": attempt.attempt_id,
+            "origin": attempt.origin,
+            "spec": attempt.spec,
+            "validation_score": _finite(attempt.score),
+            "validation_aggregate": {k: _finite(v) for k, v in attempt.aggregate.items()},
+            "per_window": attempt.per_window,
+            "test_metrics": metrics,
+            "test_smape": metrics.get("smape"),
+            "test_pocid": metrics.get("pocid"),
+        })
+    valid = [r for r in rows if r.get("validation_score") is not None]
+    valid.sort(key=lambda r: (float(r["validation_score"]), str(r["id"])))
+    for rank, row in enumerate(valid, start=1):
+        row["validation_rank"] = rank
+    testable = [r for r in rows if r.get("test_smape") is not None and np.isfinite(r["test_smape"])]
+    testable.sort(key=lambda r: (float(r["test_smape"]), -float(r.get("test_pocid") or 0.0), str(r["id"])))
+    for rank, row in enumerate(testable, start=1):
+        row["test_rank"] = rank
+    final = react.final_attempt
+    final_row = next((r for r in rows if final and r.get("id") == final.attempt_id), None)
+    seed_row = next((r for r in valid if r.get("origin") == "baseline"), None)
+    top3_val = [r.get("id") for r in valid[:3]]
+    top3_test = [r.get("id") for r in testable[:3]]
+    val_rank = {r.get("id"): r.get("validation_rank") for r in valid}
+    test_rank = {r.get("id"): r.get("test_rank") for r in testable}
+    common = [r for r in rows if r.get("id") in val_rank and r.get("id") in test_rank]
+    spearman = None
+    if len(common) >= 2:
+        rv = _avg_ranks([val_rank[r["id"]] for r in common])
+        rt = _avg_ranks([test_rank[r["id"]] for r in common])
+        if np.std(rv) > 0 and np.std(rt) > 0:
+            spearman = float(np.corrcoef(rv, rt)[0, 1])
+    return {
+        "criterion": str(getattr(state.config, "score_preset", "")),
+        "window_mode": str(getattr(state.config, "score_window_mode", "")),
+        "n_attempts": len(rows),
+        "top3_validation": top3_val,
+        "top3_test": top3_test,
+        "top1_same": bool(top3_val[:1] and top3_test[:1] and top3_val[0] == top3_test[0]),
+        "top2_same": bool(len(top3_val) > 1 and len(top3_test) > 1 and top3_val[1] == top3_test[1]),
+        "top3_same": bool(len(top3_val) > 2 and len(top3_test) > 2 and top3_val[2] == top3_test[2]),
+        "validation_test_spearman": spearman,
+        "final": (
+            {
+                "id": final_row.get("id") if final_row else None,
+                "validation_rank": final_row.get("validation_rank") if final_row else None,
+                "test_rank": final_row.get("test_rank") if final_row else None,
+                "test_smape": final_row.get("test_smape") if final_row else None,
+                "test_pocid": final_row.get("test_pocid") if final_row else None,
+                "origin": final_row.get("origin") if final_row else None,
+            }
+        ),
+        "seed": (
+            {
+                "id": seed_row.get("id") if seed_row else None,
+                "validation_rank": seed_row.get("validation_rank") if seed_row else None,
+                "test_rank": seed_row.get("test_rank") if seed_row else None,
+                "test_smape": seed_row.get("test_smape") if seed_row else None,
+                "test_pocid": seed_row.get("test_pocid") if seed_row else None,
+            }
+        ),
+        "oracle": (
+            {
+                "id": testable[0].get("id") if testable else None,
+                "test_smape": testable[0].get("test_smape") if testable else None,
+                "test_pocid": testable[0].get("test_pocid") if testable else None,
+                "origin": testable[0].get("origin") if testable else None,
+            }
+        ),
+        "attempts": rows,
+    }
+
+
 def _seed_preset_tests(outcome: Any) -> Dict[str, Any]:
     state = getattr(outcome, "state", None)
     react = getattr(outcome, "react", None)
@@ -437,7 +547,7 @@ def _seed_preset_tests(outcome: Any) -> Dict[str, Any]:
         return {}
     seeds = [a for a in state.attempts if a.origin == "baseline"]
     out: Dict[str, Any] = {"presets": {}, "agent": {}}
-    for preset in FINAL_SCORE_PRESETS:
+    for preset in SEED_TEST_PRESETS:
         seed = state.best_attempt_for_preset(preset, attempts=seeds)
         if seed is None:
             out["presets"][preset] = None
@@ -514,6 +624,7 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
         # it is validation-only; see `_agent_trace`.
         "agent_trace": _agent_trace(outcome),
         "seed_preset_tests": _seed_preset_tests(outcome),
+        "ranking_trace": _ranking_trace(outcome),
         "predict_debug": outcome.predict_debug,
         "sanity": outcome.sanity,
         "report_text": outcome.report_text,

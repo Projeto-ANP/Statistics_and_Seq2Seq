@@ -246,6 +246,8 @@ def run_react_loop(
             score_window_mode=getattr(config, "score_window_mode", "mean"),
             multi_preset_final=multi_preset,
             no_seed_attempts=getattr(config, "no_seed_attempts", False),
+            allow_agent_score_preset=getattr(config, "allow_agent_score_preset", True),
+            score_preset=str(getattr(config, "score_preset", "balanced")),
         )
     else:
         system = P.build_system_prompt(
@@ -257,6 +259,8 @@ def run_react_loop(
             score_window_mode=getattr(config, "score_window_mode", "mean"),
             multi_preset_final=multi_preset,
             no_seed_attempts=getattr(config, "no_seed_attempts", False),
+            allow_agent_score_preset=getattr(config, "allow_agent_score_preset", True),
+            score_preset=str(getattr(config, "score_preset", "balanced")),
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None

@@ -112,6 +112,8 @@ def build_system_prompt(
     score_window_mode: str = "mean",
     multi_preset_final: bool = False,
     no_seed_attempts: bool = False,
+    allow_agent_score_preset: bool = True,
+    score_preset: str = "balanced",
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -261,13 +263,21 @@ def build_system_prompt(
             "- Do NOT pass score_preset during the loop. After the scoring budget",
             "  you choose ONE of the three criteria; the best attempt under it is applied.",
         ]
-    elif direct_models:
+    elif direct_models and allow_agent_score_preset:
         rules += [
             "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
             "  'models' (the subset) and the combination in the same call; the",
             "  harness builds the pool/weights. There are no select/weights actions.",
             "- You may pass score_preset=<one of: " + ", ".join(SCORE_PRESETS) + ">",
             "  to choose how SMAPE/POCID are weighted for this series.",
+        ]
+    elif direct_models:
+        rules += [
+            "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
+            "  'models' (the subset) and the combination in the same call; the",
+            "  harness builds the pool/weights. There are no select/weights actions.",
+            f"- The scoring criterion is FIXED to '{score_preset}'. POCID is reported",
+            "  separately and does not affect the ranking. Do not pass score_preset.",
         ]
     _check_format(prompt_format)
     if prompt_format == "xml":
@@ -285,6 +295,8 @@ def build_system_prompt_v2(
     score_window_mode: str = "mean",
     multi_preset_final: bool = False,
     no_seed_attempts: bool = False,
+    allow_agent_score_preset: bool = True,
+    score_preset: str = "balanced",
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -367,14 +379,19 @@ def build_system_prompt_v2(
                 "  Do NOT pass score_preset during the loop. After the budget you",
                 "  choose ONE criterion; the best attempt under it is applied.",
                 "",
-            ] if multi_preset_final else [
+            ] if multi_preset_final else ([
                 "  You may also choose a scoring preset on the same call:",
                 "    score_preset=<one of the presets below>.",
                 f"  Score presets: {', '.join(SCORE_PRESETS)}. The harness aggregates",
                 f"  the validation windows by '{score_window_mode}'.",
                 "  Pick the preset that matches the series; changing it re-scores the history.",
                 "",
-            ]),
+            ] if allow_agent_score_preset else [
+                f"  The scoring criterion is FIXED to '{score_preset}'. POCID is",
+                "  reported separately and does not affect the ranking. Do not pass",
+                "  score_preset.",
+                "",
+            ])),
         ] if direct_models else []),
         "PROCEDURE:",
         "  1. Read the diagnostics and form ONE hypothesis about this series.",

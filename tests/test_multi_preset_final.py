@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from orchestrator_react import csv_writer as W
 from orchestrator_react import prompts as P
 from orchestrator_react import tools as T
-from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS, ReactConfig
+from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS, SEED_TEST_PRESETS, ReactConfig
 from orchestrator_react.llm import ScriptedLLM
 from orchestrator_react.react_loop import run_react_loop
 
@@ -152,8 +152,8 @@ def test_artifacts_store_the_three_seed_test_baselines():
         forecast=actual,
     )
     block = W._seed_preset_tests(outcome)
-    assert set(block["presets"]) == set(FINAL_SCORE_PRESETS)
-    for name in FINAL_SCORE_PRESETS:
+    assert set(block["presets"]) == set(SEED_TEST_PRESETS)
+    for name in SEED_TEST_PRESETS:
         item = block["presets"][name]
         assert item["attempt_id"]
         assert "test_metrics" in item
@@ -193,3 +193,23 @@ def test_no_seed_prompt_removes_the_seed_floor_language():
     )
     assert "There are NO seeded baselines" in text
     assert "The seeded baselines are already scored" not in text
+
+
+def test_agent_cannot_choose_the_score_preset_when_locked():
+    cfg = ReactConfig(allow_agent_score_preset=False, score_preset="smape_only")
+    s, _, _ = prepared(cfg)
+    with pytest.raises(ValueError, match="scoring criterion is fixed"):
+        T.evaluate_strategy(
+            s, {"combine": "mean", "models": ["good_a"]},
+            score_preset="smape_pocid_50_50",
+        )
+
+
+def test_locked_smape_only_prompt_states_the_fixed_criterion():
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True,
+        allow_agent_score_preset=False, score_preset="smape_only",
+    )
+    assert "FIXED to 'smape_only'" in text
+    assert "POCID is" in text
+    assert "You may also choose a scoring preset" not in text
