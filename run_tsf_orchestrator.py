@@ -179,6 +179,7 @@ def exec_dataset_orchestrator(
     final_strategy: str = "argmin",
     seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
+    final_eta: float = 5.0,
     mcs_alpha: float = 0.10,
     mcs_max_members: Optional[int] = None,
     mcs_score_margin: float = 0.10,
@@ -368,6 +369,7 @@ def exec_dataset_orchestrator(
     cfg.final_strategy = final_strategy
     cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
+    cfg.final_eta = float(final_eta)
     cfg.mcs_alpha = float(mcs_alpha)
     cfg.mcs_max_members = int(mcs_max_members) if mcs_max_members else None
     cfg.mcs_score_margin = float(mcs_score_margin)
@@ -829,6 +831,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="relative validation-score margin the agent must clear over "
                         "the best seed for seed_gate to apply its proposal (default 0.01)")
     p.add_argument("--final-top-m", type=int, default=3)
+    p.add_argument("--final-eta", type=float, default=5.0,
+                   help="softmax temperature for ensemble; 0 = equal weights")
     p.add_argument("--no-stable-seeds", action="store_true",
                    help="ablation: seed only the three full-pool baselines")
     p.add_argument("--no-pooled-meta-model", action="store_true",
@@ -957,6 +961,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_strategy=args.final_strategy,
             seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,
+            final_eta=args.final_eta,
             mcs_alpha=args.mcs_alpha,
             mcs_max_members=args.mcs_max_members,
             mcs_score_margin=args.mcs_score_margin,

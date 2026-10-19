@@ -229,6 +229,7 @@ def test_ranking_trace_saves_full_validation_and_test_orders():
     assert trace["final"]["id"] == s.best_attempt().attempt_id
     assert trace["oracle"]["id"] is not None
     assert all("test_rank" in r for r in trace["attempts"] if "test_metrics" in r)
+    assert all("test_forecast" in r for r in trace["attempts"] if "test_metrics" in r)
 
 
 def test_locked_prompt_does_not_advertise_the_score_preset_argument():

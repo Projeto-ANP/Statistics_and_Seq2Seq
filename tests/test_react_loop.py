@@ -1749,3 +1749,13 @@ def test_leader_diagnostics_does_not_tell_the_agent_to_accept_when_accept_is_off
     note = _leader_diagnostics(s, no_accept=True)["note"]
     assert "accept is disabled" in note
     assert "accepting the leader" not in note
+
+
+def test_ensemble_with_eta_zero_is_equal_weight():
+    s, _, _ = prepared(ReactConfig(max_iterations=2))
+    combined, debug = s.apply_ensemble(top_m=3, eta=0.0)
+    members = debug["members"]
+    assert len(members) == 3
+    assert all(abs(m["share_pct"] - 100.0 / 3) < 0.2 for m in members)
+    forecasts = [s.apply_to_test(s.attempts[[a.attempt_id for a in s.attempts].index(m["attempt_id"])].spec)[0] for m in members]
+    assert np.allclose(combined, np.mean(forecasts, axis=0))

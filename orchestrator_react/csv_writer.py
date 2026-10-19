@@ -473,6 +473,7 @@ def _ranking_trace(outcome: Any) -> Dict[str, Any]:
             "test_metrics": metrics,
             "test_smape": metrics.get("smape"),
             "test_pocid": metrics.get("pocid"),
+            "test_forecast": [float(v) for v in np.asarray(forecast, dtype=float).ravel()],
         })
     valid = [r for r in rows if r.get("validation_score") is not None]
     valid.sort(key=lambda r: (float(r["validation_score"]), str(r["id"])))
