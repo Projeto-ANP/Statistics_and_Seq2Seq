@@ -221,6 +221,7 @@ def run_react_loop(
             reorder_weight_tools=config.reorder_weight_tools,
             no_early_stop=no_accept,
             direct_models=scoring_budget,
+            score_window_mode=getattr(config, "score_window_mode", "mean"),
         )
     else:
         system = P.build_system_prompt(
@@ -229,6 +230,7 @@ def run_react_loop(
             reorder_weight_tools=config.reorder_weight_tools,
             no_early_stop=no_accept,
             direct_models=scoring_budget,
+            score_window_mode=getattr(config, "score_window_mode", "mean"),
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None

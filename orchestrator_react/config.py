@@ -23,6 +23,14 @@ SCORE_PRESETS: Dict[str, Dict[str, float]] = {
     "robust_smape": {"a_rmse": 0.2, "b_smape": 0.5, "c_mape": 0.1, "d_pocid": 0.2},
     # Series crossing zero (ETT) make MAPE/SMAPE unstable; this preset drops them.
     "scale_free_safe": {"a_rmse": 0.7, "b_smape": 0.1, "c_mape": 0.0, "d_pocid": 0.2},
+    # Error/direction only: the two metrics the thesis compares. MAPE and RMSE
+    # are deliberately zero here, so scale and the zero-crossing MAPE artefact
+    # cannot leak into the choice.
+    "smape_pocid_50_50": {"a_rmse": 0.0, "b_smape": 0.5, "c_mape": 0.0, "d_pocid": 0.5},
+    "smape60_pocid40": {"a_rmse": 0.0, "b_smape": 0.6, "c_mape": 0.0, "d_pocid": 0.4},
+    "smape40_pocid60": {"a_rmse": 0.0, "b_smape": 0.4, "c_mape": 0.0, "d_pocid": 0.6},
+    "smape_only": {"a_rmse": 0.0, "b_smape": 1.0, "c_mape": 0.0, "d_pocid": 0.0},
+    "pocid_only": {"a_rmse": 0.0, "b_smape": 0.0, "c_mape": 0.0, "d_pocid": 1.0},
 }
 
 
@@ -109,6 +117,10 @@ class ReactConfig:
 
     # -- ablation 4: prompt format ----------------------------------------------
     show_attempt_history: bool = True
+    #: How the three validation-window scores are aggregated into `Attempt.score`.
+    #: "mean" is the historical mean; "last"/"last2" emphasise the window closest
+    #: to the test; "weighted" uses 0.2/0.3/0.5 for 3 windows.
+    score_window_mode: Literal["mean", "last", "last2", "weighted"] = "mean"
     #: How the agent's prompts are delimited: "xml" (default; each section wrapped in
     #: a tag) or "text" (headers such as `SERIES PROFILE:`, the format of every result
     #: before v1_gpt). Same wording either way: an A/B on structure only.

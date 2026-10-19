@@ -193,3 +193,14 @@ def test_prompt_v2_no_early_stop_removes_accept_and_stop_rule():
     default = P.build_system_prompt_v2(prompt_format="text")
     assert "WHEN TO STOP" in default
     assert "accept(attempt_id" in default
+
+
+def test_direct_prompt_lists_score_presets_and_window_mode():
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True,
+        score_window_mode="weighted",
+    )
+    assert "Score presets:" in text
+    assert "smape_pocid_50_50" in text
+    assert "score_preset" in text
+    assert "'weighted'" in text

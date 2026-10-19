@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
+from orchestrator_react.config import SCORE_PRESETS
 from orchestrator_react.registry import TERMINAL_ACTION, describe_tools
 from orchestrator_react.state import FULL_POOL, ReactState
 
@@ -108,6 +109,7 @@ def build_system_prompt(
     reorder_weight_tools: bool = False,
     no_early_stop: bool = False,
     direct_models: bool = False,
+    score_window_mode: str = "mean",
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -249,6 +251,8 @@ def build_system_prompt(
             "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
             "  'models' (the subset) and the combination in the same call; the",
             "  harness builds the pool/weights. There are no select/weights actions.",
+            "- You may pass score_preset=<one of: " + ", ".join(SCORE_PRESETS) + ">",
+            "  to choose how SMAPE/POCID are weighted for this series.",
         ]
     _check_format(prompt_format)
     if prompt_format == "xml":
@@ -263,6 +267,7 @@ def build_system_prompt_v2(
     reorder_weight_tools: bool = False,
     no_early_stop: bool = False,
     direct_models: bool = False,
+    score_window_mode: str = "mean",
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -337,6 +342,11 @@ def build_system_prompt_v2(
             '    evaluate_strategy {"combine":"best_single","model":"rf","models":["rf"]}',
             '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
             '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
+            "  You may also choose a scoring preset on the same call:",
+            "    score_preset=<one of the presets below>.",
+            f"  Score presets: {', '.join(SCORE_PRESETS)}. The harness aggregates",
+            f"  the validation windows by '{score_window_mode}'.",
+            "  Pick the preset that matches the series; changing it re-scores the history.",
             "",
         ] if direct_models else []),
         "PROCEDURE:",

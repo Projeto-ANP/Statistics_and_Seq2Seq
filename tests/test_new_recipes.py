@@ -119,6 +119,6 @@ def test_evaluate_scores_under_the_active_weights():
     state.apply_score_weights(weights)
     anchor = state.baseline_aggregate()
     attempt, _ = state.evaluate({"combine": "median", "pool": FULL_POOL})
-    expected = composite_score(attempt.aggregate, anchor, weights)
+    expected = state._window_score(attempt.per_window_scores)
     assert abs(attempt.score - expected) < 1e-12
     assert state.active_score_weights() == weights

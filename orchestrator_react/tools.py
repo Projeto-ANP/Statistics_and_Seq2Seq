@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from orchestrator_react import features as F
+from orchestrator_react.config import SCORE_PRESETS
 from orchestrator_react import meta_model as MM
 from orchestrator_react.selection import (
     PoolRecipe,
@@ -869,6 +870,7 @@ def evaluate_strategy(
     trim_pct: Optional[float] = None,
     model: Optional[str] = None,
     models: Optional[Any] = None,
+    score_preset: Optional[str] = None,
     rationale: str = "",
     iteration: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -936,6 +938,15 @@ def evaluate_strategy(
             raise ValueError("'models' cannot be empty")
         indices = [state.model_names.index(name) for name in names]
         spec["pool"] = state.register_pool(indices, origin="agent_explicit", models=names)
+
+    preset = score_preset if score_preset is not None else spec.pop("score_preset", None)
+    if preset is not None:
+        preset = str(preset).strip()
+        if preset not in SCORE_PRESETS:
+            raise ValueError(
+                f"unknown score_preset {preset!r}; available: {list(SCORE_PRESETS)}"
+            )
+        state.apply_score_weights(SCORE_PRESETS[preset])
 
     spec = _resolve_weights_shorthand(state, spec)
     strategy = spec

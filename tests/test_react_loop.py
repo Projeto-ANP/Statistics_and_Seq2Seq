@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from orchestrator_react import pool as POOL
 from orchestrator_react import prompts as P
 from orchestrator_react import registry as R
+from orchestrator_react import metrics as M
 from orchestrator_react import tools as T
 from orchestrator_react.config import ReactConfig
 from orchestrator_react.llm import (
@@ -357,6 +358,41 @@ def test_duplicate_does_not_add_an_attempt_and_next_prompt_warns():
     assert "YOU REPEATED" in llm.calls[1]["user"]
     assert "NEXT UNTRIED COMBINATIONS" in llm.calls[1]["user"]
     assert len(s.attempts) == n_before + 2
+
+
+def test_smape_pocid_preset_ignores_rmse_and_mape():
+    agg = {"RMSE": 999.0, "SMAPE": 0.20, "MAPE": 0.30, "POCID": 60.0}
+    base = {"RMSE": 1.0, "SMAPE": 0.10, "MAPE": 0.10, "POCID": 50.0}
+    weights = {"a_rmse": 0.0, "b_smape": 0.5, "c_mape": 0.0, "d_pocid": 0.5}
+    expected = 0.5 * (0.20 / 0.10) - 0.5 * (60.0 / 100.0)
+    assert abs(M.composite_score(agg, base, weights) - expected) < 1e-12
+
+
+def test_window_score_modes():
+    s, _, _ = prepared()
+    assert s._window_score([1.0, 2.0, 3.0]) == 2.0
+    s.config.score_window_mode = "last"
+    assert s._window_score([1.0, 2.0, 3.0]) == 3.0
+    s.config.score_window_mode = "last2"
+    assert s._window_score([1.0, 2.0, 3.0]) == 2.5
+    s.config.score_window_mode = "weighted"
+    assert abs(s._window_score([1.0, 2.0, 3.0]) - 2.3) < 1e-12
+
+
+def test_evaluate_strategy_accepts_a_score_preset():
+    s, _, _ = prepared()
+    T.evaluate_strategy(
+        s,
+        combine="mean",
+        pool=FULL_POOL,
+        score_preset="smape_pocid_50_50",
+        rationale="direction/error trade-off for this series",
+    )
+    weights = s.active_score_weights()
+    assert weights["a_rmse"] == 0.0
+    assert weights["c_mape"] == 0.0
+    assert weights["b_smape"] == 0.5
+    assert weights["d_pocid"] == 0.5
 
 
 def test_scoring_budget_counts_only_evaluate_strategy():

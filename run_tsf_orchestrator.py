@@ -194,6 +194,7 @@ def exec_dataset_orchestrator(
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
+    score_window_mode: str = "mean",
     score_auto_candidates: Optional[Sequence[str]] = None,
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
@@ -377,6 +378,7 @@ def exec_dataset_orchestrator(
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
+    cfg.score_window_mode = score_window_mode
     cfg.score_auto_candidates = list(score_auto_candidates) if score_auto_candidates else None
     cfg.show_attempt_history = bool(show_attempt_history)
     cfg.prompt_format = prompt_format
@@ -872,6 +874,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "hurts NN5 at any value >0 (see ARQUITETURA.md)")
     p.add_argument("--pool-mode", choices=["full", "top_k_error", "top_k_stable"], default="full")
     p.add_argument("--pool-k", type=int, default=8)
+    p.add_argument("--score-window-mode",
+                   choices=["mean", "last", "last2", "weighted"],
+                   default="mean",
+                   help="how the three validation-window scores become Attempt.score")
     p.add_argument("--score-preset", default="balanced",
                    help="composite-score preset used to rank strategies (any key of "
                         "orchestrator_react.config.SCORE_PRESETS), or 'auto_loo': the "
@@ -948,6 +954,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,
+            score_window_mode=args.score_window_mode,
             score_auto_candidates=args.score_auto_candidates,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,

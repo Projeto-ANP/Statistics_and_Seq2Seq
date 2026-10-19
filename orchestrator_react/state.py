@@ -739,6 +739,24 @@ class ReactState:
             return dict(self._active_score_weights)
         return self.config.score_weights()
 
+    def _window_score(self, per_window_scores: Sequence[float]) -> float:
+        vals = [float(v) for v in per_window_scores if np.isfinite(v)]
+        if not vals:
+            return float("inf")
+        mode = str(getattr(self.config, "score_window_mode", "mean"))
+        if mode == "last":
+            return vals[-1]
+        if mode == "last2":
+            return float(np.mean(vals[-2:]))
+        if mode == "weighted":
+            if len(vals) == 3:
+                w = np.array([0.2, 0.3, 0.5], dtype=float)
+            else:
+                w = np.arange(1, len(vals) + 1, dtype=float)
+                w /= w.sum()
+            return float(np.dot(w, vals))
+        return float(np.mean(vals))
+
     def apply_score_weights(self, weights: Dict[str, float]) -> "ReactState":
         """Make `weights` the active scoring criterion and re-rank the history.
 
@@ -752,11 +770,11 @@ class ReactState:
         anchor = self.baseline_aggregate()
         anchor_windows = self.baseline_per_window()
         for a in self.attempts:
-            a.score = float(M.composite_score(a.aggregate, anchor, weights))
             a.per_window_scores = [
                 float(M.composite_score(a.per_window[i], anchor_windows[i], weights))
                 for i in range(min(len(a.per_window), len(anchor_windows)))
             ]
+            a.score = self._window_score(a.per_window_scores)
         return self
 
     # ── history ──────────────────────────────────────────────────────────────
@@ -792,13 +810,13 @@ class ReactState:
 
         agg, per_window = self._score_metrics(combined)
         weights = self.active_score_weights()
-        score = M.composite_score(agg, self.baseline_aggregate(), weights)
 
         anchor_windows = self.baseline_per_window()
         per_window_scores = [
-            M.composite_score(per_window[i], anchor_windows[i], weights)
+            float(M.composite_score(per_window[i], anchor_windows[i], weights))
             for i in range(min(len(per_window), len(anchor_windows)))
         ]
+        score = self._window_score(per_window_scores)
         residuals = (combined - self.y_true).reshape(-1)
 
         self._attempt_seq += 1
