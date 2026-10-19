@@ -39,6 +39,9 @@ def test_every_evaluation_reports_the_three_scores_and_ranks():
     out = T.evaluate_strategy(s, {"combine": "mean", "models": ["good_a"]})
     assert set(out["scores_by_preset"]) == set(FINAL_SCORE_PRESETS)
     assert set(out["rank_by_preset"]) == set(FINAL_SCORE_PRESETS)
+    line = P.summarize_observation("evaluate_strategy", True, out)
+    assert "leaders 50/50=" in line
+    assert "60/40=" in line and "40/60=" in line
     assert set(out["best_by_preset"]) == set(FINAL_SCORE_PRESETS)
     assert set(out["seed_best_by_preset"]) == set(FINAL_SCORE_PRESETS)
     for name in FINAL_SCORE_PRESETS:

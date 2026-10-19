@@ -911,12 +911,26 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
             " | " + " ".join(f"{k}={v}" for k, v in scores.items())
             if scores else ""
         )
+        leaders = observation.get("best_by_preset") or {}
+        leader_tail = ""
+        if leaders:
+            rows = []
+            for name, item in leaders.items():
+                item = item or {}
+                short = {
+                    "smape_pocid_50_50": "50/50",
+                    "smape60_pocid40": "60/40",
+                    "smape40_pocid60": "40/60",
+                }.get(name, name)
+                rows.append(f"{short}={item.get('id')}({item.get('score')})")
+            leader_tail = " | leaders " + " ".join(rows)
         return (
             f"rank {observation.get('rank')}/{observation.get('total_attempts')}"
             f" score={observation.get('score')}"
             f" rmse={observation.get('metrics', {}).get('rmse')}"
             + score_tail
             + (" (best so far)" if observation.get("is_best") else tail)
+            + leader_tail
             + (" [already tested]" if observation.get("already_tested") else "")
             + (
                 f" [SAME forecasts as {observation['numerically_identical_to']}]"
