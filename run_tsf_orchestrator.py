@@ -200,6 +200,7 @@ def exec_dataset_orchestrator(
     multi_preset_final: bool = False,
     no_seed_attempts: bool = False,
     allow_agent_score_preset: bool = True,
+    allow_best_single: bool = True,
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
@@ -388,6 +389,7 @@ def exec_dataset_orchestrator(
     cfg.multi_preset_final = bool(multi_preset_final)
     cfg.no_seed_attempts = bool(no_seed_attempts)
     cfg.allow_agent_score_preset = bool(allow_agent_score_preset)
+    cfg.allow_best_single = bool(allow_best_single)
     if cfg.multi_preset_final:
         cfg.score_preset = "smape_pocid_50_50"
         cfg.score_window_mode = "weighted"
@@ -907,6 +909,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-agent-score-preset", dest="agent_score_preset",
                    action="store_false",
                    help="fix the scoring criterion; the agent cannot pass score_preset")
+    p.add_argument("--no-best-single", dest="best_single", action="store_false",
+                   help="combination-only run: disable best_single and require >=2 models")
     p.add_argument("--no-history", action="store_true", help="ablation 4: hide the attempt history")
     p.add_argument("--calibration-gate", action="store_true")
 
@@ -982,6 +986,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             multi_preset_final=args.multi_preset_final,
             no_seed_attempts=args.no_seed_attempts,
             allow_agent_score_preset=args.agent_score_preset,
+            allow_best_single=args.best_single,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,
             reorder_weight_tools=args.reorder_weight_tools,

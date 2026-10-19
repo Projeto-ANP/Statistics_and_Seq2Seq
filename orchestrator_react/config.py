@@ -324,6 +324,7 @@ class ReactConfig:
     score_preset: str = "balanced"
     score_auto_candidates: Optional[List[str]] = None
     allow_agent_score_preset: bool = True
+    allow_best_single: bool = True
     multi_preset_final: bool = False
     no_seed_attempts: bool = False
     n_validation_windows: int = 3

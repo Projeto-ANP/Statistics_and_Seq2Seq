@@ -248,6 +248,7 @@ def run_react_loop(
             no_seed_attempts=getattr(config, "no_seed_attempts", False),
             allow_agent_score_preset=getattr(config, "allow_agent_score_preset", True),
             score_preset=str(getattr(config, "score_preset", "balanced")),
+            allow_best_single=getattr(config, "allow_best_single", True),
         )
     else:
         system = P.build_system_prompt(
@@ -261,6 +262,7 @@ def run_react_loop(
             no_seed_attempts=getattr(config, "no_seed_attempts", False),
             allow_agent_score_preset=getattr(config, "allow_agent_score_preset", True),
             score_preset=str(getattr(config, "score_preset", "balanced")),
+            allow_best_single=getattr(config, "allow_best_single", True),
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None

@@ -131,6 +131,7 @@ def build_system_prompt(
     no_seed_attempts: bool = False,
     allow_agent_score_preset: bool = True,
     score_preset: str = "balanced",
+    allow_best_single: bool = True,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -185,7 +186,9 @@ def build_system_prompt(
         '  Action Input: {"combine": "median", "pool": "pool1", "rationale": "..."}',
         '  Action Input: {"combine": "trimmed_mean", "pool": "pool1", "trim_pct": 0.2}',
         '  Action Input: {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
-        '  Action Input: {"combine": "best_single", "model": "<a model name>"}',
+        *([
+            '  Action Input: {"combine": "best_single", "model": "<a model name>"}',
+        ] if allow_best_single else []),
         '  Action Input: {"combine": "dba", "pool": "pool1"}',
         *(
             [
@@ -202,7 +205,9 @@ def build_system_prompt(
         *([
             "A TYPICAL SEQUENCE (one evaluate per turn):",
             '  evaluate_strategy {"combine": "mean", "models": ["..."], "rationale": "..."}',
-            '  evaluate_strategy {"combine": "best_single", "model": "<model>"}',
+            *([
+                '  evaluate_strategy {"combine": "best_single", "model": "<model>"}',
+            ] if allow_best_single else []),
             "",
         ] if direct_models else [
             "A TYPICAL SEQUENCE (the weights_* step is a CHOICE, not a fixed step):",
@@ -279,8 +284,10 @@ def build_system_prompt(
             "  useful signal, but do not treat it as a rule.",
             "- If an observation says already_tested, change the model subset or the",
             "  combination next; do not resubmit the same call.",
-            "- For best_single, only 'model' matters. Changing the pool/models is a",
-            "  no-op; change the model, not the pool.",
+            *([
+                "- For best_single, only 'model' matters. Changing the pool/models is a",
+                "  no-op; change the model, not the pool.",
+            ] if allow_best_single else []),
             "- Use exact model names from the pool; weights must be a known method",
             "  name or an existing handle. Do not call accept.",
         ]
@@ -311,6 +318,9 @@ def build_system_prompt(
             f"- The scoring criterion is FIXED to '{score_preset}' (normalized SMAPE).",
             "  POCID is reported separately and does not affect the ranking. Do not pass",
             "  score_preset.",
+            *([] if allow_best_single else [
+                "- COMBINATION-ONLY: best_single is disabled; combine at least two models.",
+            ]),
             *([
                 "- CLASSIC STARTING POINTS (optional, not a required order):",
                 "  mean(pool_full), median(pool_full), dba(pool_full),",
@@ -337,6 +347,7 @@ def build_system_prompt_v2(
     no_seed_attempts: bool = False,
     allow_agent_score_preset: bool = True,
     score_preset: str = "balanced",
+    allow_best_single: bool = True,
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -410,7 +421,9 @@ def build_system_prompt_v2(
             "  pool/weight/diagnostic actions.",
             "  Examples:",
             '    evaluate_strategy {"combine":"trimmed_mean","models":["ARIMA","ETS","rf"],"trim_pct":0.2}',
-            '    evaluate_strategy {"combine":"best_single","model":"rf"}',
+            *([
+                '    evaluate_strategy {"combine":"best_single","model":"rf"}',
+            ] if allow_best_single else []),
             '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
             '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
             *([
@@ -443,6 +456,9 @@ def build_system_prompt_v2(
                 f"  The scoring criterion is FIXED to '{score_preset}' (normalized SMAPE).",
                 "  POCID is reported separately and does not affect the ranking. Do not",
                 "  pass score_preset.",
+                *([] if allow_best_single else [
+                    "  COMBINATION-ONLY: best_single is disabled; combine at least two models.",
+                ]),
                 "",
             ])),
         ] if direct_models else []),
@@ -484,12 +500,14 @@ def build_system_prompt_v2(
             '    Action Input: {"k": 7}',
             "    Action: evaluate_strategy",
             '    Action Input: {"combine": "median", "pool": "pool1", "rationale": "unstable ranking favours a robust median"}',
-            "  Example 2, a selective hypothesis, when one model dominates:",
-            "    Thought: the error table has one model clearly ahead of the rest, so",
-            "      combining it with weaker models would only add their error.",
-            "    Action: evaluate_strategy",
-            '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
-            "",
+            *([
+                "  Example 2, a selective hypothesis, when one model dominates:",
+                "    Thought: the error table has one model clearly ahead of the rest, so",
+                "      combining it with weaker models would only add their error.",
+                "    Action: evaluate_strategy",
+                '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
+                "",
+            ] if allow_best_single else []),
         ]),
         *([] if no_early_stop else [
             "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
@@ -533,8 +551,10 @@ def build_system_prompt_v2(
             "    useful signal, but do not treat it as a rule.",
             "  - If the observation says 'already_tested', change the model subset or",
             "    the combination next; do not resubmit the same call.",
-            "  - For best_single, only 'model' matters. Changing the pool/models is a",
-            "    no-op; change the model, not the pool.",
+            *([
+                "  - For best_single, only 'model' matters. Changing the pool/models is a",
+                "    no-op; change the model, not the pool.",
+            ] if allow_best_single else []),
             "  - Use exact model names from the MODEL POOL. 'weights' must be a known",
             "    method name or an existing handle. Do not call accept.",
             "",
@@ -639,10 +659,11 @@ def untried_candidates(
         for handle, recipe in state.weights.items():
             if recipe.pool_handle == pool:
                 specs.append({"combine": "weighted", "pool": pool, "weights": handle})
-        single = {"combine": "best_single", "model": best}
-        if _untried_key(single) not in tried and best not in seen_singles:
-            specs.append(single)
-            seen_singles.add(best)
+        if getattr(state.config, "allow_best_single", True):
+            single = {"combine": "best_single", "model": best}
+            if _untried_key(single) not in tried and best not in seen_singles:
+                specs.append(single)
+                seen_singles.add(best)
         for spec in specs:
             key = _untried_key(spec)
             if key not in tried:
@@ -820,7 +841,11 @@ def build_turn_prompt(
             "YOU REPEATED THE LAST COMBINATION. It was already tested and did not "
             "add a new attempt. Choose one of the untried combinations above, or "
             "change the model subset/combine; do not resubmit the same call. "
-            "For best_single, change the model; its pool/models argument is ignored."
+            + (
+                " For best_single, change the model; its pool/models argument is ignored."
+                if getattr(state.config, "allow_best_single", True) else
+                " COMBINATION-ONLY: use at least two models."
+            )
         )
         close_("repeat_notice")
 

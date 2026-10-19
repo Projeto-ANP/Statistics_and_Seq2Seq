@@ -926,6 +926,11 @@ def evaluate_strategy(
         )
 
     is_best_single = str(spec.get("combine", "")).strip().lower() == "best_single"
+    if is_best_single and not getattr(state.config, "allow_best_single", True):
+        raise ValueError(
+            "combine='best_single' is disabled: this run is combination-only; "
+            "use at least two models"
+        )
     ignored_args: List[str] = []
     raw_models = spec.pop("models", None)
     if raw_models is not None:
@@ -945,6 +950,20 @@ def evaluate_strategy(
             spec["pool"] = state.register_pool(indices, origin="agent_explicit", models=names)
     if is_best_single and spec.get("pool") and spec["pool"] != FULL_POOL:
         ignored_args.append("pool")
+    if not getattr(state.config, "allow_best_single", True):
+        if raw_models is not None:
+            names = [raw_models] if isinstance(raw_models, str) else list(raw_models)
+            if len(names) < 2:
+                raise ValueError("combination-only run: use at least two models")
+        if spec.get("pool"):
+            try:
+                if len(state.get_pool(str(spec["pool"]))) < 2:
+                    raise ValueError("combination-only run: use at least two models")
+            except KeyError:
+                pass
+        elif raw_models is None:
+            # full pool is always >= 2 models
+            pass
 
     preset = score_preset if score_preset is not None else spec.pop("score_preset", None)
     if preset is not None:

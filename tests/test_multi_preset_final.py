@@ -290,3 +290,36 @@ def test_turn_prompt_lists_available_weight_methods():
     assert "softmax_neg_error" in text
     assert "ols" not in text.split("WEIGHT METHODS", 1)[1].split("</weight_methods>", 1)[0]
     assert "pooled_meta_model" not in text.split("WEIGHT METHODS", 1)[1].split("</weight_methods>", 1)[0]
+
+
+def test_best_single_disabled_rejects_single_model_combinations():
+    cfg = ReactConfig(allow_best_single=False, score_preset="smape_only",
+                      allow_agent_score_preset=False)
+    s, _, _ = prepared(cfg)
+    with pytest.raises(ValueError, match="combination-only"):
+        T.evaluate_strategy(
+            s, {"combine": "best_single", "model": "good_a"},
+        )
+    with pytest.raises(ValueError, match="at least two models"):
+        T.evaluate_strategy(
+            s, {"combine": "mean", "models": ["good_a"]},
+        )
+    out = T.evaluate_strategy(
+        s, {"combine": "mean", "models": ["good_a", "good_b"]},
+    )
+    assert out["id"]
+
+
+def test_no_best_single_prompt_and_menu_when_disabled():
+    cfg = ReactConfig(allow_best_single=False, score_preset="smape_only",
+                      no_seed_attempts=True)
+    s, series, pool = prepared(cfg)
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True,
+        no_seed_attempts=True, allow_agent_score_preset=False,
+        score_preset="smape_only", allow_best_single=False,
+    )
+    assert "COMBINATION-ONLY" in text
+    assert '"combine":"best_single"' not in text
+    candidates = P.untried_candidates(s, pool, limit=50)
+    assert not any(c.get("combine") == "best_single" for c in candidates)
