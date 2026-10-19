@@ -868,6 +868,7 @@ def evaluate_strategy(
     weights: Optional[str] = None,
     trim_pct: Optional[float] = None,
     model: Optional[str] = None,
+    models: Optional[Any] = None,
     rationale: str = "",
     iteration: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -911,7 +912,7 @@ def evaluate_strategy(
     # sibling arguments fill in whatever the nested form did not carry
     for key, value in (
         ("combine", combine), ("pool", pool), ("weights", weights),
-        ("trim_pct", trim_pct), ("model", model),
+        ("trim_pct", trim_pct), ("model", model), ("models", models),
     ):
         if value is not None and not spec.get(key):
             spec[key] = value
@@ -921,6 +922,21 @@ def evaluate_strategy(
             "no combination method given. Pass either "
             '{"combine": "mean", "pool": "pool_full"} or the object a combine_* tool returned'
         )
+
+    raw_models = spec.pop("models", None)
+    if raw_models is not None:
+        if spec.get("pool") and spec.get("pool") != FULL_POOL:
+            raise ValueError("use either 'models' or a 'pool' handle, not both")
+        names = [raw_models] if isinstance(raw_models, str) else list(raw_models)
+        names = [str(name).strip() for name in names]
+        unknown = [name for name in names if name not in state.model_names]
+        if unknown:
+            raise ValueError(f"unknown models {unknown}; available: {state.model_names}")
+        if not names:
+            raise ValueError("'models' cannot be empty")
+        indices = [state.model_names.index(name) for name in names]
+        spec["pool"] = state.register_pool(indices, origin="agent_explicit", models=names)
+
     spec = _resolve_weights_shorthand(state, spec)
     strategy = spec
 

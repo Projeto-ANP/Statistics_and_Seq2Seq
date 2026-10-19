@@ -279,6 +279,39 @@ def test_no_early_stop_rejects_accept_and_uses_the_budget():
     assert r.final_attempt is not None
 
 
+def test_evaluate_strategy_accepts_an_explicit_model_subset():
+    s, _, _ = prepared()
+    out = T.evaluate_strategy(
+        s,
+        combine="trimmed_mean",
+        models=["good_a", "good_b", "redundant_a"],
+        rationale="three stable models, trimmed mean",
+    )
+    assert out["id"]
+    assert out["strategy"]["combine"] == "trimmed_mean"
+    assert out["strategy"]["pool"].startswith("pool")
+    assert "models" not in out["strategy"]
+
+
+def test_scoring_budget_withholds_everything_but_evaluate():
+    cfg = ReactConfig(scoring_budget=True)
+    withheld = R.withheld_tools(cfg, n_windows=3)
+    assert "evaluate_strategy" not in withheld
+    assert "select_top_k" in withheld
+    assert "weights_inverse_error" in withheld
+    assert "combine_mean" in withheld
+    assert "list_attempts" in withheld
+    names = [t["name"] for t in R.describe_tools(withheld)]
+    assert names == ["evaluate_strategy"]
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True,
+        withheld_tools=withheld,
+    )
+    assert "DIRECT COMBINATION MODE" in text
+    assert "models" in text
+    assert "select_stable" not in text
+
+
 def test_scoring_budget_counts_only_evaluate_strategy():
     cfg = ReactConfig(
         max_iterations=2, scoring_budget=True, max_total_turns=6,

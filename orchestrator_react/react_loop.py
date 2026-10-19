@@ -210,9 +210,9 @@ def run_react_loop(
 
     withheld = withheld_tools(config, state.n_windows, state=state)
     result.withheld_tools = dict(withheld)
+    scoring_budget = bool(getattr(config, "scoring_budget", False))
     no_accept = bool(
-        getattr(config, "no_early_stop", False)
-        or getattr(config, "scoring_budget", False)
+        getattr(config, "no_early_stop", False) or scoring_budget
     )
     if getattr(config, "prompt_v2", False):
         system = P.build_system_prompt_v2(
@@ -220,6 +220,7 @@ def run_react_loop(
             prompt_format=config.prompt_format,
             reorder_weight_tools=config.reorder_weight_tools,
             no_early_stop=no_accept,
+            direct_models=scoring_budget,
         )
     else:
         system = P.build_system_prompt(
@@ -227,13 +228,13 @@ def run_react_loop(
             prompt_format=config.prompt_format,
             reorder_weight_tools=config.reorder_weight_tools,
             no_early_stop=no_accept,
+            direct_models=scoring_budget,
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
     best_score = _score(state.best_attempt())
     stale = 0
     max_iterations = max(1, int(config.max_iterations))
-    scoring_budget = bool(getattr(config, "scoring_budget", False))
     seeded_attempts = len(state.attempts)
     target_scores = max_iterations
     total_turns = max_iterations

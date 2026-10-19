@@ -158,6 +158,13 @@ def withheld_tools(config: Any, n_windows: int, state: Optional[Any] = None) -> 
             "no pooled meta-model was trained for this run "
             "(too few series in the dataset, or xgboost unavailable)"
         )
+    if getattr(config, "scoring_budget", False):
+        for name in TOOLS:
+            if name != "evaluate_strategy":
+                out[name] = (
+                    "scoring_budget: one evaluate_strategy per turn; pass the model "
+                    "subset as 'models' and the combination in the same call"
+                )
     return out
 
 

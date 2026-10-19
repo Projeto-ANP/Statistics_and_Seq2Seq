@@ -107,6 +107,7 @@ def build_system_prompt(
     prompt_format: str = "text",
     reorder_weight_tools: bool = False,
     no_early_stop: bool = False,
+    direct_models: bool = False,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -239,6 +240,12 @@ def build_system_prompt(
             "- The last validation window is the closest to the blind test; when the",
             "  three windows disagree, prefer the candidate stable in the last window.",
         ]
+    if direct_models:
+        rules += [
+            "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
+            "  'models' (the subset) and the combination in the same call; the",
+            "  harness builds the pool/weights. There are no select/weights actions.",
+        ]
     _check_format(prompt_format)
     if prompt_format == "xml":
         return _system_as_xml(rules)
@@ -251,6 +258,7 @@ def build_system_prompt_v2(
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
     no_early_stop: bool = False,
+    direct_models: bool = False,
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -314,10 +322,29 @@ def build_system_prompt_v2(
         "    that gap is statistically distinguishable.",
         "  - HANDLES: pools and weight vectors created in this run, with concentration.",
         "",
+        *([
+            "DIRECT COMBINATION MODE:",
+            "  The only action is evaluate_strategy. Each turn is ONE tested combination.",
+            "  Pass 'models' (the subset) and 'combine' in the same call; the harness",
+            "  builds the pool and any weights internally. There are no separate",
+            "  pool/weight/diagnostic actions.",
+            "  Examples:",
+            '    evaluate_strategy {"combine":"trimmed_mean","models":["ARIMA","ETS","rf"],"trim_pct":0.2}',
+            '    evaluate_strategy {"combine":"best_single","model":"rf","models":["rf"]}',
+            '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
+            '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
+            "",
+        ] if direct_models else []),
         "PROCEDURE:",
         "  1. Read the diagnostics and form ONE hypothesis about this series.",
-        "  2. Test it with evaluate_strategy, building a pool or weights handle first",
-        "     only when the hypothesis needs a subset or a fitted weighting.",
+        *([
+            "  2. Test one combination per turn with evaluate_strategy: pass the",
+            "     model subset as 'models' and the combination; the harness builds",
+            "     the pool/weights. No separate pool/weight action is available.",
+        ] if direct_models else [
+            "  2. Test it with evaluate_strategy, building a pool or weights handle first",
+            "     only when the hypothesis needs a subset or a fitted weighting.",
+        ]),
         "  3. Read the result against the attempt history and the leader diagnostics.",
         (
             "  4. Test a DIFFERENT kind of strategy; accept is disabled in this run."
@@ -336,21 +363,23 @@ def build_system_prompt_v2(
         "Action: <tool name from the list above>",
         'Action Input: {"arg": value}',
         "",
-        "WORKED EXAMPLES (the harness prints the observation back after each action):",
-        "  Example 1, a robust hypothesis, when the ranking is unstable:",
-        "    Thought: the ranking is unstable across windows and several models carry",
-        "      correlated error, so a robust median of the most stable subset should",
-        "      beat fitted weights that would chase three windows of noise.",
-        "    Action: select_stable",
-        '    Action Input: {"k": 7}',
-        "    Action: evaluate_strategy",
-        '    Action Input: {"combine": "median", "pool": "pool1", "rationale": "unstable ranking favours a robust median"}',
-        "  Example 2, a selective hypothesis, when one model dominates:",
-        "    Thought: the error table has one model clearly ahead of the rest, so",
-        "      combining it with weaker models would only add their error.",
-        "    Action: evaluate_strategy",
-        '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
-        "",
+        *([] if direct_models else [
+            "WORKED EXAMPLES (the harness prints the observation back after each action):",
+            "  Example 1, a robust hypothesis, when the ranking is unstable:",
+            "    Thought: the ranking is unstable across windows and several models carry",
+            "      correlated error, so a robust median of the most stable subset should",
+            "      beat fitted weights that would chase three windows of noise.",
+            "    Action: select_stable",
+            '    Action Input: {"k": 7}',
+            "    Action: evaluate_strategy",
+            '    Action Input: {"combine": "median", "pool": "pool1", "rationale": "unstable ranking favours a robust median"}',
+            "  Example 2, a selective hypothesis, when one model dominates:",
+            "    Thought: the error table has one model clearly ahead of the rest, so",
+            "      combining it with weaker models would only add their error.",
+            "    Action: evaluate_strategy",
+            '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
+            "",
+        ]),
         *([] if no_early_stop else [
             "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
             "  - If the leader is a SEED and the verdict is 'indistinguishable', accept it.",
