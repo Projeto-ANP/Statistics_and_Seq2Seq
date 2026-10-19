@@ -111,6 +111,7 @@ def build_system_prompt(
     direct_models: bool = False,
     score_window_mode: str = "mean",
     multi_preset_final: bool = False,
+    no_seed_attempts: bool = False,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -283,6 +284,7 @@ def build_system_prompt_v2(
     direct_models: bool = False,
     score_window_mode: str = "mean",
     multi_preset_final: bool = False,
+    no_seed_attempts: bool = False,
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -443,8 +445,13 @@ def build_system_prompt_v2(
             "    when the subset or weighting IS the hypothesis, and score it next turn.",
             "  - Never spend two turns in a row without a score; never build a handle",
             "    you will not score.",
-            "  - The seeded baselines are already scored. Use the best seed as the floor",
-            "    and test combinations that differ from it.",
+            *([
+                "  - There are NO seeded baselines in this run. Your first",
+                "    evaluate_strategy is the floor; test combinations from scratch.",
+            ] if no_seed_attempts else [
+                "  - The seeded baselines are already scored. Use the best seed as the floor",
+                "    and test combinations that differ from it.",
+            ]),
             "  - The diagnostics are already in the turn context; do not spend turns on them.",
             "  - The budget is the number of evaluate_strategy calls; preparation actions",
             "    do not consume it.",
@@ -665,8 +672,12 @@ def build_turn_prompt(
             row = board.get(name, {})
             seed = row.get("best_seed") or {}
             best = row.get("best") or {}
+            seed_text = (
+                f"best seed {seed.get('id')} ({seed.get('score')}), "
+                if seed else "no seeded baseline; "
+            )
             parts.append(
-                f"  {name}: best seed {seed.get('id')} ({seed.get('score')}), "
+                f"  {name}: {seed_text}"
                 f"best overall {best.get('id')} ({best.get('score')}, "
                 f"{best.get('origin')})"
             )
@@ -894,6 +905,7 @@ def build_final_preset_prompt(
         seed = row.get("best_seed") or {}
         lines.append(
             f"    best seed: {seed.get('id')} score={seed.get('score')}"
+            if seed else "    best seed: none"
         )
     lines += [
         "",

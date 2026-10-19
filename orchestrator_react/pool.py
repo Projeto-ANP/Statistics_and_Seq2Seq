@@ -220,13 +220,16 @@ def run_phase2(
     """Runs the whole of Phase 2 and returns what Phase 3 and the CSV need."""
     config = config or state.config
     pool = build_pool(state, config)
-    seeded = seed_baselines(
-        state,
-        pool=pool["pool"],
-        methods=REDUCED_SEED_BASELINES if config.reduced_seeding else SEED_BASELINES,
-        stable_pools=SEED_STABLE_POOLS if config.seed_stable_pools else (),
-        seed_pooled_meta_model=config.seed_pooled_meta_model,
-    )
+    if getattr(config, "no_seed_attempts", False):
+        seeded = []
+    else:
+        seeded = seed_baselines(
+            state,
+            pool=pool["pool"],
+            methods=REDUCED_SEED_BASELINES if config.reduced_seeding else SEED_BASELINES,
+            stable_pools=SEED_STABLE_POOLS if config.seed_stable_pools else (),
+            seed_pooled_meta_model=config.seed_pooled_meta_model,
+        )
     report = pool_report(state, top_n=top_n)
     gate = calibration_gate(state, config)
 

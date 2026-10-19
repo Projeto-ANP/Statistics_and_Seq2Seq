@@ -160,3 +160,36 @@ def test_artifacts_store_the_three_seed_test_baselines():
         assert len(item["forecast"]) == len(actual)
     assert block["agent"]["final_score_preset"] == "smape60_pocid40"
     assert "test_metrics" in block["agent"]
+
+
+def test_no_seed_attempts_starts_empty_and_the_agent_can_finish():
+    cfg = ReactConfig(
+        max_iterations=2,
+        scoring_budget=True,
+        max_total_turns=4,
+        multi_preset_final=True,
+        no_seed_attempts=True,
+        prompt_v2=True,
+        catalog_v2=True,
+    )
+    s, series, pool = prepared(cfg)
+    assert not s.attempts
+    llm = ScriptedLLM([
+        step("evaluate_strategy", {"combine": "mean", "models": ["good_a"]}),
+        step("evaluate_strategy", {"combine": "mean", "models": ["good_a", "good_b"]}),
+        '{"score_preset": "smape_pocid_50_50"}',
+    ])
+    r = run_react_loop(s, llm, series, pool, cfg)
+    assert r.final_attempt is not None
+    assert r.final_attempt.origin == "agent"
+    assert r.final_score_preset == "smape_pocid_50_50"
+    assert "NO seeded baselines" in llm.calls[0]["system"]
+    assert "no seeded baseline" in llm.calls[0]["user"]
+
+
+def test_no_seed_prompt_removes_the_seed_floor_language():
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, no_seed_attempts=True
+    )
+    assert "There are NO seeded baselines" in text
+    assert "The seeded baselines are already scored" not in text

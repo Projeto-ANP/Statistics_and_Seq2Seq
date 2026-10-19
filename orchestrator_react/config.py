@@ -323,6 +323,7 @@ class ReactConfig:
     score_preset: str = "balanced"
     score_auto_candidates: Optional[List[str]] = None
     multi_preset_final: bool = False
+    no_seed_attempts: bool = False
     n_validation_windows: int = 3
     seasonal_period: Optional[int] = None  # None => inferred from the frequency
     mape_zero: Literal["skip", "epsilon"] = "skip"
@@ -359,6 +360,7 @@ class ReactConfig:
             "scoring_budget",
             "max_total_turns",
             "multi_preset_final",
+            "no_seed_attempts",
         ):
             if not d.get(flag):
                 d.pop(flag, None)

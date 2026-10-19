@@ -197,6 +197,7 @@ def exec_dataset_orchestrator(
     score_window_mode: str = "mean",
     score_auto_candidates: Optional[Sequence[str]] = None,
     multi_preset_final: bool = False,
+    no_seed_attempts: bool = False,
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
@@ -382,6 +383,7 @@ def exec_dataset_orchestrator(
     cfg.score_window_mode = score_window_mode
     cfg.score_auto_candidates = list(score_auto_candidates) if score_auto_candidates else None
     cfg.multi_preset_final = bool(multi_preset_final)
+    cfg.no_seed_attempts = bool(no_seed_attempts)
     if cfg.multi_preset_final:
         cfg.score_preset = "smape_pocid_50_50"
         cfg.score_window_mode = "weighted"
@@ -894,6 +896,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="score every attempt under the three fixed SMAPE/POCID "
                         "presets on the weighted window and let the agent choose "
                         "one at the final decision")
+    p.add_argument("--no-seed-attempts", action="store_true",
+                   help="agent-only ablation: do not seed any baseline attempts")
     p.add_argument("--no-history", action="store_true", help="ablation 4: hide the attempt history")
     p.add_argument("--calibration-gate", action="store_true")
 
@@ -966,6 +970,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             score_window_mode=args.score_window_mode,
             score_auto_candidates=args.score_auto_candidates,
             multi_preset_final=args.multi_preset_final,
+            no_seed_attempts=args.no_seed_attempts,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,
             reorder_weight_tools=args.reorder_weight_tools,

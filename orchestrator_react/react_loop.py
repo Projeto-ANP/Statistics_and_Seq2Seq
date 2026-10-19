@@ -199,7 +199,7 @@ def run_react_loop(
     result.started_at = _utcnow()
     result.llm_model = getattr(client, "name", "none") if client else "none"
 
-    if not state.attempts:
+    if not state.attempts and not getattr(config, "no_seed_attempts", False):
         raise RuntimeError(
             "the attempt history is empty: run pool.seed_baselines() before the loop, "
             "otherwise there is no floor to guarantee the result against"
@@ -245,6 +245,7 @@ def run_react_loop(
             direct_models=scoring_budget,
             score_window_mode=getattr(config, "score_window_mode", "mean"),
             multi_preset_final=multi_preset,
+            no_seed_attempts=getattr(config, "no_seed_attempts", False),
         )
     else:
         system = P.build_system_prompt(
@@ -255,6 +256,7 @@ def run_react_loop(
             direct_models=scoring_budget,
             score_window_mode=getattr(config, "score_window_mode", "mean"),
             multi_preset_final=multi_preset,
+            no_seed_attempts=getattr(config, "no_seed_attempts", False),
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
