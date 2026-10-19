@@ -103,7 +103,7 @@ class ReactConfig:
     #: separate hard cap on total turns prevents an agent that never scores.
     scoring_budget: bool = False
     #: Hard cap on total tool turns when `scoring_budget` is on. 0 means
-    #: `3 * max_iterations`.
+    #: `2 * max_iterations`.
     max_total_turns: int = 0
     min_improvement: float = 1e-4  # minimum relative gain to count as progress
 

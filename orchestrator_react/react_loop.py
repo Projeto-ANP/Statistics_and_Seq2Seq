@@ -241,7 +241,7 @@ def run_react_loop(
     if scoring_budget:
         total_turns = max(
             1,
-            int(getattr(config, "max_total_turns", 0) or 3 * max_iterations),
+            int(getattr(config, "max_total_turns", 0) or 2 * max_iterations),
         )
 
     for iteration in range(1, total_turns + 1):

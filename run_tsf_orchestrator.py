@@ -794,7 +794,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="experiment: --max-iterations counts evaluate_strategy calls, "
                         "not tool turns; preparation does not consume the budget")
     p.add_argument("--max-total-turns", type=int, default=0,
-                   help="hard cap on total turns with --scoring-budget (0 = 3 x max-iterations)")
+                   help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
     p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "

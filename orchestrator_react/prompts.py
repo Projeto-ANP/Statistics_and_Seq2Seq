@@ -239,6 +239,10 @@ def build_system_prompt(
             "- The budget counts evaluate_strategy calls; preparation does not consume it.",
             "- The last validation window is the closest to the blind test; when the",
             "  three windows disagree, prefer the candidate stable in the last window.",
+            "- If an observation says already_tested, change the model subset or the",
+            "  combination next; do not resubmit the same call.",
+            "- Use exact model names from the pool; weights must be a known method",
+            "  name or an existing handle. Do not call accept.",
         ]
     if direct_models:
         rules += [
@@ -411,6 +415,10 @@ def build_system_prompt_v2(
             "    do not consume it.",
             "  - The last validation window is the closest to the blind test. When the",
             "    three windows disagree, prefer the candidate stable in the last window.",
+            "  - If the observation says 'already_tested', change the model subset or",
+            "    the combination next; do not resubmit the same call.",
+            "  - Use exact model names from the MODEL POOL. 'weights' must be a known",
+            "    method name or an existing handle. Do not call accept.",
             "",
         ] if no_early_stop else []),
         "RULES:",
