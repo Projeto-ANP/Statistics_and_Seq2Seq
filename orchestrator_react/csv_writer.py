@@ -427,6 +427,49 @@ def _agent_trace(outcome: Any) -> Dict[str, Any]:
     }
 
 
+def _seed_preset_tests(outcome: Any) -> Dict[str, Any]:
+    state = getattr(outcome, "state", None)
+    react = getattr(outcome, "react", None)
+    if state is None or react is None:
+        return {}
+    actual = list(outcome.test_values or [])
+    if not actual:
+        return {}
+    seeds = [a for a in state.attempts if a.origin == "baseline"]
+    out: Dict[str, Any] = {"presets": {}, "agent": {}}
+    for preset in FINAL_SCORE_PRESETS:
+        seed = state.best_attempt_for_preset(preset, attempts=seeds)
+        if seed is None:
+            out["presets"][preset] = None
+            continue
+        try:
+            forecast, _ = state.apply_to_test(seed.spec)
+            metrics = compute_metrics(forecast, actual)
+        except Exception as exc:
+            out["presets"][preset] = {
+                "attempt_id": seed.attempt_id,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            continue
+        out["presets"][preset] = {
+            "attempt_id": seed.attempt_id,
+            "spec": seed.spec,
+            "validation_score": _finite(state.preset_score(seed, preset)),
+            "test_metrics": metrics,
+            "forecast": [float(v) for v in np.asarray(forecast, dtype=float).ravel()],
+        }
+    final = react.final_attempt
+    if final is not None:
+        out["agent"] = {
+            "attempt_id": final.attempt_id,
+            "final_score_preset": getattr(react, "final_score_preset", "") or None,
+            "spec": final.spec,
+            "test_metrics": compute_metrics(outcome.forecast, actual),
+            "forecast": [float(v) for v in np.asarray(outcome.forecast, dtype=float).ravel()],
+        }
+    return out
+
+
 def artifacts_payload(outcome: Any) -> Dict[str, Any]:
     """Full per-series audit trail, written next to the CSV.
 
@@ -470,6 +513,7 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
         # The complete decision record of the series, turn by turn. Everything in
         # it is validation-only; see `_agent_trace`.
         "agent_trace": _agent_trace(outcome),
+        "seed_preset_tests": _seed_preset_tests(outcome),
         "predict_debug": outcome.predict_debug,
         "sanity": outcome.sanity,
         "report_text": outcome.report_text,

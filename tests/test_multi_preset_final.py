@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from orchestrator_react import csv_writer as W
 from orchestrator_react import prompts as P
 from orchestrator_react import tools as T
 from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS, ReactConfig
@@ -130,3 +132,28 @@ def test_final_prompt_lists_the_three_rankings():
     for name in FINAL_SCORE_PRESETS:
         assert name in text
     assert '{"score_preset"' in text
+
+
+def test_artifacts_store_the_three_seed_test_baselines():
+    cfg = multi_config()
+    s, _, _ = prepared(cfg)
+    actual = list(np.asarray(s.y_true[-1], dtype=float))
+    react = SimpleNamespace(
+        final_attempt=s.best_attempt(),
+        final_score_preset="smape60_pocid40",
+    )
+    outcome = SimpleNamespace(
+        state=s,
+        react=react,
+        test_values=actual,
+        forecast=actual,
+    )
+    block = W._seed_preset_tests(outcome)
+    assert set(block["presets"]) == set(FINAL_SCORE_PRESETS)
+    for name in FINAL_SCORE_PRESETS:
+        item = block["presets"][name]
+        assert item["attempt_id"]
+        assert "test_metrics" in item
+        assert len(item["forecast"]) == len(actual)
+    assert block["agent"]["final_score_preset"] == "smape60_pocid40"
+    assert "test_metrics" in block["agent"]
