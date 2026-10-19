@@ -925,19 +925,26 @@ def evaluate_strategy(
             '{"combine": "mean", "pool": "pool_full"} or the object a combine_* tool returned'
         )
 
+    is_best_single = str(spec.get("combine", "")).strip().lower() == "best_single"
+    ignored_args: List[str] = []
     raw_models = spec.pop("models", None)
     if raw_models is not None:
-        if spec.get("pool") and spec.get("pool") != FULL_POOL:
-            raise ValueError("use either 'models' or a 'pool' handle, not both")
-        names = [raw_models] if isinstance(raw_models, str) else list(raw_models)
-        names = [str(name).strip() for name in names]
-        unknown = [name for name in names if name not in state.model_names]
-        if unknown:
-            raise ValueError(f"unknown models {unknown}; available: {state.model_names}")
-        if not names:
-            raise ValueError("'models' cannot be empty")
-        indices = [state.model_names.index(name) for name in names]
-        spec["pool"] = state.register_pool(indices, origin="agent_explicit", models=names)
+        if is_best_single:
+            ignored_args.append("models")
+        else:
+            if spec.get("pool") and spec.get("pool") != FULL_POOL:
+                raise ValueError("use either 'models' or a 'pool' handle, not both")
+            names = [raw_models] if isinstance(raw_models, str) else list(raw_models)
+            names = [str(name).strip() for name in names]
+            unknown = [name for name in names if name not in state.model_names]
+            if unknown:
+                raise ValueError(f"unknown models {unknown}; available: {state.model_names}")
+            if not names:
+                raise ValueError("'models' cannot be empty")
+            indices = [state.model_names.index(name) for name in names]
+            spec["pool"] = state.register_pool(indices, origin="agent_explicit", models=names)
+    if is_best_single and spec.get("pool") and spec["pool"] != FULL_POOL:
+        ignored_args.append("pool")
 
     preset = score_preset if score_preset is not None else spec.pop("score_preset", None)
     if preset is not None:
@@ -1005,6 +1012,14 @@ def evaluate_strategy(
         "worse_than_best_by": gap,
         "is_best": bool(attempt is best),
     }
+    if ignored_args:
+        out["ignored_arguments"] = sorted(set(ignored_args))
+        out["note"] = (
+            "best_single uses ONLY 'model'. The "
+            + " and ".join(sorted(set(ignored_args)))
+            + " argument(s) were ignored; changing the pool/models does not create "
+            "a new strategy. Change the 'model' to test another single model."
+        )
     if getattr(state.config, "multi_preset_final", False):
         scores_by = state.preset_scores(attempt, FINAL_SCORE_PRESETS)
         board = state.preset_board(FINAL_SCORE_PRESETS, top_n=1)

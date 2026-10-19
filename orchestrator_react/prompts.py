@@ -244,6 +244,8 @@ def build_system_prompt(
             "  three windows disagree, prefer the candidate stable in the last window.",
             "- If an observation says already_tested, change the model subset or the",
             "  combination next; do not resubmit the same call.",
+            "- For best_single, only 'model' matters. Changing the pool/models is a",
+            "  no-op; change the model, not the pool.",
             "- Use exact model names from the pool; weights must be a known method",
             "  name or an existing handle. Do not call accept.",
         ]
@@ -352,7 +354,7 @@ def build_system_prompt_v2(
             "  pool/weight/diagnostic actions.",
             "  Examples:",
             '    evaluate_strategy {"combine":"trimmed_mean","models":["ARIMA","ETS","rf"],"trim_pct":0.2}',
-            '    evaluate_strategy {"combine":"best_single","model":"rf","models":["rf"]}',
+            '    evaluate_strategy {"combine":"best_single","model":"rf"}',
             '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
             '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
             *([
@@ -450,6 +452,8 @@ def build_system_prompt_v2(
             "    three windows disagree, prefer the candidate stable in the last window.",
             "  - If the observation says 'already_tested', change the model subset or",
             "    the combination next; do not resubmit the same call.",
+            "  - For best_single, only 'model' matters. Changing the pool/models is a",
+            "    no-op; change the model, not the pool.",
             "  - Use exact model names from the MODEL POOL. 'weights' must be a known",
             "    method name or an existing handle. Do not call accept.",
             "",
@@ -516,22 +520,26 @@ def build_dataset_card(state: ReactState, top_n: int = 5) -> Optional[Dict[str, 
     }
 
 
+def _untried_key(spec: Dict[str, Any]) -> str:
+    if str(spec.get("combine", "")).strip().lower() == "best_single":
+        spec = {"combine": "best_single", "model": spec.get("model")}
+    return json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
+
+
 def untried_candidates(
     state: ReactState,
     pool_card: Dict[str, Any],
     limit: int = 8,
 ) -> List[Dict[str, Any]]:
     """Deterministic menu of valid combinations that are not in the history."""
-    tried = {
-        json.dumps(a.spec, sort_keys=True, ensure_ascii=False, default=str)
-        for a in state.attempts
-    }
+    tried = {_untried_key(a.spec) for a in state.attempts}
     top = [
         str(item.get("model"))
         for item in ((pool_card.get("error_table") or {}).get("top") or [])
         if item.get("model") is not None
     ]
     candidates: List[Dict[str, Any]] = []
+    seen_singles: set[str] = set()
     pools = sorted(state.pools, key=lambda h: (h != FULL_POOL, h))
     for pool in pools:
         idx = state.get_pool(pool)
@@ -544,13 +552,16 @@ def untried_candidates(
             {"combine": "median", "pool": pool},
             {"combine": "trimmed_mean", "pool": pool, "trim_pct": 0.2},
             {"combine": "dba", "pool": pool, "dba_max_iter": 30},
-            {"combine": "best_single", "pool": pool, "model": best},
         ]
         for handle, recipe in state.weights.items():
             if recipe.pool_handle == pool:
                 specs.append({"combine": "weighted", "pool": pool, "weights": handle})
+        single = {"combine": "best_single", "model": best}
+        if _untried_key(single) not in tried and best not in seen_singles:
+            specs.append(single)
+            seen_singles.add(best)
         for spec in specs:
-            key = json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
+            key = _untried_key(spec)
             if key not in tried:
                 candidates.append(spec)
                 if len(candidates) >= limit:
@@ -704,7 +715,8 @@ def build_turn_prompt(
         parts.append(
             "YOU REPEATED THE LAST COMBINATION. It was already tested and did not "
             "add a new attempt. Choose one of the untried combinations above, or "
-            "change the model subset/combine; do not resubmit the same call."
+            "change the model subset/combine; do not resubmit the same call. "
+            "For best_single, change the model; its pool/models argument is ignored."
         )
         close_("repeat_notice")
 
@@ -911,6 +923,10 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
             " | " + " ".join(f"{k}={v}" for k, v in scores.items())
             if scores else ""
         )
+        ignored = observation.get("ignored_arguments") or []
+        ignored_tail = (
+            " [ignored: " + "/".join(str(x) for x in ignored) + "]" if ignored else ""
+        )
         leaders = observation.get("best_by_preset") or {}
         leader_tail = ""
         if leaders:
@@ -931,6 +947,7 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
             + score_tail
             + (" (best so far)" if observation.get("is_best") else tail)
             + leader_tail
+            + ignored_tail
             + (" [already tested]" if observation.get("already_tested") else "")
             + (
                 f" [SAME forecasts as {observation['numerically_identical_to']}]"

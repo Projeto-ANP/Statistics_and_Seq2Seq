@@ -324,6 +324,51 @@ def test_untried_candidates_excludes_seeded_strategies():
     )
 
 
+def test_best_single_pool_is_ignored_and_flagged():
+    s, _, _ = prepared()
+    n_pools = len(s.pools)
+    first = T.evaluate_strategy(s, {"combine": "best_single", "model": "good_a"})
+    second = T.evaluate_strategy(
+        s, {"combine": "best_single", "model": "good_a", "pool": "pool1"}
+    )
+    assert second["already_tested"] is True
+    assert second["id"] == first["id"]
+    assert second["ignored_arguments"] == ["pool"]
+    assert "ONLY 'model'" in second["note"]
+    line = P.summarize_observation("evaluate_strategy", True, second)
+    assert "[ignored: pool]" in line
+
+    third = T.evaluate_strategy(
+        s, {"combine": "best_single", "model": "good_a", "models": ["good_a"]}
+    )
+    assert third["already_tested"] is True
+    assert third["ignored_arguments"] == ["models"]
+    assert len(s.pools) == n_pools
+
+
+def test_untried_best_single_has_no_pool_and_is_deduped():
+    s, _, pool = prepared()
+    candidates = P.untried_candidates(s, pool, limit=50)
+    singles = [c for c in candidates if c.get("combine") == "best_single"]
+    assert singles
+    for c in singles:
+        assert set(c) == {"combine", "model"}
+    models = [str(c["model"]) for c in singles]
+    assert len(models) == len(set(models))
+    tried_models = {
+        a.spec.get("model") for a in s.attempts if a.spec.get("combine") == "best_single"
+    }
+    assert not (set(models) & tried_models)
+
+
+def test_prompt_warns_best_single_pool_is_noop():
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True
+    )
+    assert "For best_single, only 'model' matters" in text
+    assert "change the model, not the pool" in text
+
+
 def test_turn_prompt_has_untried_menu_and_repeat_notice():
     s, series, pool = prepared()
     text = P.build_turn_prompt(
