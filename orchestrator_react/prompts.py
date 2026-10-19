@@ -13,6 +13,7 @@ choose a subset, weight it, test it — and away from "assign a weight to each o
 from __future__ import annotations
 
 import json
+import random
 from typing import Any, Dict, List, Optional, Sequence
 
 from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS
@@ -551,6 +552,9 @@ def build_system_prompt_v2(
             "    useful signal, but do not treat it as a rule.",
             "  - If the observation says 'already_tested', change the model subset or",
             "    the combination next; do not resubmit the same call.",
+            "  - In each Thought, name one SERIES DECISION CARD characteristic",
+            "    (trend, seasonality, outliers, stationarity, ranking tau, or the",
+            "    diagnosis hint) that motivates the test; if none does, say why.",
             *([
                 "  - For best_single, only 'model' matters. Changing the pool/models is a",
                 "    no-op; change the model, not the pool.",
@@ -664,6 +668,7 @@ def untried_candidates(
             if _untried_key(single) not in tried and best not in seen_singles:
                 specs.append(single)
                 seen_singles.add(best)
+        random.Random(int(getattr(state, "dataset_index", 0) or 0) + 17).shuffle(specs)
         for spec in specs:
             key = _untried_key(spec)
             if key not in tried:
@@ -671,6 +676,31 @@ def untried_candidates(
                 if len(candidates) >= limit:
                     return candidates
     return candidates
+
+
+def _decision_card(
+    series_card: Dict[str, Any],
+    pool_card: Dict[str, Any],
+    diagnosis: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    feats = series_card.get("features") or {}
+    stability = pool_card.get("ranking_stability") or {}
+    card = {
+        "trend_strength": series_card.get("trend_strength"),
+        "seasonal_strength": series_card.get("seasonal_strength"),
+        "outliers_pct": (series_card.get("outliers") or {}).get("pct"),
+        "crosses_zero": feats.get("crosses_zero"),
+        "stationarity": (series_card.get("stationarity") or {}).get("verdict"),
+        "ranking_tau": stability.get("mean_kendall_tau"),
+        "ranking_verdict": stability.get("verdict"),
+    }
+    if diagnosis:
+        card.update({
+            "regime": diagnosis.get("regime"),
+            "predictability": diagnosis.get("predictability"),
+            "combination_hint": diagnosis.get("combination_hint"),
+        })
+    return {k: v for k, v in card.items() if v is not None}
 
 
 def build_turn_prompt(
@@ -826,7 +856,9 @@ def build_turn_prompt(
     if untried:
         parts.append("")
         open_("untried")
-        parts.append("NEXT UNTRIED COMBINATIONS (not in the history; choose ONE):")
+        parts.append(
+            "NEXT UNTRIED COMBINATIONS (not in the history; order arbitrary, NOT a ranking):"
+        )
         for i, spec in enumerate(untried):
             parts.append(
                 f"  {chr(65 + i)}. "
@@ -853,7 +885,7 @@ def build_turn_prompt(
         parts.append("")
         open_("scratchpad")
         parts.append("WHAT YOU DID SO FAR:")
-        for entry in scratchpad[-6:]:
+        for entry in scratchpad[-4:]:
             parts.append(
                 f"  [{entry['iteration']}] {entry['action']}({_compact(entry['action_args'], 120)})"
                 f" -> {entry['observation_summary']}"
@@ -864,8 +896,18 @@ def build_turn_prompt(
         parts.append("")
         open_("last_observation")
         parts.append("LAST OBSERVATION (full):")
-        parts.append(_compact(last_observation, limit=1400))
+        parts.append(_compact(last_observation, limit=900))
         close_("last_observation")
+
+    card = _decision_card(series_card, pool_card, diagnosis)
+    if card:
+        parts.append("")
+        open_("decision_card")
+        parts.append(
+            "SERIES DECISION CARD (repeat; use or ignore, but name one feature in your Thought):"
+        )
+        parts.append(_compact(card, limit=500))
+        close_("decision_card")
 
     remaining = max_iterations - iteration + 1
     pending = _unscored_weights(state)

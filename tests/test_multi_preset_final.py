@@ -323,3 +323,18 @@ def test_no_best_single_prompt_and_menu_when_disabled():
     assert '"combine":"best_single"' not in text
     candidates = P.untried_candidates(s, pool, limit=50)
     assert not any(c.get("combine") == "best_single" for c in candidates)
+
+
+def test_turn_prompt_has_decision_card_at_the_end():
+    cfg = ReactConfig(score_preset="smape_only", no_seed_attempts=True,
+                      allow_best_single=False)
+    s, series, pool = prepared(cfg)
+    text = P.build_turn_prompt(
+        s, series, pool, [], 1, 24, no_accept=True,
+        untried=P.untried_candidates(s, pool),
+        score_target=12, scores_used=0,
+    )
+    assert "SERIES DECISION CARD" in text
+    assert text.index("SERIES DECISION CARD") > text.index("LAST OBSERVATION") if "LAST OBSERVATION" in text else True
+    assert "order arbitrary, NOT a ranking" in text
+    assert "name one feature in your Thought" in text
