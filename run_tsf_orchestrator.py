@@ -190,6 +190,7 @@ def exec_dataset_orchestrator(
     dataset_card: bool = True,
     final_prior_alpha: float = 0.0,
     combinator_reasoning: Any = None,
+    combinator_temperature: Optional[float] = None,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -388,6 +389,8 @@ def exec_dataset_orchestrator(
     cfg.calibration_gate = bool(calibration_gate)
 
     cfg.combinator = _as_role(combinator_model)
+    if combinator_temperature is not None:
+        cfg.combinator.temperature = float(combinator_temperature)
     if combinator_reasoning is not None:
         # Pass through as-is: `parse_reasoning` already normalised on/off to
         # booleans and lowercased named levels ("low"/"medium"/"xhigh"/...), whose
@@ -880,6 +883,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--calibration-gate", action="store_true")
 
     p.add_argument("--combinator", default="gpt-oss:20b", help="Phase 3 agent")
+    p.add_argument("--temperature", type=float, default=None,
+                   help="sampling temperature for the Phase 3 combinator (default: config/0.2)")
     p.add_argument("--diagnostician", default=None, help="Phase 1 LLM (ablation 2)")
     p.add_argument("--reporter", default=None, help="Phase 5 LLM")
     p.add_argument("--no-llm", action="store_true", help="deterministic arm: no agent at all")
@@ -939,6 +944,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             dataset_card=not args.no_dataset_card,
             final_prior_alpha=args.final_prior_alpha,
             combinator_reasoning=parse_reasoning(args.reasoning),
+            combinator_temperature=args.temperature,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,

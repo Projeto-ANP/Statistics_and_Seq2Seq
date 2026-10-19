@@ -16,7 +16,7 @@ import json
 from typing import Any, Dict, List, Optional, Sequence
 
 from orchestrator_react.registry import TERMINAL_ACTION, describe_tools
-from orchestrator_react.state import ReactState
+from orchestrator_react.state import FULL_POOL, ReactState
 
 
 def _compact(payload: Any, limit: int = 1800) -> str:
@@ -483,6 +483,48 @@ def build_dataset_card(state: ReactState, top_n: int = 5) -> Optional[Dict[str, 
     }
 
 
+def untried_candidates(
+    state: ReactState,
+    pool_card: Dict[str, Any],
+    limit: int = 8,
+) -> List[Dict[str, Any]]:
+    """Deterministic menu of valid combinations that are not in the history."""
+    tried = {
+        json.dumps(a.spec, sort_keys=True, ensure_ascii=False, default=str)
+        for a in state.attempts
+    }
+    top = [
+        str(item.get("model"))
+        for item in ((pool_card.get("error_table") or {}).get("top") or [])
+        if item.get("model") is not None
+    ]
+    candidates: List[Dict[str, Any]] = []
+    pools = sorted(state.pools, key=lambda h: (h != FULL_POOL, h))
+    for pool in pools:
+        idx = state.get_pool(pool)
+        models = [state.model_names[int(i)] for i in idx]
+        if not models:
+            continue
+        best = next((model for model in top if model in models), models[0])
+        specs = [
+            {"combine": "mean", "pool": pool},
+            {"combine": "median", "pool": pool},
+            {"combine": "trimmed_mean", "pool": pool, "trim_pct": 0.2},
+            {"combine": "dba", "pool": pool, "dba_max_iter": 30},
+            {"combine": "best_single", "pool": pool, "model": best},
+        ]
+        for handle, recipe in state.weights.items():
+            if recipe.pool_handle == pool:
+                specs.append({"combine": "weighted", "pool": pool, "weights": handle})
+        for spec in specs:
+            key = json.dumps(spec, sort_keys=True, ensure_ascii=False, default=str)
+            if key not in tried:
+                candidates.append(spec)
+                if len(candidates) >= limit:
+                    return candidates
+    return candidates
+
+
 def build_turn_prompt(
     state: ReactState,
     series_card: Dict[str, Any],
@@ -496,6 +538,9 @@ def build_turn_prompt(
     diagnosis: Optional[Dict[str, Any]] = None,
     prompt_format: str = "text",
     leader: Optional[Dict[str, Any]] = None,
+    untried: Optional[Sequence[Dict[str, Any]]] = None,
+    repeat_notice: bool = False,
+    no_accept: bool = False,
 ) -> str:
     """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget.
 
@@ -585,6 +630,27 @@ def build_turn_prompt(
         parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
     close_("handles")
 
+    if untried:
+        parts.append("")
+        open_("untried")
+        parts.append("NEXT UNTRIED COMBINATIONS (not in the history; choose ONE):")
+        for i, spec in enumerate(untried):
+            parts.append(
+                f"  {chr(65 + i)}. "
+                f"{json.dumps(spec, ensure_ascii=False, default=str)}"
+            )
+        close_("untried")
+
+    if repeat_notice:
+        parts.append("")
+        open_("repeat_notice")
+        parts.append(
+            "YOU REPEATED THE LAST COMBINATION. It was already tested and did not "
+            "add a new attempt. Choose one of the untried combinations above, or "
+            "change the model subset/combine; do not resubmit the same call."
+        )
+        close_("repeat_notice")
+
     if scratchpad:
         parts.append("")
         open_("scratchpad")
@@ -613,8 +679,18 @@ def build_turn_prompt(
             "until evaluate_strategy runs on them, so that work is lost unless you "
             "evaluate now."
         )
-    # Correção 2 — substituir o bloco final de build_turn_prompt (linhas 257-264)
-    if remaining <= 1:
+    if no_accept:
+        if remaining <= 1:
+            parts.append(
+                "This is your LAST turn. Test one more combination; the final "
+                "strategy is chosen from the whole history."
+            )
+        else:
+            parts.append(
+                f"{remaining} turns left. Test another combination; do not call "
+                f"{TERMINAL_ACTION}. The final strategy is chosen from the whole history."
+            )
+    elif remaining <= 1:
         parts.append(
             f"This is your LAST iteration. Use {TERMINAL_ACTION} to take the best attempt."
         )

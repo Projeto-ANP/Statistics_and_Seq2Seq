@@ -312,6 +312,53 @@ def test_scoring_budget_withholds_everything_but_evaluate():
     assert "select_stable" not in text
 
 
+def test_untried_candidates_excludes_seeded_strategies():
+    s, _, pool = prepared()
+    candidates = P.untried_candidates(s, pool)
+    assert 1 <= len(candidates) <= 8
+    tried = {json.dumps(a.spec, sort_keys=True, default=str) for a in s.attempts}
+    assert all(
+        json.dumps(c, sort_keys=True, default=str) not in tried
+        for c in candidates
+    )
+
+
+def test_turn_prompt_has_untried_menu_and_repeat_notice():
+    s, series, pool = prepared()
+    text = P.build_turn_prompt(
+        state=s,
+        series_card=series,
+        pool_card=pool,
+        scratchpad=[],
+        iteration=1,
+        max_iterations=12,
+        untried=[{"combine": "mean", "pool": "pool_full"}],
+        repeat_notice=True,
+        no_accept=True,
+    )
+    assert "NEXT UNTRIED COMBINATIONS" in text
+    assert "YOU REPEATED" in text
+    assert "Use accept" not in text
+
+
+def test_duplicate_does_not_add_an_attempt_and_next_prompt_warns():
+    cfg = ReactConfig(
+        max_iterations=3, scoring_budget=True, max_total_turns=6,
+    )
+    s, series, pool = prepared(cfg)
+    n_before = len(s.attempts)
+    llm = ScriptedLLM([
+        step("evaluate_strategy", {"strategy": {"combine": "mean", "pool": "pool_full"}}),
+        step("evaluate_strategy", {"strategy": {"combine": "median", "pool": "pool1"}}),
+        step("evaluate_strategy", {"strategy": {"combine": "best_single", "model": "good_a"}}),
+    ])
+    r = run_react_loop(s, llm, series, pool, cfg)
+    assert "already tested" in r.trajectory[0]["observation_summary"]
+    assert "YOU REPEATED" in llm.calls[1]["user"]
+    assert "NEXT UNTRIED COMBINATIONS" in llm.calls[1]["user"]
+    assert len(s.attempts) == n_before + 2
+
+
 def test_scoring_budget_counts_only_evaluate_strategy():
     cfg = ReactConfig(
         max_iterations=2, scoring_budget=True, max_total_turns=6,

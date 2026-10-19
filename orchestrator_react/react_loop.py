@@ -237,6 +237,7 @@ def run_react_loop(
     max_iterations = max(1, int(config.max_iterations))
     seeded_attempts = len(state.attempts)
     target_scores = max_iterations
+    last_duplicate = False
     total_turns = max_iterations
     if scoring_budget:
         total_turns = max(
@@ -263,6 +264,9 @@ def run_react_loop(
                 if getattr(config, "prompt_v2", False)
                 else None
             ),
+            untried=P.untried_candidates(state, pool_card),
+            repeat_notice=last_duplicate,
+            no_accept=no_accept,
         )
 
         # Two different things can go wrong asking for one turn, and both are
@@ -500,6 +504,9 @@ def run_react_loop(
         if not ok:
             result.errors.append(f"iteration {iteration}: {observation.get('detail', '')}")
             continue
+
+        if step.action == "evaluate_strategy":
+            last_duplicate = bool(observation.get("already_tested"))
 
         # ── early stopping, counted on proposals only ────────────────────────
         if step.action == "evaluate_strategy":
