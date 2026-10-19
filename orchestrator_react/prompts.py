@@ -311,6 +311,13 @@ def build_system_prompt(
             f"- The scoring criterion is FIXED to '{score_preset}' (normalized SMAPE).",
             "  POCID is reported separately and does not affect the ranking. Do not pass",
             "  score_preset.",
+            *([
+                "- CLASSIC STARTING POINTS (optional, not a required order):",
+                "  mean(pool_full), median(pool_full), dba(pool_full),",
+                "  trimmed_mean(pool_full, trim_pct=0.2),",
+                "  weighted(pool_full, weights='inverse_error').",
+                "  They are simple references; use or ignore them freely.",
+            ] if no_seed_attempts else []),
         ]
     _check_format(prompt_format)
     if prompt_format == "xml":
@@ -407,6 +414,16 @@ def build_system_prompt_v2(
             '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
             '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
             *([
+                "  CLASSIC STARTING POINTS (optional, not a required order):",
+                "    mean(pool_full), median(pool_full), dba(pool_full),",
+                "    trimmed_mean(pool_full, trim_pct=0.2),",
+                "    weighted(pool_full, weights='inverse_error').",
+                "    These are simple, robust references. Use them when the series",
+                "    profile suggests them; ignore them otherwise. Stable-pool and",
+                "    weighted handles are also available in HANDLES.",
+                "",
+            ] if no_seed_attempts else []),
+            *([
                 "  MULTI-PRESET FINAL: every evaluate_strategy returns the same",
                 "  attempt scored under three criteria:",
                 f"    {', '.join(FINAL_SCORE_PRESETS)}.",
@@ -499,8 +516,10 @@ def build_system_prompt_v2(
             "  - Never spend two turns in a row without a score; never build a handle",
             "    you will not score.",
             *([
-                "  - There are NO seeded baselines in this run. Your first",
-                "    evaluate_strategy is the floor; test combinations from scratch.",
+                "  - There are NO pre-evaluated seeded baselines in this run.",
+                "    The classic starting points (mean, median, dba, trimmed_mean,",
+                "    weighted) are available but optional; your first evaluate_strategy",
+                "    is the floor.",
             ] if no_seed_attempts else [
                 "  - The seeded baselines are already scored and are part of the final",
                 "    history. They are a reference, not a required starting point; test",
@@ -614,6 +633,7 @@ def untried_candidates(
             {"combine": "median", "pool": pool},
             {"combine": "trimmed_mean", "pool": pool, "trim_pct": 0.2},
             {"combine": "dba", "pool": pool, "dba_max_iter": 30},
+            {"combine": "weighted", "pool": pool, "weights": "inverse_error"},
         ]
         for handle, recipe in state.weights.items():
             if recipe.pool_handle == pool:

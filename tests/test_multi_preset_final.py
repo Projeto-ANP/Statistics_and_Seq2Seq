@@ -174,6 +174,7 @@ def test_no_seed_attempts_starts_empty_and_the_agent_can_finish():
     )
     s, series, pool = prepared(cfg)
     assert not s.attempts
+    assert len(s.pools) > 1, "stable pools must be registered as preparation"
     llm = ScriptedLLM([
         step("evaluate_strategy", {"combine": "mean", "models": ["good_a"]}),
         step("evaluate_strategy", {"combine": "mean", "models": ["good_a", "good_b"]}),
@@ -183,7 +184,7 @@ def test_no_seed_attempts_starts_empty_and_the_agent_can_finish():
     assert r.final_attempt is not None
     assert r.final_attempt.origin == "agent"
     assert r.final_score_preset == "smape_pocid_50_50"
-    assert "NO seeded baselines" in llm.calls[0]["system"]
+    assert "NO pre-evaluated seeded baselines" in llm.calls[0]["system"]
     assert "no seeded baseline" in llm.calls[0]["user"]
 
 
@@ -191,7 +192,7 @@ def test_no_seed_prompt_removes_the_seed_floor_language():
     text = P.build_system_prompt_v2(
         prompt_format="text", no_early_stop=True, no_seed_attempts=True
     )
-    assert "There are NO seeded baselines" in text
+    assert "There are NO pre-evaluated seeded baselines" in text
     assert "The seeded baselines are already scored" not in text
 
 
@@ -253,3 +254,25 @@ def test_turn_prompt_shows_scores_and_total_turns():
     )
     assert "SCORES: 3/12" in text
     assert "TURNS: 1/24" in text
+
+
+def test_no_seed_prompt_lists_optional_classic_starting_points():
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True,
+        no_seed_attempts=True, allow_agent_score_preset=False,
+        score_preset="smape_only",
+    )
+    assert "CLASSIC STARTING POINTS (optional" in text
+    assert "mean(pool_full)" in text
+    assert "weighted(pool_full" in text
+    assert "There are NO pre-evaluated seeded baselines" in text
+
+
+def test_no_seed_untried_menu_offers_classic_weighted_method():
+    cfg = ReactConfig(no_seed_attempts=True, score_preset="smape_only")
+    s, _, pool = prepared(cfg)
+    cands = P.untried_candidates(s, pool, limit=50)
+    assert any(
+        c.get("combine") == "weighted" and c.get("weights") == "inverse_error"
+        for c in cands
+    )

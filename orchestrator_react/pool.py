@@ -222,6 +222,15 @@ def run_phase2(
     pool = build_pool(state, config)
     if getattr(config, "no_seed_attempts", False):
         seeded = []
+        if config.seed_stable_pools:
+            for k, _ in SEED_STABLE_POOLS:
+                if int(k) < state.n_models:
+                    T.select_stable(state, k=int(k))
+        if config.seed_pooled_meta_model and getattr(state, "pooled_meta_model", None) is not None:
+            try:
+                T.weights_pooled_meta_model(state, pool=pool["pool"])
+            except Exception:
+                pass
     else:
         seeded = seed_baselines(
             state,
