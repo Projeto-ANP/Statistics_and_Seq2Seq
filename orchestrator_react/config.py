@@ -94,6 +94,17 @@ class ReactConfig:
     # clears it before the patience counter gives up on it.
     max_iterations: int = 12
     early_stop_patience: int = 4  # consecutive proposals without improvement
+    #: Experiment: ignore both terminal accept and the patience break, so the
+    #: agent uses the full iteration budget. The final strategy is still the
+    #: best-scoring attempt of the whole history.
+    no_early_stop: bool = False
+    #: Experiment: `max_iterations` is the number of scored combinations, not the
+    #: number of tool turns. Preparation actions do not consume the budget; a
+    #: separate hard cap on total turns prevents an agent that never scores.
+    scoring_budget: bool = False
+    #: Hard cap on total tool turns when `scoring_budget` is on. 0 means
+    #: `3 * max_iterations`.
+    max_total_turns: int = 0
     min_improvement: float = 1e-4  # minimum relative gain to count as progress
 
     # -- ablation 4: prompt format ----------------------------------------------
@@ -321,7 +332,14 @@ class ReactConfig:
         d = self.to_dict()
         # An experiment flag left at False must not change the id of a run that
         # never heard of it.
-        for flag in ("reorder_weight_tools", "drop_redundant_combine_actions", "reduced_seeding"):
+        for flag in (
+            "reorder_weight_tools",
+            "drop_redundant_combine_actions",
+            "reduced_seeding",
+            "no_early_stop",
+            "scoring_budget",
+            "max_total_turns",
+        ):
             if not d.get(flag):
                 d.pop(flag, None)
         blob = json.dumps(d, sort_keys=True, ensure_ascii=False)

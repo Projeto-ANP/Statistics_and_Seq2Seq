@@ -210,25 +210,40 @@ def run_react_loop(
 
     withheld = withheld_tools(config, state.n_windows, state=state)
     result.withheld_tools = dict(withheld)
+    no_accept = bool(
+        getattr(config, "no_early_stop", False)
+        or getattr(config, "scoring_budget", False)
+    )
     if getattr(config, "prompt_v2", False):
         system = P.build_system_prompt_v2(
             include_history_rules=config.show_attempt_history, withheld_tools=withheld,
             prompt_format=config.prompt_format,
             reorder_weight_tools=config.reorder_weight_tools,
+            no_early_stop=no_accept,
         )
     else:
         system = P.build_system_prompt(
             include_history_rules=config.show_attempt_history, withheld_tools=withheld,
             prompt_format=config.prompt_format,
             reorder_weight_tools=config.reorder_weight_tools,
+            no_early_stop=no_accept,
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
     best_score = _score(state.best_attempt())
     stale = 0
     max_iterations = max(1, int(config.max_iterations))
+    scoring_budget = bool(getattr(config, "scoring_budget", False))
+    seeded_attempts = len(state.attempts)
+    target_scores = max_iterations
+    total_turns = max_iterations
+    if scoring_budget:
+        total_turns = max(
+            1,
+            int(getattr(config, "max_total_turns", 0) or 3 * max_iterations),
+        )
 
-    for iteration in range(1, max_iterations + 1):
+    for iteration in range(1, total_turns + 1):
         result.iterations_used = iteration
         user = P.build_turn_prompt(
             state=state,
@@ -236,7 +251,7 @@ def run_react_loop(
             pool_card=pool_card,
             scratchpad=scratchpad,
             iteration=iteration,
-            max_iterations=max_iterations,
+            max_iterations=total_turns,
             last_observation=last_observation,
             show_history=config.show_attempt_history,
             show_rationales=config.show_attempt_rationales,
@@ -388,6 +403,30 @@ def run_react_loop(
             continue
 
         # ── terminal action ──────────────────────────────────────────────────
+        if step.action.strip().lower() == TERMINAL_ACTION and no_accept:
+            reason = (
+                "no_early_stop" if getattr(config, "no_early_stop", False)
+                else "scoring_budget"
+            )
+            result.errors.append(
+                f"iteration {iteration}: accept disabled by {reason}; "
+                "use the remaining turns and let the final history decide"
+            )
+            entry["observation_summary"] = f"ERROR accept: disabled by {reason}"
+            last_observation = {"error": "accept_disabled", "detail": reason}
+            state.log_tool(TERMINAL_ACTION, step.action_input, ok=False,
+                           error=f"disabled by {reason}", kind="terminal_disabled")
+            detail.update({
+                "ok": False,
+                "accept_error": f"disabled by {reason}",
+                "observation": last_observation,
+                "turn_finished_at": _utcnow(),
+            })
+            result.trajectory.append(entry)
+            scratchpad.append(entry)
+            _emit(on_step, state, entry)
+            continue
+
         if step.action.strip().lower() == TERMINAL_ACTION:
             accepted, confidence, justification, problem = _read_accept(state, step)
             if problem:
@@ -470,12 +509,17 @@ def run_react_loop(
                 stale = 0
             else:
                 stale += 1
-            if stale >= max(1, int(config.early_stop_patience)):
+            if not no_accept and stale >= max(1, int(config.early_stop_patience)):
                 result.early_stopped = True
                 result.stop_reason = (
                     f"no improvement in {stale} consecutive proposals"
                 )
                 break
+            if scoring_budget:
+                scores_used = max(0, len(state.attempts) - seeded_attempts)
+                if scores_used >= target_scores:
+                    result.stop_reason = "scoring_budget_exhausted"
+                    break
     else:
         result.stop_reason = "iteration_budget_exhausted"
 

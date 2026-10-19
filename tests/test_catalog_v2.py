@@ -179,3 +179,17 @@ def test_v2_flags_end_to_end_with_a_scripted_llm():
     assert "LEADER DIAGNOSTICS" in user
     # The withheld diagnostics must not be advertised.
     assert "series_profile(" not in system
+
+
+def test_prompt_v2_no_early_stop_removes_accept_and_stop_rule():
+    text = P.build_system_prompt_v2(prompt_format="text", no_early_stop=True)
+    assert "NO ACCEPT IN THIS RUN" in text
+    assert "accept is disabled" in text
+    assert "BUDGET RULES (no accept)" in text
+    assert "One tested approach = one evaluate_strategy call" in text
+    assert "select_*, prune_*" in text
+    assert "accept(attempt_id" not in text
+    assert "WHEN TO STOP" not in text
+    default = P.build_system_prompt_v2(prompt_format="text")
+    assert "WHEN TO STOP" in default
+    assert "accept(attempt_id" in default

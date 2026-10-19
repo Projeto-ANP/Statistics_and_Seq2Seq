@@ -262,6 +262,65 @@ def test_budget_is_exhausted_when_the_agent_never_accepts():
     assert r.final_attempt is not None  # still decides
 
 
+def test_no_early_stop_rejects_accept_and_uses_the_budget():
+    cfg = ReactConfig(max_iterations=3, early_stop_patience=1, no_early_stop=True)
+    s, series, pool = prepared(cfg)
+    llm = ScriptedLLM([
+        step("accept", {"attempt_id": "a1", "justification": "stop here"}),
+        step("list_attempts", {}),
+        step("list_attempts", {}),
+    ])
+    r = run_react_loop(s, llm, series, pool)
+    assert r.iterations_used == 3
+    assert r.stop_reason == "iteration_budget_exhausted"
+    assert r.early_stopped is False
+    assert r.agent_accepted_id is None
+    assert "ERROR accept" in r.trajectory[0]["observation_summary"]
+    assert r.final_attempt is not None
+
+
+def test_scoring_budget_counts_only_evaluate_strategy():
+    cfg = ReactConfig(
+        max_iterations=2, scoring_budget=True, max_total_turns=6,
+    )
+    s, series, pool = prepared(cfg)
+    llm = ScriptedLLM([
+        step("list_attempts", {}),
+        step("evaluate_strategy", {"strategy": {"combine": "best_single", "model": "good_a"}}),
+        step("list_attempts", {}),
+        step("evaluate_strategy", {"strategy": {"combine": "median", "pool": "pool1"}}),
+        step("accept", {"attempt_id": "a1", "justification": "should not run"}),
+    ])
+    r = run_react_loop(s, llm, series, pool)
+    assert r.iterations_used == 4
+    assert r.stop_reason == "scoring_budget_exhausted"
+    assert r.early_stopped is False
+    assert r.agent_accepted_id is None
+    assert r.final_attempt is not None
+
+
+def test_no_early_stop_disables_the_patience_break():
+    cfg = ReactConfig(max_iterations=4, early_stop_patience=1, no_early_stop=True)
+    s, series, pool = prepared(cfg)
+    worse = {"combine": "best_single", "model": "bad"}
+    worse2 = {"combine": "best_single", "model": "mediocre"}
+    llm = ScriptedLLM([
+        step("evaluate_strategy", {"strategy": worse}),
+        step("evaluate_strategy", {"strategy": worse2}),
+        step("evaluate_strategy", {"strategy": worse}),
+        step("evaluate_strategy", {"strategy": worse2}),
+    ])
+    r = run_react_loop(s, llm, series, pool)
+    assert r.iterations_used == 4
+    assert r.stop_reason == "iteration_budget_exhausted"
+    assert r.early_stopped is False
+
+
+def test_no_early_stop_default_does_not_change_fingerprint():
+    assert ReactConfig().fingerprint() == ReactConfig().fingerprint()
+    assert ReactConfig().fingerprint() != ReactConfig(no_early_stop=True).fingerprint()
+
+
 def test_early_stop_after_consecutive_non_improvements():
     s, series, pool = prepared(ReactConfig(max_iterations=8, early_stop_patience=2))
     worse = {"combine": "best_single", "model": "bad"}

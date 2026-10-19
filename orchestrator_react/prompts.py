@@ -106,6 +106,7 @@ def build_system_prompt(
     withheld_tools: Optional[Dict[str, str]] = None,
     prompt_format: str = "text",
     reorder_weight_tools: bool = False,
+    no_early_stop: bool = False,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -226,6 +227,18 @@ def build_system_prompt(
             "  Use it: if two attempts differ only slightly, look for a different KIND of",
             "  strategy rather than tuning the winner.",
         ]
+    if no_early_stop:
+        rules += [
+            "- ACCEPT IS DISABLED in this run. Do not call accept. Use every turn",
+            "  to test a genuinely different combination; the final strategy is",
+            "  chosen from the full attempt history after the iteration budget.",
+            "- One tested approach = one evaluate_strategy call. select_*/prune_*/",
+            "  weights_* are preparation, not an approach; preparation must be scored",
+            "  on the next turn. Use existing handles first; do not re-test seeds.",
+            "- The budget counts evaluate_strategy calls; preparation does not consume it.",
+            "- The last validation window is the closest to the blind test; when the",
+            "  three windows disagree, prefer the candidate stable in the last window.",
+        ]
     _check_format(prompt_format)
     if prompt_format == "xml":
         return _system_as_xml(rules)
@@ -237,6 +250,7 @@ def build_system_prompt_v2(
     withheld_tools: Optional[Dict[str, str]] = None,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
+    no_early_stop: bool = False,
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -305,11 +319,17 @@ def build_system_prompt_v2(
         "  2. Test it with evaluate_strategy, building a pool or weights handle first",
         "     only when the hypothesis needs a subset or a fitted weighting.",
         "  3. Read the result against the attempt history and the leader diagnostics.",
-        "  4. Either test a DIFFERENT kind of strategy, or accept the leader.",
+        (
+            "  4. Test a DIFFERENT kind of strategy; accept is disabled in this run."
+            if no_early_stop else
+            "  4. Either test a DIFFERENT kind of strategy, or accept the leader."
+        ),
         "",
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
         *catalog,
-        f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        *([] if no_early_stop else [
+            f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        ]),
         "",
         "OUTPUT FORMAT - exactly three lines, nothing else:",
         "Thought: <one or two sentences on what you want to learn or test next>",
@@ -331,23 +351,50 @@ def build_system_prompt_v2(
         "    Action: evaluate_strategy",
         '    Action Input: {"combine": "best_single", "model": "rf", "rationale": "one model dominates the pool"}',
         "",
-        "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
-        "  - If the leader is a SEED and the verdict is 'indistinguishable', accept it.",
-        "    The runner-up is not statistically better and more turns rarely turn",
-        "    noise into a real gain.",
-        "  - If a strategy you tested leads with a 'separated' margin, accept it.",
-        "  - If your last proposals returned 'SAME forecasts' notes or near-uniform",
-        "    weights, change the POOL or the KIND of combination, not the weighting.",
-        "",
+        *([] if no_early_stop else [
+            "WHEN TO STOP (read LEADER DIAGNOSTICS before deciding):",
+            "  - If the leader is a SEED and the verdict is 'indistinguishable', accept it.",
+            "    The runner-up is not statistically better and more turns rarely turn",
+            "    noise into a real gain.",
+            "  - If a strategy you tested leads with a 'separated' margin, accept it.",
+            "  - If your last proposals returned 'SAME forecasts' notes or near-uniform",
+            "    weights, change the POOL or the KIND of combination, not the weighting.",
+            "",
+        ]),
+        *([
+            "NO ACCEPT IN THIS RUN:",
+            "  - Accept is disabled. Do not call accept.",
+            "  - Use every turn to test a genuinely different combination.",
+            "  - The final strategy is chosen from the full attempt history after the",
+            "    iteration budget, so a failed test cannot make the final worse.",
+            "",
+            "BUDGET RULES (no accept):",
+            "  - One tested approach = one evaluate_strategy call. select_*, prune_*,",
+            "    and weights_* are preparation, not an approach.",
+            "  - Use an existing pool/handle first. Build a new pool or weights only",
+            "    when the subset or weighting IS the hypothesis, and score it next turn.",
+            "  - Never spend two turns in a row without a score; never build a handle",
+            "    you will not score.",
+            "  - The seeded baselines are already scored. Use the best seed as the floor",
+            "    and test combinations that differ from it.",
+            "  - The diagnostics are already in the turn context; do not spend turns on them.",
+            "  - The budget is the number of evaluate_strategy calls; preparation actions",
+            "    do not consume it.",
+            "  - The last validation window is the closest to the blind test. When the",
+            "    three windows disagree, prefer the candidate stable in the last window.",
+            "",
+        ] if no_early_stop else []),
         "RULES:",
         "- Weight tools return a HANDLE (w1, w2, ...); pass it to evaluate_strategy",
         "  as 'weights'. You never see the numbers, and you do not need to.",
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
         "- Never assume w1 or pool1 exists: create it in this run before you refer to it.",
-        "- When you accept, justify the choice in terms of OBSERVABLE SERIES",
-        "  CHARACTERISTICS (trend, seasonality, ranking stability, redundancy), not",
-        "  just 'it had the lowest error'.",
+        *([] if no_early_stop else [
+            "- When you accept, justify the choice in terms of OBSERVABLE SERIES",
+            "  CHARACTERISTICS (trend, seasonality, ranking stability, redundancy), not",
+            "  just 'it had the lowest error'.",
+        ]),
     ]
     if include_history_rules:
         lines += [

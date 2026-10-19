@@ -173,6 +173,9 @@ def exec_dataset_orchestrator(
     min_windows_for_ols: int = 5,
     max_iterations: int = 12,
     early_stop_patience: int = 4,
+    no_early_stop: bool = False,
+    scoring_budget: bool = False,
+    max_total_turns: int = 0,
     final_strategy: str = "argmin",
     seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
@@ -354,6 +357,9 @@ def exec_dataset_orchestrator(
     cfg.min_windows_for_ols = int(min_windows_for_ols)
     cfg.max_iterations = int(max_iterations)
     cfg.early_stop_patience = int(early_stop_patience)
+    cfg.no_early_stop = bool(no_early_stop)
+    cfg.scoring_budget = bool(scoring_budget)
+    cfg.max_total_turns = int(max_total_turns)
     cfg.final_strategy = final_strategy
     cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
@@ -781,6 +787,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "validation windows (default 5; --windows 3 withholds it)")
     p.add_argument("--max-iterations", type=int, default=12)
     p.add_argument("--early-stop-patience", type=int, default=4)
+    p.add_argument("--no-early-stop", action="store_true",
+                   help="experiment: reject terminal accept and the patience break, "
+                        "so the agent uses the full --max-iterations budget")
+    p.add_argument("--scoring-budget", action="store_true",
+                   help="experiment: --max-iterations counts evaluate_strategy calls, "
+                        "not tool turns; preparation does not consume the budget")
+    p.add_argument("--max-total-turns", type=int, default=0,
+                   help="hard cap on total turns with --scoring-budget (0 = 3 x max-iterations)")
     p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
@@ -908,6 +922,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             min_windows_for_ols=args.min_windows_for_ols,
             max_iterations=args.max_iterations,
             early_stop_patience=args.early_stop_patience,
+            no_early_stop=args.no_early_stop,
+            scoring_budget=args.scoring_budget,
+            max_total_turns=args.max_total_turns,
             final_strategy=args.final_strategy,
             seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,
