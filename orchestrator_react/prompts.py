@@ -420,7 +420,8 @@ def build_system_prompt_v2(
                 "    weighted(pool_full, weights='inverse_error').",
                 "    These are simple, robust references. Use them when the series",
                 "    profile suggests them; ignore them otherwise. Stable-pool and",
-                "    weighted handles are also available in HANDLES.",
+                "    weighted handles are also available in HANDLES; other weight",
+                "    methods are listed under WEIGHT METHODS each turn.",
                 "",
             ] if no_seed_attempts else []),
             *([
@@ -786,6 +787,21 @@ def build_turn_prompt(
         parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
     close_("handles")
 
+    methods = _available_weight_methods(state)
+    parts.append("")
+    open_("weight_methods")
+    parts.append(
+        "WEIGHT METHODS available for evaluate_strategy['weights'] "
+        "(optional; defaults):"
+    )
+    parts.append("  " + ", ".join(methods))
+    if state.weights:
+        parts.append(
+            "  Existing handles can also be passed directly: "
+            + ", ".join(sorted(state.weights))
+        )
+    close_("weight_methods")
+
     if untried:
         parts.append("")
         open_("untried")
@@ -927,6 +943,18 @@ def _slim_diagnosis(diagnosis: Dict[str, Any]) -> Dict[str, Any]:
         for k in ("regime", "predictability", "combination_hint", "risks", "narrative")
         if k in diagnosis
     }
+
+
+def _available_weight_methods(state: ReactState) -> List[str]:
+    methods = [
+        "inverse_error", "softmax_neg_error", "error_trend", "feature_based",
+        "meta_model", "best_per_horizon", "topk_per_horizon", "forward",
+    ]
+    if state.n_windows >= int(getattr(state.config, "min_windows_for_ols", 5)):
+        methods.insert(3, "ols")
+    if getattr(state, "pooled_meta_model", None) is not None:
+        methods.insert(4, "pooled_meta_model")
+    return methods
 
 
 def _handles_summary(state: ReactState) -> Dict[str, Any]:

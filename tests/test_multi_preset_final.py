@@ -276,3 +276,17 @@ def test_no_seed_untried_menu_offers_classic_weighted_method():
         c.get("combine") == "weighted" and c.get("weights") == "inverse_error"
         for c in cands
     )
+
+
+def test_turn_prompt_lists_available_weight_methods():
+    cfg = ReactConfig(score_preset="smape_only", no_seed_attempts=True)
+    s, series, pool = prepared(cfg)
+    text = P.build_turn_prompt(
+        s, series, pool, [], 1, 24, no_accept=True,
+        score_target=12, scores_used=0,
+    )
+    assert "WEIGHT METHODS available for evaluate_strategy['weights']" in text
+    assert "inverse_error" in text
+    assert "softmax_neg_error" in text
+    assert "ols" not in text.split("WEIGHT METHODS", 1)[1].split("</weight_methods>", 1)[0]
+    assert "pooled_meta_model" not in text.split("WEIGHT METHODS", 1)[1].split("</weight_methods>", 1)[0]
