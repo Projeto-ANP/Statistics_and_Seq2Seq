@@ -175,6 +175,7 @@ def exec_dataset_orchestrator(
     early_stop_patience: int = 4,
     final_strategy: str = "argmin",
     top_k: int = 3,
+    top3_exclude_families: Sequence[str] = (),
     seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
     mcs_alpha: float = 0.10,
@@ -358,6 +359,7 @@ def exec_dataset_orchestrator(
     cfg.early_stop_patience = int(early_stop_patience)
     cfg.final_strategy = final_strategy
     cfg.top_k = int(top_k)
+    cfg.top3_exclude_families = tuple(top3_exclude_families or ())
     cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
     cfg.mcs_alpha = float(mcs_alpha)
@@ -806,6 +808,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "score units (default 0.10)")
     p.add_argument("--top-k", type=int, default=3,
                    help="number of validation candidates shown to the agent in top3_agent mode")
+    p.add_argument("--top3-exclude-families", nargs="+", default=[],
+                   help="families removed from the final top3_agent shortlist before the "
+                        "top-k cut (e.g. mean trimmed_mean); seeds still run and remain "
+                        "the deterministic floor")
     p.add_argument("--seed-gate-margin", type=float, default=0.01,
                    help="relative validation-score margin the agent must clear over "
                         "the best seed for seed_gate to apply its proposal (default 0.01)")
@@ -922,6 +928,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             early_stop_patience=args.early_stop_patience,
             final_strategy=args.final_strategy,
             top_k=args.top_k,
+            top3_exclude_families=args.top3_exclude_families,
             seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,
             mcs_alpha=args.mcs_alpha,

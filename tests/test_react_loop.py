@@ -1582,6 +1582,42 @@ def test_top3_decision_prompt_labels_are_dynamic_for_top5():
     assert "\nE:" in user
 
 
+def test_top3_exclude_families_default_does_not_change_fingerprint():
+    a = ReactConfig()
+    b = ReactConfig()
+    c = ReactConfig(top3_exclude_families=("mean", "trimmed_mean"))
+    assert a.fingerprint() == b.fingerprint()
+    assert a.fingerprint() != c.fingerprint()
+
+
+def test_top3_agent_excludes_families_from_shortlist():
+    cfg = ReactConfig(
+        max_iterations=3, early_stop_patience=1,
+        final_strategy="top3_agent", prompt_v3=True,
+        top3_exclude_families=("mean", "trimmed_mean"),
+    )
+    s, series, pool = prepared(cfg)
+    llm = ScriptedLLM(
+        [step("list_attempts", {}) for _ in range(3)]
+        + [
+            '{"choice":"A","confidence":"high","series_pattern":"stable",'
+            '"why_choice":"robust family",'
+            '"why_not_others":"mean and trimmed are excluded"}'
+        ]
+    )
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.final_source == "agent_top3"
+    assert r.top3_candidates
+    assert all(
+        c["family"] not in {"mean", "trimmed_mean"} for c in r.top3_candidates
+    )
+    chosen_family = next(
+        c["family"] for c in r.top3_candidates
+        if c["attempt_id"] == r.final_attempt.attempt_id
+    )
+    assert chosen_family not in {"mean", "trimmed_mean"}
+
+
 def test_top3_agent_does_not_end_on_accept():
     cfg = ReactConfig(
         max_iterations=3, early_stop_patience=1,

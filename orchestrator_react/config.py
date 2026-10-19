@@ -206,6 +206,10 @@ class ReactConfig:
     final_strategy: Literal["argmin", "top3_agent", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
     #: Number of validation candidates shown to the agent in top3_agent mode.
     top_k: int = 3
+    #: Families removed from the final top3_agent shortlist after the validation
+    #: ranking, before the top-k cut. Seeded attempts still run and still form the
+    #: deterministic floor; this only changes which candidates the agent may pick.
+    top3_exclude_families: tuple[str, ...] = ()
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the
@@ -326,7 +330,12 @@ class ReactConfig:
         d = self.to_dict()
         # An experiment flag left at False must not change the id of a run that
         # never heard of it.
-        for flag in ("reorder_weight_tools", "drop_redundant_combine_actions", "reduced_seeding"):
+        for flag in (
+            "reorder_weight_tools",
+            "drop_redundant_combine_actions",
+            "reduced_seeding",
+            "top3_exclude_families",
+        ):
             if not d.get(flag):
                 d.pop(flag, None)
         blob = json.dumps(d, sort_keys=True, ensure_ascii=False)

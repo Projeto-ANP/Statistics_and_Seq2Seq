@@ -514,7 +514,14 @@ def run_react_loop(
     if top3_mode and client is not None:
         ranked = state.ranked_attempts()
         top_k = max(1, int(getattr(config, "top_k", 3)))
+        excluded_families = set(getattr(config, "top3_exclude_families", ()) or ())
+        if excluded_families:
+            ranked = [
+                a for a in ranked
+                if P._family_of(state, a.spec) not in excluded_families
+            ]
         top = ranked[:top_k]
+        leader = top[0] if top else best
         rng = random.Random(int(getattr(state, "dataset_index", 0) or 0) * 1000003 + len(top))
         order = list(range(len(top)))
         rng.shuffle(order)
@@ -522,7 +529,7 @@ def run_react_loop(
         labels = "ABCDEFGHIJ"[: len(cands)]
         payload: Dict[str, Any] = {}
         choice = ""
-        attempt = best
+        attempt = leader
         try:
             system3, user3 = P.build_top3_decision_prompt(
                 state, series_card, pool_card, diagnosis,
@@ -532,7 +539,7 @@ def run_react_loop(
                         "family": P._family_of(state, a.spec),
                         "score": a.score,
                         "per_window_scores": list(getattr(a, "per_window_scores", []) or []),
-                        "gap": float(a.score) - float(best.score) if best is not None else 0.0,
+                        "gap": float(a.score) - float(leader.score) if leader is not None else 0.0,
                         "origin": a.origin,
                         "rationale": a.rationale,
                     }
