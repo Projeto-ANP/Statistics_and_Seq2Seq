@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from orchestrator_react import features as F
-from orchestrator_react.config import SCORE_PRESETS
+from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS
 from orchestrator_react import meta_model as MM
 from orchestrator_react.selection import (
     PoolRecipe,
@@ -941,6 +941,11 @@ def evaluate_strategy(
 
     preset = score_preset if score_preset is not None else spec.pop("score_preset", None)
     if preset is not None:
+        if getattr(state.config, "multi_preset_final", False):
+            raise ValueError(
+                "the scoring preset is chosen only at the final decision in this run; "
+                "evaluate_strategy returns all three scores and does not change them"
+            )
         preset = str(preset).strip()
         if preset not in SCORE_PRESETS:
             raise ValueError(
@@ -976,7 +981,7 @@ def evaluate_strategy(
             ),
         }
 
-    return {
+    out: Dict[str, Any] = {
         "id": attempt.attempt_id,
         "strategy": attempt.spec,
         "already_tested": not is_new,
@@ -1000,6 +1005,24 @@ def evaluate_strategy(
         "worse_than_best_by": gap,
         "is_best": bool(attempt is best),
     }
+    if getattr(state.config, "multi_preset_final", False):
+        scores_by = state.preset_scores(attempt, FINAL_SCORE_PRESETS)
+        board = state.preset_board(FINAL_SCORE_PRESETS, top_n=1)
+        out["scores_by_preset"] = {
+            name: (round(float(value), 4) if np.isfinite(value) else None)
+            for name, value in scores_by.items()
+        }
+        out["rank_by_preset"] = {
+            name: state.ranked_attempts_for_preset(name).index(attempt) + 1
+            for name in FINAL_SCORE_PRESETS
+        }
+        out["best_by_preset"] = {
+            name: board[name]["best"] for name in FINAL_SCORE_PRESETS
+        }
+        out["seed_best_by_preset"] = {
+            name: board[name]["best_seed"] for name in FINAL_SCORE_PRESETS
+        }
+    return out
 
 
 def sanity_check(state: ReactState, reference: Any) -> Dict[str, Any]:

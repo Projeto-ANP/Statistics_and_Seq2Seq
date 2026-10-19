@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from orchestrator_react.config import FINAL_SCORE_PRESETS
+
 
 #: Section 4.1 — never rename, never reorder, never change how these are computed.
 CORE_COLUMNS: List[str] = [
@@ -374,6 +376,10 @@ def _agent_trace(outcome: Any) -> Dict[str, Any]:
             "aggregate": {k: _finite(v) for k, v in a.aggregate.items()},
             "per_window": a.per_window,
             "per_window_scores": [_finite(v) for v in a.per_window_scores],
+            "preset_scores": (
+                {k: _finite(v) for k, v in state.preset_scores(a, FINAL_SCORE_PRESETS).items()}
+                if getattr(state.config, "multi_preset_final", False) else {}
+            ),
             "agent_converged": bool(a.agent_converged),
             "agent_rationale": a.agent_rationale,
         })
@@ -403,6 +409,8 @@ def _agent_trace(outcome: Any) -> Dict[str, Any]:
             "score_weights": dict(react.score_weights),
             "score_weights_held_out": react.score_weights_held_out,
             "score_weights_skipped": react.score_weights_skipped,
+            "final_score_preset": react.final_score_preset,
+            "preset_board": dict(react.preset_board),
             "selection_confidence": state.selection_confidence(),
         },
         "stop": {

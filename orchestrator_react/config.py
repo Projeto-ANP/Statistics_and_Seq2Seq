@@ -33,6 +33,12 @@ SCORE_PRESETS: Dict[str, Dict[str, float]] = {
     "pocid_only": {"a_rmse": 0.0, "b_smape": 0.0, "c_mape": 0.0, "d_pocid": 1.0},
 }
 
+FINAL_SCORE_PRESETS: tuple[str, ...] = (
+    "smape_pocid_50_50",
+    "smape60_pocid40",
+    "smape40_pocid60",
+)
+
 
 PoolMode = Literal["full", "top_k_error", "top_k_stable"]
 BacktestMode = Literal["expanding", "loo"]
@@ -316,6 +322,7 @@ class ReactConfig:
     #: choice; `None` means all of them.
     score_preset: str = "balanced"
     score_auto_candidates: Optional[List[str]] = None
+    multi_preset_final: bool = False
     n_validation_windows: int = 3
     seasonal_period: Optional[int] = None  # None => inferred from the frequency
     mape_zero: Literal["skip", "epsilon"] = "skip"
@@ -351,6 +358,7 @@ class ReactConfig:
             "no_early_stop",
             "scoring_budget",
             "max_total_turns",
+            "multi_preset_final",
         ):
             if not d.get(flag):
                 d.pop(flag, None)

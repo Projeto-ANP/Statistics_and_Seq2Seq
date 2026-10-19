@@ -18,7 +18,7 @@ import numpy as np
 
 from orchestrator_react import metrics as M
 from orchestrator_react.combiners import COMBINE_METHODS, apply_combination
-from orchestrator_react.config import SCORE_PRESETS, ReactConfig
+from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS, ReactConfig
 from orchestrator_react.selection import PoolRecipe, resolve_pool_recipe
 from orchestrator_react.weighting import WeightsRecipe, resolve_recipe, summarize_weights
 
@@ -739,11 +739,11 @@ class ReactState:
             return dict(self._active_score_weights)
         return self.config.score_weights()
 
-    def _window_score(self, per_window_scores: Sequence[float]) -> float:
+    @staticmethod
+    def _window_score_values(per_window_scores: Sequence[float], mode: str) -> float:
         vals = [float(v) for v in per_window_scores if np.isfinite(v)]
         if not vals:
             return float("inf")
-        mode = str(getattr(self.config, "score_window_mode", "mean"))
         if mode == "last":
             return vals[-1]
         if mode == "last2":
@@ -756,6 +756,81 @@ class ReactState:
                 w /= w.sum()
             return float(np.dot(w, vals))
         return float(np.mean(vals))
+
+    def _window_score(self, per_window_scores: Sequence[float]) -> float:
+        return self._window_score_values(
+            per_window_scores, str(getattr(self.config, "score_window_mode", "mean"))
+        )
+
+    def preset_score(self, attempt: Attempt, preset: str) -> float:
+        if preset not in SCORE_PRESETS:
+            raise ValueError(f"unknown score preset {preset!r}")
+        weights = dict(SCORE_PRESETS[preset])
+        anchor = self.baseline_per_window()
+        scores = [
+            float(M.composite_score(attempt.per_window[i], anchor[i], weights))
+            for i in range(min(len(attempt.per_window), len(anchor)))
+        ]
+        return self._window_score_values(
+            scores, str(getattr(self.config, "score_window_mode", "mean"))
+        )
+
+    def preset_scores(
+        self, attempt: Attempt, presets: Optional[Sequence[str]] = None
+    ) -> Dict[str, float]:
+        names = list(presets or FINAL_SCORE_PRESETS)
+        return {name: self.preset_score(attempt, name) for name in names}
+
+    def ranked_attempts_for_preset(
+        self, preset: str, attempts: Optional[Sequence[Attempt]] = None
+    ) -> List[Attempt]:
+        pool = list(attempts if attempts is not None else self.attempts)
+        return sorted(
+            pool,
+            key=lambda a: (
+                float("inf") if not np.isfinite(self.preset_score(a, preset))
+                else self.preset_score(a, preset)
+            ),
+        )
+
+    def best_attempt_for_preset(
+        self, preset: str, attempts: Optional[Sequence[Attempt]] = None
+    ) -> Optional[Attempt]:
+        ranked = self.ranked_attempts_for_preset(preset, attempts)
+        return ranked[0] if ranked else None
+
+    def _preset_ref(self, attempt: Attempt, preset: str) -> Dict[str, Any]:
+        score = self.preset_score(attempt, preset)
+        return {
+            "id": attempt.attempt_id,
+            "strategy": _spec_label(attempt.spec),
+            "origin": attempt.origin,
+            "n_models": attempt.n_models,
+            "score": round(float(score), 4) if np.isfinite(score) else None,
+        }
+
+    def preset_board(
+        self, presets: Optional[Sequence[str]] = None, top_n: int = 3
+    ) -> Dict[str, Dict[str, Any]]:
+        names = list(presets or FINAL_SCORE_PRESETS)
+        out: Dict[str, Dict[str, Any]] = {}
+        for preset in names:
+            ranked = self.ranked_attempts_for_preset(preset)
+            seeds = [a for a in ranked if a.origin == "baseline"]
+            agents = [a for a in ranked if a.origin != "baseline"]
+            out[preset] = {
+                "best": self._preset_ref(ranked[0], preset) if ranked else None,
+                "best_seed": self._preset_ref(seeds[0], preset) if seeds else None,
+                "best_agent": self._preset_ref(agents[0], preset) if agents else None,
+                "top": [self._preset_ref(a, preset) for a in ranked[: max(1, int(top_n))]],
+            }
+        return out
+
+    def apply_final_preset(self, preset: str) -> Optional[Attempt]:
+        if preset not in SCORE_PRESETS:
+            raise ValueError(f"unknown score preset {preset!r}")
+        self.apply_score_weights(SCORE_PRESETS[preset])
+        return self.best_attempt()
 
     def apply_score_weights(self, weights: Dict[str, float]) -> "ReactState":
         """Make `weights` the active scoring criterion and re-rank the history.

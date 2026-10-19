@@ -22,13 +22,20 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
 from orchestrator_react import prompts as P
-from orchestrator_react.config import ReactConfig
-from orchestrator_react.llm import AgentStep, LLMClient, LLMError, parse_agent_step, split_think
+from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS, ReactConfig
+from orchestrator_react.llm import (
+    AgentStep,
+    LLMClient,
+    LLMError,
+    extract_json,
+    parse_agent_step,
+    split_think,
+)
 from orchestrator_react.registry import (
     TERMINAL_ACTION,
     call_tool,
@@ -111,6 +118,9 @@ class ReactResult:
     score_weights_name: str = ""
     score_weights_held_out: Optional[float] = None
     score_weights_skipped: str = ""
+    final_score_preset: str = ""
+    preset_board: Dict[str, Any] = field(default_factory=dict)
+    final_preset_raw: str = ""
     #: Per-turn record that would bloat the CSV (full raw response, full thought,
     #: Ollama token counters, think-block size); written to the artifacts only.
     step_details: List[Dict[str, Any]] = field(default_factory=list)
@@ -147,6 +157,8 @@ class ReactResult:
             "score_weights_name": self.score_weights_name,
             "score_weights_held_out": self.score_weights_held_out,
             "score_weights_skipped": self.score_weights_skipped,
+            "final_score_preset": self.final_score_preset,
+            "preset_board": dict(self.preset_board),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "derived": dict(self.derived),
@@ -197,11 +209,21 @@ def run_react_loop(
     # history, before the loop opens: exploration, early stopping and the final
     # ranking all then use the same score. Validation only; see
     # `ReactState.auto_score_weights`.
-    _apply_auto_score_weights(state, config, result)
+    multi_preset = bool(getattr(config, "multi_preset_final", False))
+    if multi_preset:
+        config.score_window_mode = "weighted"
+        state.apply_score_weights(SCORE_PRESETS["smape_pocid_50_50"])
+    else:
+        _apply_auto_score_weights(state, config, result)
     result.final_attempt = state.best_attempt()
 
     if client is None or skip_reason:
         result.stop_reason = skip_reason or "no_llm_client"
+        if multi_preset:
+            result.final_score_preset = "smape_pocid_50_50"
+            result.score_weights = dict(SCORE_PRESETS[result.final_score_preset])
+            result.score_weights_name = result.final_score_preset
+            result.preset_board = state.preset_board(FINAL_SCORE_PRESETS)
         result.justification = _fallback_justification(state, series_card, pool_card)
         result.elapsed_s = time.perf_counter() - started
         _finalize_trace(state, result, started)
@@ -212,7 +234,7 @@ def run_react_loop(
     result.withheld_tools = dict(withheld)
     scoring_budget = bool(getattr(config, "scoring_budget", False))
     no_accept = bool(
-        getattr(config, "no_early_stop", False) or scoring_budget
+        getattr(config, "no_early_stop", False) or scoring_budget or multi_preset
     )
     if getattr(config, "prompt_v2", False):
         system = P.build_system_prompt_v2(
@@ -222,6 +244,7 @@ def run_react_loop(
             no_early_stop=no_accept,
             direct_models=scoring_budget,
             score_window_mode=getattr(config, "score_window_mode", "mean"),
+            multi_preset_final=multi_preset,
         )
     else:
         system = P.build_system_prompt(
@@ -231,6 +254,7 @@ def run_react_loop(
             no_early_stop=no_accept,
             direct_models=scoring_budget,
             score_window_mode=getattr(config, "score_window_mode", "mean"),
+            multi_preset_final=multi_preset,
         )
     scratchpad: List[Dict[str, Any]] = []
     last_observation: Optional[Dict[str, Any]] = None
@@ -269,6 +293,8 @@ def run_react_loop(
             untried=P.untried_candidates(state, pool_card),
             repeat_notice=last_duplicate,
             no_accept=no_accept,
+            score_presets=FINAL_SCORE_PRESETS if multi_preset else None,
+            score_window_mode=str(getattr(config, "score_window_mode", "weighted")),
         )
 
         # Two different things can go wrong asking for one turn, and both are
@@ -533,9 +559,14 @@ def run_react_loop(
     else:
         result.stop_reason = "iteration_budget_exhausted"
 
+    if multi_preset and client is not None and not skip_reason:
+        _choose_final_preset(state, client, system, result)
+
     # ── principle 5: the applied strategy is the best of the whole history ───
     best = state.best_attempt()
     result.final_attempt = best
+    if multi_preset:
+        result.preset_board = state.preset_board(FINAL_SCORE_PRESETS)
     if result.agent_accepted_id and best and result.agent_accepted_id != best.attempt_id:
         result.overridden = True
         result.errors.append(
@@ -673,6 +704,81 @@ def _score(attempt: Optional[Attempt]) -> float:
     if attempt is None or not np.isfinite(attempt.score):
         return float("inf")
     return float(attempt.score)
+
+
+def _parse_final_preset(raw: str, presets: Sequence[str]) -> Optional[str]:
+    _, body = split_think(str(raw or ""))
+    obj = extract_json(body)
+    if isinstance(obj, dict):
+        for key in ("score_preset", "preset", "criterion", "score"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip() in presets:
+                return value.strip()
+    for name in presets:
+        if name in (body or str(raw or "")):
+            return name
+    return None
+
+
+def _choose_final_preset(
+    state: ReactState, client: LLMClient, system: str, result: "ReactResult"
+) -> str:
+    presets = list(FINAL_SCORE_PRESETS)
+    prompt = P.build_final_preset_prompt(
+        state, presets, str(getattr(state.config, "score_window_mode", "weighted"))
+    )
+    started = time.perf_counter()
+    raw = ""
+    error = ""
+    if hasattr(client, "seed_offset"):
+        client.seed_offset = 0
+    try:
+        raw = client.complete(system, prompt)
+    except Exception as exc:
+        error = str(exc)
+        result.errors.append(f"final preset decision failed: {error}")
+    llm_s = round(time.perf_counter() - started, 4)
+    preset = _parse_final_preset(raw, presets)
+    valid = preset is not None
+    if preset is None:
+        preset = "smape_pocid_50_50"
+        result.errors.append(
+            "final preset decision was invalid or empty; falling back to "
+            f"{preset}"
+        )
+    state.apply_final_preset(preset)
+    result.final_score_preset = preset
+    result.score_weights = dict(SCORE_PRESETS[preset])
+    result.score_weights_name = preset
+    result.final_preset_raw = str(raw)[:4000]
+    best = state.best_attempt()
+    entry = {
+        "iteration": result.iterations_used,
+        "thought": "",
+        "action": "choose_score_preset",
+        "action_args": {"score_preset": preset},
+        "observation_summary": (
+            f"chose {preset}; leader {best.attempt_id if best else None}"
+        ),
+        "llm_call_s": llm_s,
+        "tool_exec_s": 0.0,
+    }
+    result.trajectory.append(entry)
+    result.step_details.append({
+        **entry,
+        "turn_started_at": _utcnow(),
+        "ok": valid,
+        "raw_response": raw,
+        "final_preset": preset,
+        "final_preset_valid": valid,
+        "error": error,
+        "observation": {
+            "score_preset": preset,
+            "leader": best.attempt_id if best else None,
+        },
+        "turn_finished_at": _utcnow(),
+    })
+    return preset
 
 
 def _apply_auto_score_weights(state: ReactState, config: ReactConfig, result: "ReactResult") -> None:

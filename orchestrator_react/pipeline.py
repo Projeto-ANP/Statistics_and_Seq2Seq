@@ -351,7 +351,10 @@ class SeriesOutcome:
             # -- kept from the old format, re-pointed at the new architecture ---
             "description": _dumps(self.decision()),
             "decision_report": self.decision_report(),
-            "score_preset": cfg.score_preset,
+            "score_preset": (
+                (getattr(react, "final_score_preset", "") if react else "")
+                or cfg.score_preset
+            ),
             "tool_missing": bool(tools.get("tool_missing", False)),
             "tools_called": _dumps(tools.get("tools_called", [])),
             **_provenance_columns(self.state),

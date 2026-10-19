@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
-from orchestrator_react.config import SCORE_PRESETS
+from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS
 from orchestrator_react.registry import TERMINAL_ACTION, describe_tools
 from orchestrator_react.state import FULL_POOL, ReactState
 
@@ -110,6 +110,7 @@ def build_system_prompt(
     no_early_stop: bool = False,
     direct_models: bool = False,
     score_window_mode: str = "mean",
+    multi_preset_final: bool = False,
 ) -> str:
     """System prompt: the role, the closed action space and the output contract.
 
@@ -246,7 +247,18 @@ def build_system_prompt(
             "- Use exact model names from the pool; weights must be a known method",
             "  name or an existing handle. Do not call accept.",
         ]
-    if direct_models:
+    if direct_models and multi_preset_final:
+        rules += [
+            "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
+            "  'models' (the subset) and the combination in the same call; the",
+            "  harness builds the pool/weights. There are no select/weights actions.",
+            "- MULTI-PRESET FINAL: every evaluate_strategy returns three scores for",
+            "  the same attempt: " + ", ".join(FINAL_SCORE_PRESETS) + ".",
+            f"  The window aggregation is fixed to '{score_window_mode}'.",
+            "- Do NOT pass score_preset during the loop. After the scoring budget",
+            "  you choose ONE of the three criteria; the best attempt under it is applied.",
+        ]
+    elif direct_models:
         rules += [
             "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
             "  'models' (the subset) and the combination in the same call; the",
@@ -268,6 +280,7 @@ def build_system_prompt_v2(
     no_early_stop: bool = False,
     direct_models: bool = False,
     score_window_mode: str = "mean",
+    multi_preset_final: bool = False,
 ) -> str:
     """Structured system prompt: procedure, grouped catalog, worked examples.
 
@@ -342,12 +355,22 @@ def build_system_prompt_v2(
             '    evaluate_strategy {"combine":"best_single","model":"rf","models":["rf"]}',
             '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
             '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
-            "  You may also choose a scoring preset on the same call:",
-            "    score_preset=<one of the presets below>.",
-            f"  Score presets: {', '.join(SCORE_PRESETS)}. The harness aggregates",
-            f"  the validation windows by '{score_window_mode}'.",
-            "  Pick the preset that matches the series; changing it re-scores the history.",
-            "",
+            *([
+                "  MULTI-PRESET FINAL: every evaluate_strategy returns the same",
+                "  attempt scored under three criteria:",
+                f"    {', '.join(FINAL_SCORE_PRESETS)}.",
+                f"  The window aggregation is fixed to '{score_window_mode}'.",
+                "  Do NOT pass score_preset during the loop. After the budget you",
+                "  choose ONE criterion; the best attempt under it is applied.",
+                "",
+            ] if multi_preset_final else [
+                "  You may also choose a scoring preset on the same call:",
+                "    score_preset=<one of the presets below>.",
+                f"  Score presets: {', '.join(SCORE_PRESETS)}. The harness aggregates",
+                f"  the validation windows by '{score_window_mode}'.",
+                "  Pick the preset that matches the series; changing it re-scores the history.",
+                "",
+            ]),
         ] if direct_models else []),
         "PROCEDURE:",
         "  1. Read the diagnostics and form ONE hypothesis about this series.",
@@ -551,6 +574,8 @@ def build_turn_prompt(
     untried: Optional[Sequence[Dict[str, Any]]] = None,
     repeat_notice: bool = False,
     no_accept: bool = False,
+    score_presets: Optional[Sequence[str]] = None,
+    score_window_mode: str = "weighted",
 ) -> str:
     """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget.
 
@@ -617,6 +642,28 @@ def build_turn_prompt(
         parts.append("LEADER DIAGNOSTICS (validation only):")
         parts.append(_compact(leader, limit=600))
         close_("leader_diagnostics")
+
+    if score_presets:
+        board = state.preset_board(score_presets)
+        parts.append("")
+        open_("score_rankings")
+        parts.append(
+            f"SCORE RANKINGS (fixed window '{score_window_mode}'; lower is better):"
+        )
+        for name in score_presets:
+            row = board.get(name, {})
+            seed = row.get("best_seed") or {}
+            best = row.get("best") or {}
+            parts.append(
+                f"  {name}: best seed {seed.get('id')} ({seed.get('score')}), "
+                f"best overall {best.get('id')} ({best.get('score')}, "
+                f"{best.get('origin')})"
+            )
+        parts.append(
+            "  Every evaluate_strategy returns all three scores. The preset is "
+            "chosen only at the final decision."
+        )
+        close_("score_rankings")
 
     handles = _handles_summary(state)
     parts.append("")
@@ -807,6 +854,44 @@ def _unscored_weights(state: ReactState) -> List[str]:
     return [h for h in state.weights if h not in used]
 
 
+def build_final_preset_prompt(
+    state: ReactState,
+    presets: Optional[Sequence[str]] = None,
+    score_window_mode: str = "weighted",
+) -> str:
+    names = list(presets or FINAL_SCORE_PRESETS)
+    board = state.preset_board(names, top_n=3)
+    lines = [
+        "FINAL SCORE CHOICE.",
+        "",
+        "The scoring budget is over. Validation is complete; the blind test is not visible.",
+        f"The three criteria share the fixed window aggregation '{score_window_mode}'.",
+        "Choose exactly ONE criterion for this series. The best attempt under that",
+        "criterion is the one that will be applied.",
+        "",
+        "RANKINGS (lower score is better):",
+    ]
+    for name in names:
+        row = board.get(name, {})
+        lines.append(f"  {name}:")
+        for item in (row.get("top") or []):
+            lines.append(
+                f"    {item.get('id')} {item.get('origin')} score={item.get('score')} "
+                f"{item.get('strategy')}"
+            )
+        seed = row.get("best_seed") or {}
+        lines.append(
+            f"    best seed: {seed.get('id')} score={seed.get('score')}"
+        )
+    lines += [
+        "",
+        "Return exactly one JSON object and nothing else:",
+        '  {"score_preset": "<one of: ' + ", ".join(names) + '>"}',
+        "The preset must be one of the three names exactly.",
+    ]
+    return "\n".join(lines)
+
+
 def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) -> str:
     """One-line digest of a tool result, for the scratchpad and the trajectory.
 
@@ -821,10 +906,16 @@ def summarize_observation(action: str, ok: bool, observation: Dict[str, Any]) ->
         tail = ""
         if not observation.get("is_best"):
             tail = f", leader is {leader.get('id')} ({leader.get('strategy', '?')})"
+        scores = observation.get("scores_by_preset") or {}
+        score_tail = (
+            " | " + " ".join(f"{k}={v}" for k, v in scores.items())
+            if scores else ""
+        )
         return (
             f"rank {observation.get('rank')}/{observation.get('total_attempts')}"
             f" score={observation.get('score')}"
             f" rmse={observation.get('metrics', {}).get('rmse')}"
+            + score_tail
             + (" (best so far)" if observation.get("is_best") else tail)
             + (" [already tested]" if observation.get("already_tested") else "")
             + (

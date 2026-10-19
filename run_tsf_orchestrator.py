@@ -196,6 +196,7 @@ def exec_dataset_orchestrator(
     score_preset: str = "balanced",
     score_window_mode: str = "mean",
     score_auto_candidates: Optional[Sequence[str]] = None,
+    multi_preset_final: bool = False,
     show_attempt_history: bool = True,
     prompt_format: str = "xml",
     reorder_weight_tools: bool = False,
@@ -380,6 +381,10 @@ def exec_dataset_orchestrator(
     cfg.score_preset = score_preset
     cfg.score_window_mode = score_window_mode
     cfg.score_auto_candidates = list(score_auto_candidates) if score_auto_candidates else None
+    cfg.multi_preset_final = bool(multi_preset_final)
+    if cfg.multi_preset_final:
+        cfg.score_preset = "smape_pocid_50_50"
+        cfg.score_window_mode = "weighted"
     cfg.show_attempt_history = bool(show_attempt_history)
     cfg.prompt_format = prompt_format
     cfg.reorder_weight_tools = bool(reorder_weight_tools)
@@ -885,6 +890,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "leave-one-window-out on VALIDATION only")
     p.add_argument("--score-auto-candidates", nargs="+", default=None,
                    help="presets the automatic choice may pick from (default: all)")
+    p.add_argument("--multi-preset-final", action="store_true",
+                   help="score every attempt under the three fixed SMAPE/POCID "
+                        "presets on the weighted window and let the agent choose "
+                        "one at the final decision")
     p.add_argument("--no-history", action="store_true", help="ablation 4: hide the attempt history")
     p.add_argument("--calibration-gate", action="store_true")
 
@@ -956,6 +965,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             score_preset=args.score_preset,
             score_window_mode=args.score_window_mode,
             score_auto_candidates=args.score_auto_candidates,
+            multi_preset_final=args.multi_preset_final,
             show_attempt_history=not args.no_history,
             prompt_format=args.prompt_format,
             reorder_weight_tools=args.reorder_weight_tools,
