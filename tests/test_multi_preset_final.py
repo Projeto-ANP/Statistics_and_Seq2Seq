@@ -213,3 +213,42 @@ def test_locked_smape_only_prompt_states_the_fixed_criterion():
     assert "FIXED to 'smape_only'" in text
     assert "POCID is" in text
     assert "You may also choose a scoring preset" not in text
+
+
+def test_ranking_trace_saves_full_validation_and_test_orders():
+    cfg = ReactConfig(score_preset="smape_only", allow_agent_score_preset=False)
+    s, _, _ = prepared(cfg)
+    actual = list(np.asarray(s.y_true[-1], dtype=float))
+    react = SimpleNamespace(final_attempt=s.best_attempt(), final_score_preset="")
+    outcome = SimpleNamespace(state=s, react=react, test_values=actual, forecast=actual)
+    trace = W._ranking_trace(outcome)
+    assert trace["criterion"] == "smape_only"
+    assert len(trace["attempts"]) == len(s.attempts)
+    assert len(trace["top3_validation"]) == 3
+    assert len(trace["top3_test"]) == 3
+    assert trace["final"]["id"] == s.best_attempt().attempt_id
+    assert trace["oracle"]["id"] is not None
+    assert all("test_rank" in r for r in trace["attempts"] if "test_metrics" in r)
+
+
+def test_locked_prompt_does_not_advertise_the_score_preset_argument():
+    cfg = ReactConfig(allow_agent_score_preset=False, score_preset="smape_only")
+    withheld = {name: "not available" for name in ("series_profile",)}
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True,
+        withheld_tools=withheld, allow_agent_score_preset=False,
+        score_preset="smape_only",
+    )
+    assert "score_preset=None" not in text
+    assert "Do not" in text and "score_preset." in text
+
+
+def test_turn_prompt_shows_scores_and_total_turns():
+    cfg = ReactConfig(score_preset="smape_only", allow_agent_score_preset=False)
+    s, series, pool = prepared(cfg)
+    text = P.build_turn_prompt(
+        s, series, pool, [], 2, 24,
+        no_accept=True, score_target=12, scores_used=3,
+    )
+    assert "SCORES: 3/12" in text
+    assert "TURNS: 1/24" in text

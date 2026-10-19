@@ -74,6 +74,23 @@ def _check_format(prompt_format: str) -> None:
         raise ValueError(f"prompt_format must be one of {PROMPT_FORMATS}, got {prompt_format!r}")
 
 
+def _public_tools(
+    withheld_tools: Optional[Dict[str, str]],
+    reorder_weight_tools: bool,
+    no_early_stop: bool,
+    allow_agent_score_preset: bool,
+) -> List[Dict[str, Any]]:
+    tools: List[Dict[str, Any]] = []
+    for tool in describe_tools(withheld_tools, reorder_weight_tools):
+        if no_early_stop and tool["name"] == TERMINAL_ACTION:
+            continue
+        tool = dict(tool)
+        if tool["name"] == "evaluate_strategy" and not allow_agent_score_preset:
+            tool["args"] = [a for a in tool["args"] if not a.startswith("score_preset")]
+        tools.append(tool)
+    return tools
+
+
 def _system_as_xml(lines: List[str], merge_first_two: bool = True) -> str:
     """Wraps each blank-line-separated block of the system prompt in a tag.
 
@@ -122,7 +139,9 @@ def build_system_prompt(
     """
     catalog = "\n".join(
         f"  {t['name']}({', '.join(t['args'])}) - {t['description']}"
-        for t in describe_tools(withheld_tools, reorder_weight_tools)
+        for t in _public_tools(
+            withheld_tools, reorder_weight_tools, no_early_stop, allow_agent_score_preset
+        )
     )
     no_combine_mean = bool(withheld_tools) and "combine_mean" in withheld_tools
     weight_pair = (
@@ -138,7 +157,9 @@ def build_system_prompt(
         "",
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
         catalog,
-        f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        *([] if no_early_stop else [
+            f"  {TERMINAL_ACTION}(attempt_id, confidence, justification) - stop and take an attempt",
+        ]),
         "",
         "OUTPUT FORMAT - exactly three lines, nothing else:",
         "Thought: <one or two sentences on what you want to learn or test next>",
@@ -151,8 +172,13 @@ def build_system_prompt(
         "   grounded in what you observe: trend strength, seasonal strength, how stable",
         "   the model ranking is across windows, how redundant the models are.",
         "3. Test it with evaluate_strategy. Only evaluate_strategy scores anything.",
-        "4. Read the result against the attempt history and decide: test another",
-        f"   hypothesis, or {TERMINAL_ACTION} the best attempt.",
+        *([
+            "4. Read the result against the attempt history; accept is disabled, so",
+            "   use the turn to test another hypothesis.",
+        ] if no_early_stop else [
+            "4. Read the result against the attempt history and decide: test another",
+            f"   hypothesis, or {TERMINAL_ACTION} the best attempt.",
+        ]),
         "",
         "EVALUATING A STRATEGY - one call, flat arguments:",
         '  Action Input: {"combine": "mean", "pool": "pool_full", "rationale": "..."}',
@@ -173,12 +199,21 @@ def build_system_prompt(
             ]
         ),
         "",
-        "A TYPICAL SEQUENCE (the weights_* step is a CHOICE, not a fixed step):",
-        '  select_stable      {"k": 5}                  -> pool1',
-        '  weights_<method>   {"pool": "pool1"}         -> w1',
-        '  evaluate_strategy  {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
-        f'  {TERMINAL_ACTION}  {{"attempt_id": "aN", "confidence": 0.7, "justification": "..."}}',
-        "",
+        *([
+            "A TYPICAL SEQUENCE (one evaluate per turn):",
+            '  evaluate_strategy {"combine": "mean", "models": ["..."], "rationale": "..."}',
+            '  evaluate_strategy {"combine": "best_single", "model": "<model>"}',
+            "",
+        ] if direct_models else [
+            "A TYPICAL SEQUENCE (the weights_* step is a CHOICE, not a fixed step):",
+            '  select_stable      {"k": 5}                  -> pool1',
+            '  weights_<method>   {"pool": "pool1"}         -> w1',
+            '  evaluate_strategy  {"combine": "weighted", "pool": "pool1", "weights": "w1"}',
+            *([] if no_early_stop else [
+                f'  {TERMINAL_ACTION}  {{"attempt_id": "aN", "confidence": 0.7, "justification": "..."}}',
+            ]),
+            "",
+        ]),
         "THE WEIGHT METHODS READ DIFFERENT SIGNALS - they are not interchangeable:",
         f"  {weight_pair} - each model's AVERAGE",
         "     error over the windows. Similar to each other; if one gives you",
@@ -193,12 +228,9 @@ def build_system_prompt(
         "RULES:",
         "- Prefer small structured comparisons over one sweeping decision. Pick a",
         "  subset, weight it, test it. Do not try to reason about every model at once.",
-        "- Weight tools return a HANDLE (w1, w2, ...). Pass the handle to",
-        (
-            '  evaluate_strategy as "weights"; you will never see the numbers, and you do not need to.'
-            if no_combine_mean else
-            "  combine_weighted; you will never see the numbers, and you do not need to."
-        ),
+        "- 'weights' is either an existing handle or a known method name (for",
+        "  example inverse_error); evaluate_strategy resolves it. You never see",
+        "  the numbers, and you do not need to.",
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
         "- Computing weights scores NOTHING on its own: every weights_* call must be",
@@ -206,27 +238,25 @@ def build_system_prompt(
         "  handles you will not evaluate.",
         "- Handles start empty for every series. Never assume w1 or pool1 exists:",
         "  create it in this run before you refer to it.",
-         "- If a SEEDED BASELINE is leading and nothing in the diagnosis (unstable",
-        "  ranking, correlated errors, a pool it has not covered) suggests a concrete",
-        "  reason to deviate, accepting it directly is often the right move - you do",
-        "  not need to test a variation just to use the iterations available. If you",
-        "  do have a concrete hypothesis, the most direct next step is usually the",
-        "  SAME method on a better pool - dba on a pruned pool, median on a stable",
-        "  subset - not a different method entirely.",
+        "- The seeded baselines are part of the history and are a reference, not",
+        "  a required starting point. Test whichever combination the series",
+        "  characteristics and the evidence justify.",
         "- If a weights_* handle comes back with concentration near 0, the weights",
         "  are effectively UNIFORM, and that strategy gives the same forecasts as the",
         "  plain mean of the same pool. Another error-based weights_* method on the",
-        "  SAME pool will usually do the same. Change the POOL, or the kind of",
-        "  combination, rather than the weighting method.",
+        "  SAME pool will usually do the same; consider changing the pool or the kind",
+        "  of combination.",
         "- If an observation says SAME forecasts as an earlier attempt, that turn",
         "  bought nothing. Do not follow it with a variation of the same idea.",
         "- If a call is rejected, read the error: it lists the arguments that ARE",
         "  accepted. Do not retry the same shape.",
-        f"- When you {TERMINAL_ACTION}, justification must explain the choice in terms of",
-        "  OBSERVABLE SERIES CHARACTERISTICS, not just 'it had the lowest error'.",
-        "  Example: 'ranking is unstable across windows (tau=0.17) and the models are",
-        "  redundant, so a robust equal-weight combination of the stable subset beats",
-        "  fitted weights, which would overfit 3 windows.'",
+        *([] if no_early_stop else [
+            f"- When you {TERMINAL_ACTION}, justification must explain the choice in terms of",
+            "  OBSERVABLE SERIES CHARACTERISTICS, not just 'it had the lowest error'.",
+            "  Example: 'ranking is unstable across windows (tau=0.17) and the models are",
+            "  redundant, so a robust equal-weight combination of the stable subset beats",
+            "  fitted weights, which would overfit 3 windows.'",
+        ]),
     ]
     if include_history_rules:
         rules += [
@@ -241,10 +271,12 @@ def build_system_prompt(
             "  chosen from the full attempt history after the iteration budget.",
             "- One tested approach = one evaluate_strategy call. select_*/prune_*/",
             "  weights_* are preparation, not an approach; preparation must be scored",
-            "  on the next turn. Use existing handles first; do not re-test seeds.",
-            "- The budget counts evaluate_strategy calls; preparation does not consume it.",
-            "- The last validation window is the closest to the blind test; when the",
-            "  three windows disagree, prefer the candidate stable in the last window.",
+            "  on the next turn. The seeds are already in the history; repeating them",
+            "  adds nothing.",
+            "- The scoring budget counts evaluate_strategy calls; preparation does not",
+            "  consume it. A separate cap on total turns also applies.",
+            "- The last validation window is the closest to the blind test; it is a",
+            "  useful signal, but do not treat it as a rule.",
             "- If an observation says already_tested, change the model subset or the",
             "  combination next; do not resubmit the same call.",
             "- For best_single, only 'model' matters. Changing the pool/models is a",
@@ -276,8 +308,9 @@ def build_system_prompt(
             "- DIRECT MODE: the only action is evaluate_strategy. Each turn pass",
             "  'models' (the subset) and the combination in the same call; the",
             "  harness builds the pool/weights. There are no select/weights actions.",
-            f"- The scoring criterion is FIXED to '{score_preset}'. POCID is reported",
-            "  separately and does not affect the ranking. Do not pass score_preset.",
+            f"- The scoring criterion is FIXED to '{score_preset}' (normalized SMAPE).",
+            "  POCID is reported separately and does not affect the ranking. Do not pass",
+            "  score_preset.",
         ]
     _check_format(prompt_format)
     if prompt_format == "xml":
@@ -307,7 +340,9 @@ def build_system_prompt_v2(
     explicit stop rule that reads the LEADER DIAGNOSTICS block. Local models
     follow explicit structure and concrete examples better than dense prose.
     """
-    tools = describe_tools(withheld_tools, reorder_weight_tools)
+    tools = _public_tools(
+        withheld_tools, reorder_weight_tools, no_early_stop, allow_agent_score_preset
+    )
     groups: Dict[str, List[str]] = {
         "diagnostics": [], "pool": [], "weights": [], "combination": [], "validation": [],
     }
@@ -350,7 +385,7 @@ def build_system_prompt_v2(
         "call tools, and the tools compute. Every strategy is scored by the harness",
         "on validation windows, and the strategy applied at the end is the",
         "best-scoring one of the whole history, seeded baselines included, so",
-        "testing a hypothesis cannot make the final result worse.",
+        "testing a hypothesis cannot make the final validation score worse.",
         "",
         "WHAT YOU RECEIVE EVERY TURN:",
         "  - SERIES PROFILE: shape of the series (trend, seasonality, stationarity, outliers).",
@@ -387,9 +422,9 @@ def build_system_prompt_v2(
                 "  Pick the preset that matches the series; changing it re-scores the history.",
                 "",
             ] if allow_agent_score_preset else [
-                f"  The scoring criterion is FIXED to '{score_preset}'. POCID is",
-                "  reported separately and does not affect the ranking. Do not pass",
-                "  score_preset.",
+                f"  The scoring criterion is FIXED to '{score_preset}' (normalized SMAPE).",
+                "  POCID is reported separately and does not affect the ranking. Do not",
+                "  pass score_preset.",
                 "",
             ])),
         ] if direct_models else []),
@@ -453,7 +488,8 @@ def build_system_prompt_v2(
             "  - Accept is disabled. Do not call accept.",
             "  - Use every turn to test a genuinely different combination.",
             "  - The final strategy is chosen from the full attempt history after the",
-            "    iteration budget, so a failed test cannot make the final worse.",
+            "    iteration budget, so a failed test cannot make the final validation",
+            "    score worse.",
             "",
             "BUDGET RULES (no accept):",
             "  - One tested approach = one evaluate_strategy call. select_*, prune_*,",
@@ -466,14 +502,15 @@ def build_system_prompt_v2(
                 "  - There are NO seeded baselines in this run. Your first",
                 "    evaluate_strategy is the floor; test combinations from scratch.",
             ] if no_seed_attempts else [
-                "  - The seeded baselines are already scored. Use the best seed as the floor",
-                "    and test combinations that differ from it.",
+                "  - The seeded baselines are already scored and are part of the final",
+                "    history. They are a reference, not a required starting point; test",
+                "    whichever combination the series characteristics justify.",
             ]),
             "  - The diagnostics are already in the turn context; do not spend turns on them.",
-            "  - The budget is the number of evaluate_strategy calls; preparation actions",
-            "    do not consume it.",
-            "  - The last validation window is the closest to the blind test. When the",
-            "    three windows disagree, prefer the candidate stable in the last window.",
+            "  - The scoring budget counts evaluate_strategy calls; preparation actions",
+            "    do not consume it. A separate cap on total turns also applies.",
+            "  - The last validation window is the closest to the blind test; it is a",
+            "    useful signal, but do not treat it as a rule.",
             "  - If the observation says 'already_tested', change the model subset or",
             "    the combination next; do not resubmit the same call.",
             "  - For best_single, only 'model' matters. Changing the pool/models is a",
@@ -483,8 +520,9 @@ def build_system_prompt_v2(
             "",
         ] if no_early_stop else []),
         "RULES:",
-        "- Weight tools return a HANDLE (w1, w2, ...); pass it to evaluate_strategy",
-        "  as 'weights'. You never see the numbers, and you do not need to.",
+        "- 'weights' is either an existing handle or a known method name (for",
+        "  example inverse_error); evaluate_strategy resolves it. You never see",
+        "  the numbers, and you do not need to.",
         "- A handle is only valid with the pool it was computed on.",
         "- Repeating a strategy already in the history wastes an iteration.",
         "- Never assume w1 or pool1 exists: create it in this run before you refer to it.",
@@ -611,6 +649,8 @@ def build_turn_prompt(
     no_accept: bool = False,
     score_presets: Optional[Sequence[str]] = None,
     score_window_mode: str = "weighted",
+    score_target: int = 0,
+    scores_used: Optional[int] = None,
 ) -> str:
     """Per-turn message: cards, diagnosis, ranked history, scratchpad and budget.
 
@@ -770,6 +810,12 @@ def build_turn_prompt(
     pending = _unscored_weights(state)
     parts.append("")
     open_("budget")
+    if score_target:
+        used = int(scores_used or 0)
+        parts.append(
+            f"SCORES: {used}/{score_target} new evaluations used. "
+            f"TURNS: {iteration - 1}/{max_iterations} used, {remaining} left."
+        )
     if pending and remaining <= 3:
         parts.append(
             f"NOTE: {pending} were computed but never scored. Weights score nothing "

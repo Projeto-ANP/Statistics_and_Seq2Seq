@@ -292,7 +292,7 @@ def run_react_loop(
             diagnosis=diagnosis,
             prompt_format=config.prompt_format,
             leader=(
-                _leader_diagnostics(state)
+                _leader_diagnostics(state, no_accept=no_accept)
                 if getattr(config, "prompt_v2", False)
                 else None
             ),
@@ -301,6 +301,8 @@ def run_react_loop(
             no_accept=no_accept,
             score_presets=FINAL_SCORE_PRESETS if multi_preset else None,
             score_window_mode=str(getattr(config, "score_window_mode", "weighted")),
+            score_target=target_scores if scoring_budget else 0,
+            scores_used=max(0, len(state.attempts) - seeded_attempts) if scoring_budget else None,
         )
 
         # Two different things can go wrong asking for one turn, and both are
@@ -612,7 +614,7 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _leader_diagnostics(state: ReactState) -> Dict[str, Any]:
+def _leader_diagnostics(state: ReactState, no_accept: bool = False) -> Dict[str, Any]:
     """Deterministic answer to "how safe is stopping now?".
 
     Reuses `state.selection_confidence()`: it compares the leader against the
@@ -631,6 +633,10 @@ def _leader_diagnostics(state: ReactState) -> Dict[str, Any]:
         "runner_up_margin": confidence.get("margin"),
         "verdict": confidence.get("verdict"),
         "note": (
+            "accept is disabled in this run; the final history will take the best "
+            "validation score. Use the remaining turns only if a new combination "
+            "tests a real hypothesis."
+            if no_accept else
             "a small margin or 'indistinguishable' means the runner-up is not "
             "statistically worse; accepting the leader is usually right"
         ),

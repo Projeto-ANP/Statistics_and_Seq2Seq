@@ -1161,10 +1161,11 @@ def test_selection_confidence_is_deterministic():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_the_prompt_points_at_the_leading_method():
+def test_the_prompt_does_not_hard_code_a_specific_follow_up():
     sp = P.build_system_prompt()
-    assert "SAME method on a better pool" in sp
-    assert "dba on a pruned pool" in sp
+    assert "SAME method on a better pool" not in sp
+    assert "dba on a pruned pool" not in sp
+    assert "series profile" in sp
 
 
 def test_the_observation_names_the_leader_when_you_lose():
@@ -1703,7 +1704,7 @@ def test_drop_redundant_combine_actions_blocks_them():
     assert not ok and obs["error"] == "unknown_tool"
     sp = P.build_system_prompt(withheld_tools=withheld)
     assert "combine_weighted" not in sp and "combine_best_single" not in sp
-    assert 'evaluate_strategy as "weights"' in sp
+    assert "'weights' is either an existing handle" in sp
     assert "combine_weighted" in P.build_system_prompt()  # flag off: text untouched
 
 
@@ -1740,3 +1741,11 @@ def test_reduced_seeding_drops_full_pool_mean_and_median_only():
     assert ("dba", "pool_full") in reduced
     assert len(full) - len(reduced) == 2
     assert [x for x in full if x not in (("mean", "pool_full"), ("median", "pool_full"))] == reduced
+
+
+def test_leader_diagnostics_does_not_tell_the_agent_to_accept_when_accept_is_off():
+    from orchestrator_react.react_loop import _leader_diagnostics
+    s, _, _ = prepared()
+    note = _leader_diagnostics(s, no_accept=True)["note"]
+    assert "accept is disabled" in note
+    assert "accepting the leader" not in note
