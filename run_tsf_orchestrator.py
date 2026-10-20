@@ -178,6 +178,7 @@ def exec_dataset_orchestrator(
     max_total_turns: int = 0,
     final_strategy: str = "argmin",
     seed_gate_margin: float = 0.01,
+    diverse_margin: float = 0.10,
     final_top_m: int = 3,
     final_eta: float = 5.0,
     mcs_alpha: float = 0.10,
@@ -369,6 +370,7 @@ def exec_dataset_orchestrator(
     cfg.max_total_turns = int(max_total_turns)
     cfg.final_strategy = final_strategy
     cfg.seed_gate_margin = float(seed_gate_margin)
+    cfg.diverse_margin = float(diverse_margin)
     cfg.final_top_m = int(final_top_m)
     cfg.final_eta = float(final_eta)
     cfg.mcs_alpha = float(mcs_alpha)
@@ -838,13 +840,19 @@ def build_parser() -> argparse.ArgumentParser:
                         "not tool turns; preparation does not consume the budget")
     p.add_argument("--max-total-turns", type=int, default=0,
                    help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
+    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs", "diverse_gate"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
                         "averages the top --final-top-m; mcs averages the confidence "
                         "set the validation cannot separate from the leader "
                         "(--mcs-alpha); seed_gate keeps the best seeded baseline "
-                        "unless an agent attempt improves on it by --seed-gate-margin")
+                        "unless an agent attempt improves on it by --seed-gate-margin; "
+                        "diverse_gate keeps the best validation attempt unless the "
+                        "top-3 spread is within --diverse-margin, in which case it "
+                        "prefers the tied attempt with more effective models")
+    p.add_argument("--diverse-margin", type=float, default=0.10,
+                   help="relative top-3 spread treated as a tie by --final-strategy "
+                        "diverse_gate (default 0.10)")
     p.add_argument("--mcs-alpha", type=float, default=0.10,
                    help="rejection level of the Diebold-Mariano test that builds the "
                         "MCS committee: p < alpha against the leader leaves the set "
@@ -990,6 +998,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_total_turns=args.max_total_turns,
             final_strategy=args.final_strategy,
             seed_gate_margin=args.seed_gate_margin,
+            diverse_margin=args.diverse_margin,
             final_top_m=args.final_top_m,
             final_eta=args.final_eta,
             mcs_alpha=args.mcs_alpha,

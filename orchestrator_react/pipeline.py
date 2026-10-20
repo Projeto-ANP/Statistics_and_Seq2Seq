@@ -522,6 +522,14 @@ def run_series(
             attempt = gated
         forecast, debug = state.apply_to_test(attempt.spec)
         debug["method"] = f"{debug.get('method')} (seed_gate)"
+    elif config.final_strategy == "diverse_gate":
+        gated, note = _diverse_gated_attempt(state, config.diverse_margin)
+        if gated is not None and gated is not attempt:
+            outcome.warnings.append(note)
+            outcome.react.final_attempt = gated
+            attempt = gated
+        forecast, debug = state.apply_to_test(attempt.spec)
+        debug["method"] = f"{debug.get('method')} (diverse_gate)"
     elif config.final_strategy == "prior_blend":
         # Same single-strategy contract as "argmin"; only the ranking key differs.
         ranked = state.ranked_attempts(blended=True)
@@ -866,6 +874,35 @@ def _dumps(payload: Any) -> str:
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         return json.dumps({"error": "not serialisable"})
+
+
+def _diverse_gated_attempt(
+    state: ReactState, margin: float = 0.10
+) -> tuple[Optional[Any], str]:
+    ranked = [a for a in state.ranked_attempts() if np.isfinite(a.score)]
+    if not ranked:
+        return None, ""
+    leader = ranked[0]
+    top = ranked[:3]
+    if len(top) < 2:
+        return leader, ""
+    spread = float(top[-1].score) - float(leader.score)
+    threshold = abs(float(leader.score)) * float(margin)
+    if spread > threshold:
+        return leader, ""
+    chosen = min(
+        top,
+        key=lambda a: (-int(a.n_effective_models), float(a.score), a.attempt_id),
+    )
+    if chosen is leader:
+        return leader, ""
+    note = (
+        f"diverse_gate chose {_strategy_name(chosen)} ({chosen.attempt_id}, "
+        f"n_eff={chosen.n_effective_models}) over {_strategy_name(leader)} "
+        f"({leader.attempt_id}, n_eff={leader.n_effective_models}): "
+        f"top3 spread={spread:.4f} <= {threshold:.4f}."
+    )
+    return chosen, note
 
 
 def _seed_gated_attempt(

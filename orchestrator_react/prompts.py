@@ -922,7 +922,7 @@ def build_turn_prompt(
     if leader:
         parts.append("")
         open_("leader_diagnostics")
-        parts.append("LEADER DIAGNOSTICS (validation only):")
+        parts.append("LEADER DIAGNOSTICS (validation only; n_eff = models actually carrying weight):")
         parts.append(_compact(leader, limit=600))
         close_("leader_diagnostics")
 

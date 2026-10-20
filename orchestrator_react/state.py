@@ -39,6 +39,8 @@ class Attempt:
     rationale: str = ""
     iteration: Optional[int] = None
     n_models: int = 0
+    #: Number of models that actually carry weight in this strategy.
+    n_effective_models: int = 0
     #: Composite score per validation window, normalised against the mean anchor.
     #: A paired sample: it is what makes a bootstrap between two attempts possible.
     per_window_scores: List[float] = field(default_factory=list)
@@ -58,6 +60,7 @@ class Attempt:
             "id": self.attempt_id,
             "strategy": _spec_label(self.spec),
             "n_models": self.n_models,
+            "n_eff": self.n_effective_models,
             "score": round(float(self.score), 4),
             "rmse": _r(self.aggregate.get("RMSE")),
             "smape": _r(self.aggregate.get("SMAPE")),
@@ -854,6 +857,24 @@ class ReactState:
 
     # ── history ──────────────────────────────────────────────────────────────
 
+    def effective_model_count(self, spec: Dict[str, Any]) -> int:
+        method = str(spec.get("combine", ""))
+        if method in ("best_single", "median"):
+            return 1
+        try:
+            names = self.pool_names(spec.get("pool", FULL_POOL))
+        except KeyError:
+            return 0
+        if method == "trimmed_mean":
+            trim = int(len(names) * float(spec.get("trim_pct", 0.2)))
+            return max(1, len(names) - 2 * trim)
+        if method == "weighted":
+            try:
+                return int(self.weights_summary(str(spec["weights"])).get("n_active", 0))
+            except (KeyError, ValueError):
+                return len(names)
+        return len(names)
+
     def evaluate(
         self,
         spec: Dict[str, Any],
@@ -906,6 +927,7 @@ class ReactState:
             rationale=rationale,
             iteration=iteration,
             n_models=n_models,
+            n_effective_models=self.effective_model_count(norm),
             per_window_scores=[float(v) for v in per_window_scores],
             residuals=[float(v) for v in residuals],
         )

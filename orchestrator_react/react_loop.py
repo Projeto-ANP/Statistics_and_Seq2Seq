@@ -627,12 +627,33 @@ def _leader_diagnostics(state: ReactState, no_accept: bool = False) -> Dict[str,
     if best is None:
         return {}
     confidence = state.selection_confidence()
+    ranked = [a for a in state.ranked_attempts() if np.isfinite(a.score)]
+    top3 = ranked[:3]
+    top3_validation = []
+    for i, attempt in enumerate(top3):
+        gap = None
+        if i + 1 < len(top3):
+            gap = round(float(top3[i + 1].score) - float(attempt.score), 6)
+        top3_validation.append({
+            "id": attempt.attempt_id,
+            "strategy": _label(attempt),
+            "score": round(float(attempt.score), 4),
+            "n_eff": attempt.n_effective_models,
+            "gap_to_next": gap,
+        })
+    top3_spread = (
+        round(float(top3[-1].score) - float(top3[0].score), 6)
+        if len(top3) > 1 else None
+    )
     return {
         "leader_id": best.attempt_id,
         "leader_strategy": _label(best),
         "leader_origin": best.origin,
         "leader_score": round(float(best.score), 4) if np.isfinite(best.score) else None,
+        "leader_n_eff": best.n_effective_models,
         "runner_up_margin": confidence.get("margin"),
+        "top3_validation": top3_validation,
+        "top3_spread": top3_spread,
         "verdict": confidence.get("verdict"),
         "note": (
             "accept is disabled in this run; the final history will take the best "

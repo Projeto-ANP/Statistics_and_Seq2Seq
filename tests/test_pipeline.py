@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -724,6 +725,43 @@ def test_run_dataset_builds_a_leave_one_series_out_prior(fake_repo):
             others = [own[j][lbl] for j in own if j != o.dataset_index and lbl in own[j]]
             if others:
                 assert o.state.strategy_prior[lbl] == pytest.approx(float(np.mean(others)))
+
+
+def _diverse_attempt(attempt_id, score, n_eff, combine="mean"):
+    return SimpleNamespace(
+        attempt_id=attempt_id,
+        score=score,
+        n_effective_models=n_eff,
+        spec={"combine": combine},
+    )
+
+
+def test_diverse_gate_prefers_the_more_diverse_attempt_when_top3_is_close():
+    a = _diverse_attempt("a", 0.100, 1, "median")
+    b = _diverse_attempt("b", 0.105, 5, "mean")
+    c = _diverse_attempt("c", 0.108, 10, "mean")
+    state = SimpleNamespace(ranked_attempts=lambda: [a, b, c])
+    chosen, note = PL._diverse_gated_attempt(state, 0.10)
+    assert chosen is c
+    assert "n_eff=10" in note
+
+
+def test_diverse_gate_keeps_the_leader_when_the_top3_is_separated():
+    a = _diverse_attempt("a", 0.100, 1, "median")
+    b = _diverse_attempt("b", 0.200, 5, "mean")
+    c = _diverse_attempt("c", 0.210, 10, "mean")
+    state = SimpleNamespace(ranked_attempts=lambda: [a, b, c])
+    chosen, note = PL._diverse_gated_attempt(state, 0.10)
+    assert chosen is a
+    assert note == ""
+
+
+def test_diverse_gate_keeps_a_diverse_leader():
+    a = _diverse_attempt("a", 0.100, 10, "mean")
+    b = _diverse_attempt("b", 0.105, 1, "median")
+    state = SimpleNamespace(ranked_attempts=lambda: [a, b])
+    chosen, _ = PL._diverse_gated_attempt(state, 0.10)
+    assert chosen is a
 
 
 def test_the_prior_is_not_built_when_nothing_needs_it(fake_repo):
