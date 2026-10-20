@@ -193,6 +193,7 @@ def exec_dataset_orchestrator(
     final_prior_alpha: float = 0.0,
     combinator_reasoning: Any = None,
     combinator_temperature: Optional[float] = None,
+    llm_seed: Optional[int] = None,
     pool_mode: str = "full",
     pool_k: int = 8,
     score_preset: str = "balanced",
@@ -418,6 +419,9 @@ def exec_dataset_orchestrator(
         cfg.combinator.reasoning = combinator_reasoning
     cfg.diagnostician = _as_role(diagnostician_model)
     cfg.reporter = _as_role(reporter_model)
+    if llm_seed is not None:
+        for role in (cfg.combinator, cfg.diagnostician, cfg.reporter):
+            role.seed = int(llm_seed)
 
     # Environment variables win, so a model can be swapped without editing code.
     # (This is also why there is no separate `diagnostic_llm` flag: it used to be
@@ -475,6 +479,7 @@ def exec_dataset_orchestrator(
     log(
         f"llm          : combinator={cfg.combinator.label()}"
         f"{' reasoning=' + str(cfg.combinator.reasoning) if cfg.combinator.reasoning is not None else ''} "
+        f"{' seed=' + str(cfg.combinator.seed) if cfg.combinator.seed is not None else ''} "
         f"diagnostician={cfg.diagnostician.label()} reporter={cfg.reporter.label()}"
     )
     log(f"series       : {'all' if todo is None else todo}")
@@ -950,6 +955,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--combinator", default="gpt-oss:20b", help="Phase 3 agent")
     p.add_argument("--temperature", type=float, default=None,
                    help="sampling temperature for the Phase 3 combinator (default: config/0.2)")
+    p.add_argument("--llm-seed", type=int, default=None,
+                   help="Ollama sampling seed for the Phase 3 combinator "
+                        "(default: config value, 7); set a different value per "
+                        "repeat to measure LLM variance")
     p.add_argument("--diagnostician", default=None, help="Phase 1 LLM (ablation 2)")
     p.add_argument("--reporter", default=None, help="Phase 5 LLM")
     p.add_argument("--no-llm", action="store_true", help="deterministic arm: no agent at all")
@@ -1013,6 +1022,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_prior_alpha=args.final_prior_alpha,
             combinator_reasoning=parse_reasoning(args.reasoning),
             combinator_temperature=args.temperature,
+            llm_seed=args.llm_seed,
             pool_mode=args.pool_mode,
             pool_k=args.pool_k,
             score_preset=args.score_preset,

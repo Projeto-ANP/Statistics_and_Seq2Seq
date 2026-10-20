@@ -939,6 +939,15 @@ class FlakyLLM:
         return self.then[self.calls - self.n_failures - 1]
 
 
+def test_a_transient_llm_error_records_the_retry_event():
+    s, series, pool = prepared(ReactConfig(max_iterations=3))
+    llm = FlakyLLM(1, [step("accept", {"attempt_id": "a1"})])
+    r = run_react_loop(s, llm, series, pool, s.config)
+    assert r.retry_events[0]["kind"] == "llm_error"
+    assert r.retry_events[0]["retry"] == 1
+    assert "retry_events" in r.summary()
+
+
 def test_a_transient_llm_error_is_retried_not_charged():
     """The exact failure from a real run: reproduced verbatim to pin the fix."""
     s, series, pool = prepared(ReactConfig(max_iterations=3))
@@ -1659,6 +1668,10 @@ def test_empty_retry_changes_the_seed():
     finally:
         sys.modules.pop("ollama", None)
     assert seeds[:2] == [(7, 0.2), (8, 0.35)] and r.empty_responses == 1
+    assert r.retry_events[0]["kind"] == "empty_response"
+    assert r.retry_events[0]["failed"]["seed"] == 7
+    assert r.retry_events[0]["next"]["seed"] == 8
+    assert r.summary()["retry_events"][0]["failed"]["temperature"] == 0.2
 
 
 # ── catalog experiments: independent flags, all OFF by default ───────────────────
