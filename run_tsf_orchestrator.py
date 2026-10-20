@@ -177,6 +177,7 @@ def exec_dataset_orchestrator(
     scoring_budget: bool = False,
     max_total_turns: int = 0,
     final_strategy: str = "argmin",
+    final_hint_std_penalty: float = 0.5,
     seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
     final_eta: float = 5.0,
@@ -368,6 +369,7 @@ def exec_dataset_orchestrator(
     cfg.scoring_budget = bool(scoring_budget)
     cfg.max_total_turns = int(max_total_turns)
     cfg.final_strategy = final_strategy
+    cfg.final_hint_std_penalty = float(final_hint_std_penalty)
     cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
     cfg.final_eta = float(final_eta)
@@ -456,6 +458,7 @@ def exec_dataset_orchestrator(
         f"final        : {cfg.final_strategy}"
         f"{' top_m=' + str(cfg.final_top_m) if cfg.final_strategy == 'ensemble' else ''}"
         f"{' alpha=' + str(cfg.mcs_alpha) if cfg.final_strategy == 'mcs' else ''}"
+        f"{' std_penalty=' + str(cfg.final_hint_std_penalty) if cfg.final_strategy == 'hint_gate' else ''}"
         f" | stable seeds: {cfg.seed_stable_pools}"
         f" | pooled: {cfg.pooled_meta_model}"
         f"{'/' + cfg.pooled_meta_model_objective if cfg.pooled_meta_model else ''}"
@@ -780,10 +783,35 @@ def parse_reasoning(value: Any) -> Any:
     return text
 
 
+def configure_ollama_gpu(gpu: Optional[str]) -> None:
+    if gpu is None:
+        return
+    text = str(gpu).strip()
+    if not text.isdigit():
+        raise SystemExit(f"--gpu must be a non-negative integer, got {gpu!r}")
+    index = int(text)
+    url = (
+        os.environ.get(f"REACT_OLLAMA_URL_GPU{index}")
+        or f"http://127.0.0.1:{11434 + index}"
+    )
+    os.environ["CUDA_VISIBLE_DEVICES"] = text
+    os.environ["REACT_OLLAMA_URL"] = url
+    print(
+        f"GPU: CUDA_VISIBLE_DEVICES={text}; Ollama URL={url} "
+        f"(start the server with CUDA_VISIBLE_DEVICES={text} OLLAMA_HOST={url.split('://')[-1]})",
+        flush=True,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Forecast combination with a single ReAct agent over deterministic tools.",
     )
+    p.add_argument("--gpu", default=None,
+                   help="pin the run to a GPU index (e.g. 0 or 1). Selects "
+                        "REACT_OLLAMA_URL_GPU<n> when set, otherwise "
+                        "http://127.0.0.1:<11434+n>; the Ollama server itself must "
+                        "be started with CUDA_VISIBLE_DEVICES=<n> on that port")
     p.add_argument("--dataset", required=True, help="results dataset name, e.g. ANP_MONTHLY")
     p.add_argument("--source", default=None, help=".tsf file, e.g. mes_11_venda_mensal.tsf")
     p.add_argument("--source-dir", default=DEFAULT_SOURCE_DIR)
@@ -813,13 +841,18 @@ def build_parser() -> argparse.ArgumentParser:
                         "not tool turns; preparation does not consume the budget")
     p.add_argument("--max-total-turns", type=int, default=0,
                    help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
+    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs", "hint_gate"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
                         "averages the top --final-top-m; mcs averages the confidence "
                         "set the validation cannot separate from the leader "
                         "(--mcs-alpha); seed_gate keeps the best seeded baseline "
-                        "unless an agent attempt improves on it by --seed-gate-margin")
+                        "unless an agent attempt improves on it by --seed-gate-margin; "
+                        "hint_gate filters weighted methods when the diagnosis or "
+                        "ranking stability does not support them and ranks by "
+                        "mean + --final-hint-std-penalty * within-validation std")
+    p.add_argument("--final-hint-std-penalty", type=float, default=0.5,
+                   help="std penalty used by --final-strategy hint_gate (default 0.5)")
     p.add_argument("--mcs-alpha", type=float, default=0.10,
                    help="rejection level of the Diebold-Mariano test that builds the "
                         "MCS committee: p < alpha against the leader leaves the set "
@@ -940,6 +973,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_ollama_gpu(args.gpu)
     config = ReactConfig.from_json_file(args.config) if args.config else None
     try:
         summary = exec_dataset_orchestrator(
@@ -963,6 +997,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             scoring_budget=args.scoring_budget,
             max_total_turns=args.max_total_turns,
             final_strategy=args.final_strategy,
+            final_hint_std_penalty=args.final_hint_std_penalty,
             seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,
             final_eta=args.final_eta,

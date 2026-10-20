@@ -174,6 +174,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--datasets", nargs="+", required=True, help="ex: ETTH1 ETTH2 ANP_MONTHLY")
     p.add_argument("--combinators", nargs="+", required=True, help="ex: qwen3:30b-a3b")
     p.add_argument("--version", default="v5", help="sufixo da pasta de experimento (default v5)")
+    p.add_argument("--gpu", default=None,
+                   help="prende o lote a uma GPU (0 ou 1). Repassado ao orquestrador, "
+                        "que usa REACT_OLLAMA_URL_GPU<n> ou a porta 11434+n; o servidor "
+                        "Ollama precisa ter sido iniciado com CUDA_VISIBLE_DEVICES=<n> "
+                        "nessa porta")
     p.add_argument("--source-dir", default=DEFAULT_SOURCE_DIR)
     p.add_argument("--log-dir", default=DEFAULT_LOG_DIR)
     p.add_argument(
@@ -182,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--plan", action="store_true", help="só imprime os comandos e sai, sem rodar nada")
     args = p.parse_args(argv)
+    if args.gpu is not None:
+        extra_args = ["--gpu", str(args.gpu), *extra_args]
 
     log_dir = Path(args.log_dir)
     jobs = build_jobs(args.datasets, args.combinators, args.version, log_dir, DATASET_SOURCES)

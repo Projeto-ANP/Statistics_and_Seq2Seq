@@ -522,6 +522,16 @@ def run_series(
             attempt = gated
         forecast, debug = state.apply_to_test(attempt.spec)
         debug["method"] = f"{debug.get('method')} (seed_gate)"
+    elif config.final_strategy == "hint_gate":
+        gated, note = _hint_gated_attempt(
+            state, outcome.diagnosis, outcome.pool_card, config.final_hint_std_penalty
+        )
+        if gated is not None and gated is not attempt:
+            outcome.warnings.append(note)
+            outcome.react.final_attempt = gated
+            attempt = gated
+        forecast, debug = state.apply_to_test(attempt.spec)
+        debug["method"] = f"{debug.get('method')} (hint_gate)"
     elif config.final_strategy == "prior_blend":
         # Same single-strategy contract as "argmin"; only the ranking key differs.
         ranked = state.ranked_attempts(blended=True)
@@ -866,6 +876,54 @@ def _dumps(payload: Any) -> str:
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         return json.dumps({"error": "not serialisable"})
+
+
+def _hint_gated_attempt(
+    state: ReactState,
+    diagnosis: Optional[Dict[str, Any]],
+    pool_card: Optional[Dict[str, Any]],
+    std_penalty: float = 0.5,
+) -> tuple[Optional[Any], str]:
+    attempts = [a for a in state.attempts if np.isfinite(a.score)]
+    if not attempts:
+        return None, ""
+    hint = str((diagnosis or {}).get("combination_hint") or "full_pool")
+    stability = (pool_card or {}).get("ranking_stability", {}) or {}
+    try:
+        tau = float(stability.get("mean_kendall_tau"))
+    except (TypeError, ValueError):
+        tau = None
+    verdict = str(stability.get("verdict") or "")
+    weighted_allowed = (
+        hint in ("weighted", "full_pool")
+        and (tau is None or tau >= 0.5)
+        and verdict not in ("unstable", "moderate")
+    )
+    if hint in ("robust", "selective") or (tau is not None and tau < 0.5):
+        weighted_allowed = False
+    candidates = [
+        a for a in attempts
+        if weighted_allowed or str(a.spec.get("combine")) != "weighted"
+    ]
+    if not candidates:
+        candidates = attempts
+
+    def key(attempt: Any) -> float:
+        values = [float(v) for v in attempt.per_window_scores if np.isfinite(v)]
+        spread = float(np.std(values)) if len(values) > 1 else 0.0
+        return float(attempt.score) + float(std_penalty) * spread
+
+    chosen = min(candidates, key=key)
+    current = state.best_attempt()
+    if current is not None and chosen is current:
+        return chosen, ""
+    note = (
+        f"hint_gate chose {_strategy_name(chosen)} ({chosen.attempt_id}) over "
+        f"{_strategy_name(current)} ({current.attempt_id if current else 'none'}): "
+        f"hint={hint}, tau={'n/a' if tau is None else f'{tau:.3f}'}, "
+        f"verdict={verdict or 'unknown'}, std_penalty={float(std_penalty):.2f}."
+    )
+    return chosen, note
 
 
 def _seed_gated_attempt(

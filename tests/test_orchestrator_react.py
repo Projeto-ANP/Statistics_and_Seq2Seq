@@ -1156,6 +1156,21 @@ def test_dba_strategy_is_reproducible_through_the_state_backtest():
     assert np.allclose(f1, f2)
 
 
+def test_gpu_selector_sets_cuda_and_gpu_specific_ollama_url(monkeypatch):
+    import run_tsf_orchestrator as R
+
+    monkeypatch.delenv("REACT_OLLAMA_URL_GPU1", raising=False)
+    monkeypatch.delenv("REACT_OLLAMA_URL", raising=False)
+    R.configure_ollama_gpu("1")
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "1"
+    assert os.environ["REACT_OLLAMA_URL"] == "http://127.0.0.1:11435"
+    monkeypatch.setenv("REACT_OLLAMA_URL_GPU1", "http://127.0.0.1:22435")
+    R.configure_ollama_gpu("1")
+    assert os.environ["REACT_OLLAMA_URL"] == "http://127.0.0.1:22435"
+    with pytest.raises(SystemExit):
+        R.configure_ollama_gpu("gpu1")
+
+
 def test_parse_reasoning_normalises_booleans_and_keeps_named_levels():
     import run_tsf_orchestrator as R
 

@@ -230,9 +230,12 @@ class ReactConfig:
     #: instead of picking its top entry. It exists for the measured failure mode:
     #: first and second place are indistinguishable in most series, and betting on
     #: the top one keeps losing to the deterministic floor. See `ReactState.apply_mcs`.
-    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
+    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate", "mcs", "hint_gate"] = "argmin"
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
+    #: Penalty on the within-validation standard deviation when
+    #: `final_strategy="hint_gate"` ranks attempts. 0.0 ranks by the plain mean.
+    final_hint_std_penalty: float = 0.5
     #: Relative validation-score improvement an agent attempt must show over the
     #: best seeded baseline to be applied under `final_strategy="seed_gate"`.
     seed_gate_margin: float = 0.01
