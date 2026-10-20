@@ -338,3 +338,23 @@ def test_turn_prompt_has_decision_card_at_the_end():
     assert text.index("SERIES DECISION CARD") > text.index("LAST OBSERVATION") if "LAST OBSERVATION" in text else True
     assert "order arbitrary, NOT a ranking" in text
     assert "name one feature in your Thought" in text
+
+
+def test_turn_prompt_has_forecast_shape_without_test_actual():
+    cfg = ReactConfig(score_preset="smape_only", no_seed_attempts=True,
+                      allow_best_single=False)
+    s, series, pool = prepared(cfg)
+    text = P.build_turn_prompt(
+        s, series, pool, [], 1, 24, no_accept=True,
+        untried=P.untried_candidates(s, pool),
+        score_target=12, scores_used=0,
+    )
+    assert "FORECAST SHAPE" in text
+    assert "test actual is NOT shown" in text
+    assert "last_validation_actual_z" in text
+    assert '"models"' in text
+    assert '"clusters"' in text
+    assert '"detail_models"' in text
+    assert "test_detail_z" in text
+    assert "test_pairwise_corr" in text
+    assert "all models are summarized" in text

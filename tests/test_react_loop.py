@@ -149,7 +149,7 @@ def test_turn_prompt_never_leaks_raw_data():
     # a raw observation from the training series must not appear verbatim
     sample = f"{float(s.train_series[10]):.6f}"
     assert sample not in prompt
-    assert len(prompt) < 6000, "the turn prompt must stay compact"
+    assert len(prompt) < 7000, "the turn prompt must stay compact"
 
 
 def test_turn_prompt_hides_history_under_the_ablation():

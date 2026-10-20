@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import json
 import random
+
+import numpy as np
 from typing import Any, Dict, List, Optional, Sequence
 
 from orchestrator_react.config import FINAL_SCORE_PRESETS, SCORE_PRESETS
 from orchestrator_react.registry import TERMINAL_ACTION, describe_tools
 from orchestrator_react.state import FULL_POOL, ReactState
+from orchestrator_react import metrics as M
 
 
 def _compact(payload: Any, limit: int = 1800) -> str:
@@ -412,6 +415,8 @@ def build_system_prompt_v2(
         "  - ATTEMPT HISTORY: every strategy tested so far, best first, with its score.",
         "  - LEADER DIAGNOSTICS: the current leader, how far the runner-up is, and whether",
         "    that gap is statistically distinguishable.",
+        "  - FORECAST SHAPE: normalized last-validation actual + top-model forecasts;",
+        "    blind-test model forecasts and agreement. Test actual is never shown.",
         "  - HANDLES: pools and weight vectors created in this run, with concentration.",
         "",
         *([
@@ -555,6 +560,10 @@ def build_system_prompt_v2(
             "  - In each Thought, name one SERIES DECISION CARD characteristic",
             "    (trend, seasonality, outliers, stationarity, ranking tau, or the",
             "    diagnosis hint) that motivates the test; if none does, say why.",
+            "  - Use FORECAST SHAPE as evidence for model/pool selection: how the",
+            "    top models tracked the last validation actual, and how much they",
+            "    agree on the blind test. Do not treat it as a rule; the test actual",
+            "    is not shown.",
             *([
                 "  - For best_single, only 'model' matters. Changing the pool/models is a",
                 "    no-op; change the model, not the pool.",
@@ -677,6 +686,132 @@ def untried_candidates(
                     return candidates
     return candidates
 
+
+def _zscore(values: Any) -> List[float]:
+    arr = np.asarray(values, dtype=float).ravel()
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return []
+    center = float(np.mean(finite))
+    scale = float(np.std(finite))
+    if not np.isfinite(scale) or scale < 1e-12:
+        return [round(float(v - center), 2) if np.isfinite(v) else None for v in arr]
+    return [round(float((v - center) / scale), 2) if np.isfinite(v) else None for v in arr]
+
+
+def _forecast_shape_card(state: ReactState, top_n: int = 3, threshold: float = 0.9) -> Dict[str, Any]:
+    y_true = np.asarray(state.y_true, dtype=float)
+    y_preds = np.asarray(state.y_preds, dtype=float)
+    test = np.asarray(state.test_preds, dtype=float)
+    if y_true.ndim != 2 or y_preds.ndim != 3 or test.ndim != 2:
+        return {}
+    names = [str(n) for n in state.model_names]
+    last = y_true[-1]
+
+    def window_smape(j: int, w: int) -> Optional[float]:
+        try:
+            v = float(M.smape(y_true[w], y_preds[w, j]))
+            return round(v, 4) if np.isfinite(v) else None
+        except Exception:
+            return None
+
+    def corr(a: np.ndarray, b: np.ndarray) -> Optional[float]:
+        mask = np.isfinite(a) & np.isfinite(b)
+        if mask.sum() < 3 or np.std(a[mask]) == 0 or np.std(b[mask]) == 0:
+            return None
+        return float(np.corrcoef(a[mask], b[mask])[0, 1])
+
+    parent = list(range(len(names)))
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for a in range(len(names)):
+        for b in range(a + 1, len(names)):
+            c = corr(test[a], test[b])
+            if c is not None and c >= threshold:
+                union(a, b)
+    roots = sorted({find(i) for i in range(len(names))})
+    cluster_of = {i: roots.index(find(i)) for i in range(len(names))}
+    clusters: Dict[str, List[str]] = {}
+    for i, name in enumerate(names):
+        clusters.setdefault(str(cluster_of[i]), []).append(name)
+
+    models: Dict[str, Any] = {}
+    last_scores: List[tuple[float, int, str]] = []
+    for j, name in enumerate(names):
+        ws = [window_smape(j, w) for w in range(y_true.shape[0])]
+        ls = ws[-1] if ws else None
+        if ls is not None:
+            last_scores.append((ls, j, name))
+        vec = np.asarray(test[j], dtype=float)
+        finite = vec[np.isfinite(vec)]
+        if finite.size >= 2:
+            mean = float(np.mean(finite)); std = float(np.std(finite))
+            slope = float(finite[-1] - finite[0])
+            test_summary = {
+                "slope_z": round(slope / (std or 1.0), 2),
+                "volatility": round(std / (abs(mean) or 1.0), 3),
+                "last_z": round((float(finite[-1]) - mean) / (std or 1.0), 2),
+            }
+        else:
+            test_summary = {}
+        models[name] = {
+            "window_smape": ws,
+            "last_smape": ls,
+            "test": test_summary,
+            "cluster": cluster_of[j],
+        }
+
+    last_scores.sort(key=lambda x: x[0])
+    detail_names: List[str] = [name for _, _, name in last_scores[:top_n]]
+    for root, members in clusters.items():
+        best = next((m for _, _, m in last_scores if m in members), None)
+        if best and best not in detail_names:
+            detail_names.append(best)
+    detail_names = detail_names[: max(1, top_n + len(clusters))]
+
+    detail_hist: Dict[str, Any] = {}
+    detail_test: Dict[str, Any] = {}
+    for name in detail_names:
+        j = names.index(name)
+        detail_hist[name] = {
+            "last_smape": models[name]["last_smape"],
+            "forecast_z": _zscore(y_preds[-1, j]),
+        }
+        detail_test[name] = _zscore(test[j])
+
+    pair_corr: Dict[str, float] = {}
+    for a in range(len(detail_names)):
+        for b in range(a + 1, len(detail_names)):
+            c = corr(test[names.index(detail_names[a])], test[names.index(detail_names[b])])
+            if c is not None:
+                pair_corr[f"{detail_names[a]} vs {detail_names[b]}"] = round(c, 3)
+
+    stacked = np.asarray([test[j] for j in range(len(names)) if np.any(np.isfinite(test[j]))], dtype=float)
+    dispersion = None
+    if stacked.size:
+        d = np.nanstd(stacked, axis=0)
+        if np.any(np.isfinite(d)):
+            dispersion = round(float(np.nanmean(d)), 4)
+
+    return {
+        "last_validation_actual_z": _zscore(last),
+        "models": models,
+        "clusters": clusters,
+        "detail_models": detail_names,
+        "last_validation_detail": detail_hist,
+        "test_detail_z": detail_test,
+        "test_pairwise_corr": pair_corr,
+        "test_forecast_dispersion": dispersion,
+        "note": "all models are summarized; detailed vectors are top3 + one per cluster; test actual is NOT shown",
+    }
 
 def _decision_card(
     series_card: Dict[str, Any],
@@ -898,6 +1033,21 @@ def build_turn_prompt(
         parts.append("LAST OBSERVATION (full):")
         parts.append(_compact(last_observation, limit=900))
         close_("last_observation")
+
+    try:
+        shape = _forecast_shape_card(state)
+    except Exception:
+        shape = {}
+    if shape:
+        parts.append("")
+        open_("forecast_shape")
+        parts.append(
+            "FORECAST SHAPE (evidence, not a rule): all models summarized; detailed "
+            "vectors are top3 + one per test cluster. Last-validation actual is shown; "
+            "test actual is NOT shown."
+        )
+        parts.append(_compact(shape, limit=3200))
+        close_("forecast_shape")
 
     card = _decision_card(series_card, pool_card, diagnosis)
     if card:
