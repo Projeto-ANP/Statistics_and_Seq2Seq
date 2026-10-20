@@ -1756,21 +1756,14 @@ def test_reduced_seeding_drops_full_pool_mean_and_median_only():
     assert [x for x in full if x not in (("mean", "pool_full"), ("median", "pool_full"))] == reduced
 
 
-def test_leader_diagnostics_includes_top3_and_effective_counts():
+def test_leader_diagnostics_includes_top3():
     from orchestrator_react.react_loop import _leader_diagnostics
 
     s, _, _ = prepared()
     leader = _leader_diagnostics(s, no_accept=True)
-    assert leader["leader_n_eff"] >= 1
     assert len(leader["top3_validation"]) >= 1
     assert leader["top3_spread"] is not None
-    assert all("n_eff" in row for row in leader["top3_validation"])
     assert all("test" not in row for row in leader["top3_validation"])
-
-
-def test_attempt_brief_exposes_the_effective_model_count():
-    s, _, _ = prepared()
-    assert all("n_eff" in a.brief() for a in s.attempts)
 
 
 def test_leader_diagnostics_does_not_tell_the_agent_to_accept_when_accept_is_off():

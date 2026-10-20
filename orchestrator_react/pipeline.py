@@ -199,7 +199,6 @@ class SeriesOutcome:
             "attempt_id": attempt.attempt_id,
             "origin": attempt.origin,
             "models": self.selected_models(),
-            "effective_models": self.effective_models(),
             "reducibility": self.reducibility(),
             "weights": weights_block,
             "validation": {
@@ -219,23 +218,6 @@ class SeriesOutcome:
                 "score_preset": state.config.score_preset,
             },
         }
-
-    def effective_models(self, threshold: float = 0.01) -> List[str]:
-        """Models that actually carry weight in the winning strategy.
-
-        `selected_models` reports the pool the strategy was built on, which is not
-        the same thing: OLS on three windows routinely collapses onto one model, so
-        a "weighted combination of 9 models" can be a single model wearing a
-        weighted label. Reporting only the pool size would overstate how much
-        combination the agent is really doing.
-        """
-        if self.state is None or not self.react or not self.react.final_attempt:
-            return []
-        weights = effective_weights(self.state, self.react.final_attempt.spec)["weights"]
-        if not weights:
-            return []
-        first = weights[next(iter(weights))]
-        return sorted(name for name, value in first.items() if abs(float(value)) > threshold)
 
     def reducibility(self, tolerance: float = 0.01) -> Dict[str, Any]:
         """Is the winning strategy just a simpler one wearing a fancier label?
@@ -305,7 +287,6 @@ class SeriesOutcome:
         a = r.final_attempt
         return (
             f"strategy={a.spec['combine']} | pool={len(self.selected_models())} "
-            f"effective={len(self.effective_models())} "
             f"| score={_round(a.score)} | origin={a.origin} "
             f"| iterations={r.iterations_used} | stop={r.stop_reason} "
             f"| llm={r.llm_model} | ablation={self.config.fingerprint() if self.config else ''}"
@@ -376,8 +357,6 @@ class SeriesOutcome:
             # weight. They differ whenever a weighting scheme concentrates, which
             # OLS on three windows does almost every time.
             "n_pool_models": len(self.selected_models()),
-            "effective_models": _dumps(self.effective_models()),
-            "n_effective_models": len(self.effective_models()),
             **self.reducibility(),
             "weights_by_horizon": _dumps(weights_map.get("weights", {})),
             # -- new, Section 4.4 -----------------------------------------------
@@ -522,14 +501,6 @@ def run_series(
             attempt = gated
         forecast, debug = state.apply_to_test(attempt.spec)
         debug["method"] = f"{debug.get('method')} (seed_gate)"
-    elif config.final_strategy == "diverse_gate":
-        gated, note = _diverse_gated_attempt(state, config.diverse_margin)
-        if gated is not None and gated is not attempt:
-            outcome.warnings.append(note)
-            outcome.react.final_attempt = gated
-            attempt = gated
-        forecast, debug = state.apply_to_test(attempt.spec)
-        debug["method"] = f"{debug.get('method')} (diverse_gate)"
     elif config.final_strategy == "prior_blend":
         # Same single-strategy contract as "argmin"; only the ranking key differs.
         ranked = state.ranked_attempts(blended=True)
@@ -874,35 +845,6 @@ def _dumps(payload: Any) -> str:
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         return json.dumps({"error": "not serialisable"})
-
-
-def _diverse_gated_attempt(
-    state: ReactState, margin: float = 0.10
-) -> tuple[Optional[Any], str]:
-    ranked = [a for a in state.ranked_attempts() if np.isfinite(a.score)]
-    if not ranked:
-        return None, ""
-    leader = ranked[0]
-    top = ranked[:3]
-    if len(top) < 2:
-        return leader, ""
-    spread = float(top[-1].score) - float(leader.score)
-    threshold = abs(float(leader.score)) * float(margin)
-    if spread > threshold:
-        return leader, ""
-    chosen = min(
-        top,
-        key=lambda a: (-int(a.n_effective_models), float(a.score), a.attempt_id),
-    )
-    if chosen is leader:
-        return leader, ""
-    note = (
-        f"diverse_gate chose {_strategy_name(chosen)} ({chosen.attempt_id}, "
-        f"n_eff={chosen.n_effective_models}) over {_strategy_name(leader)} "
-        f"({leader.attempt_id}, n_eff={leader.n_effective_models}): "
-        f"top3 spread={spread:.4f} <= {threshold:.4f}."
-    )
-    return chosen, note
 
 
 def _seed_gated_attempt(

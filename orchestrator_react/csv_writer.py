@@ -66,8 +66,6 @@ KEPT_COLUMNS: List[str] = [
     "predict_debug",
     "selected_base_models",
     "n_pool_models",
-    "effective_models",
-    "n_effective_models",
     # Did the weighting actually do anything? With three validation windows fitted
     # weights land within a few percent of uniform, which makes a "weighted
     # combination" arithmetically the mean of its own pool.

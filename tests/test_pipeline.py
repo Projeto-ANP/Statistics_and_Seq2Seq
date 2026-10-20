@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -252,7 +251,7 @@ EXPECTED_FIELDS = {
     "predict_debug", "selected_base_models", "weights_by_horizon",
     "n_tool_calls", "n_evaluate_calls", "provenance_ok",
     "weights_concentration", "equivalent_to_pool_mean", "pool_mean_relative_diff",
-    "n_pool_models", "effective_models", "n_effective_models",
+    "n_pool_models",
     "final_candidate_names", "final_candidate_count",
     # new (Section 4.4)
     "series_profile_json", "ranking_stability_score", "error_correlation_groups",
@@ -365,49 +364,6 @@ def test_trajectory_column_stays_small(fake_repo):
     llm = ScriptedLLM([step("series_profile", {}), step("accept", {"attempt_id": "a1"})])
     out = run(fake_repo, client=llm)
     assert len(out.csv_fields()["react_trajectory_json"]) < 3000
-
-
-def test_effective_models_expose_a_collapsed_weighting(fake_repo):
-    """A "weighted combination of N models" can be one model wearing a label.
-
-    Real case, NN5 series 11: OLS on three windows put weight 1.0 on
-    NaiveMovingAverage and 0.0 on the other eight, while the row still reported
-    nine selected models. Anyone analysing pool size would have read nine.
-    """
-    s = make_state()
-    POOL.run_phase2(s, s.config)
-    top = T.select_top_k(s, k=4)
-    # force a one-hot weighting, exactly what OLS produces when it collapses
-    handle = T.weights_softmax_neg_error(s, pool=top["pool"], eta=20.0)["weights"]
-    recipe = s.get_weights_recipe(handle)
-    recipe.resolved = np.array([1.0, 0.0, 0.0, 0.0])
-
-    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
-                           config=s.config)
-    attempt, _ = s.evaluate({"combine": "weighted", "pool": top["pool"], "weights": handle})
-    from orchestrator_react.react_loop import ReactResult
-
-    out.react = ReactResult(final_attempt=attempt)
-
-    assert len(out.selected_models()) == 4, "the pool is still four models"
-    assert len(out.effective_models()) == 1, "only one of them carries weight"
-    fields = out.csv_fields()
-    assert fields["n_pool_models"] == 4
-    assert fields["n_effective_models"] == 1
-    assert "effective=1" in out.decision_report()
-
-
-def test_effective_models_match_the_pool_when_weights_are_spread(fake_repo):
-    s = make_state()
-    POOL.run_phase2(s, s.config)
-    top = T.select_top_k(s, k=3)
-    handle = T.weights_inverse_error(s, pool=top["pool"], shrinkage=0.5)["weights"]
-    attempt, _ = s.evaluate({"combine": "weighted", "pool": top["pool"], "weights": handle})
-    from orchestrator_react.react_loop import ReactResult
-
-    out = PL.SeriesOutcome(dataset="FAKE", dataset_index=0, horizon=s.horizon, state=s,
-                           config=s.config, react=ReactResult(final_attempt=attempt))
-    assert out.effective_models() == sorted(out.selected_models())
 
 
 def test_bootstrap_is_marked_unreliable_with_three_windows():
@@ -725,43 +681,6 @@ def test_run_dataset_builds_a_leave_one_series_out_prior(fake_repo):
             others = [own[j][lbl] for j in own if j != o.dataset_index and lbl in own[j]]
             if others:
                 assert o.state.strategy_prior[lbl] == pytest.approx(float(np.mean(others)))
-
-
-def _diverse_attempt(attempt_id, score, n_eff, combine="mean"):
-    return SimpleNamespace(
-        attempt_id=attempt_id,
-        score=score,
-        n_effective_models=n_eff,
-        spec={"combine": combine},
-    )
-
-
-def test_diverse_gate_prefers_the_more_diverse_attempt_when_top3_is_close():
-    a = _diverse_attempt("a", 0.100, 1, "median")
-    b = _diverse_attempt("b", 0.105, 5, "mean")
-    c = _diverse_attempt("c", 0.108, 10, "mean")
-    state = SimpleNamespace(ranked_attempts=lambda: [a, b, c])
-    chosen, note = PL._diverse_gated_attempt(state, 0.10)
-    assert chosen is c
-    assert "n_eff=10" in note
-
-
-def test_diverse_gate_keeps_the_leader_when_the_top3_is_separated():
-    a = _diverse_attempt("a", 0.100, 1, "median")
-    b = _diverse_attempt("b", 0.200, 5, "mean")
-    c = _diverse_attempt("c", 0.210, 10, "mean")
-    state = SimpleNamespace(ranked_attempts=lambda: [a, b, c])
-    chosen, note = PL._diverse_gated_attempt(state, 0.10)
-    assert chosen is a
-    assert note == ""
-
-
-def test_diverse_gate_keeps_a_diverse_leader():
-    a = _diverse_attempt("a", 0.100, 10, "mean")
-    b = _diverse_attempt("b", 0.105, 1, "median")
-    state = SimpleNamespace(ranked_attempts=lambda: [a, b])
-    chosen, _ = PL._diverse_gated_attempt(state, 0.10)
-    assert chosen is a
 
 
 def test_the_prior_is_not_built_when_nothing_needs_it(fake_repo):

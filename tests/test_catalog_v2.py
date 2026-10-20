@@ -204,3 +204,27 @@ def test_direct_prompt_lists_score_presets_and_window_mode():
     assert "smape_pocid_50_50" in text
     assert "score_preset" in text
     assert "'weighted'" in text
+
+
+def test_v10_direct_prompt_matches_the_scoring_budget():
+    cfg = ReactConfig(
+        no_early_stop=True, scoring_budget=True, prompt_v2=True, catalog_v2=True,
+        score_preset="smape_only", score_window_mode="weighted",
+        allow_agent_score_preset=False, no_seed_attempts=True,
+        allow_best_single=False,
+    )
+    withheld = R.withheld_tools(cfg, 3)
+    text = P.build_system_prompt_v2(
+        withheld_tools=withheld, prompt_format="text", no_early_stop=True,
+        direct_models=True, score_window_mode="weighted",
+        no_seed_attempts=True, allow_agent_score_preset=False,
+        score_preset="smape_only", allow_best_single=False,
+    )
+    assert "select_*" not in text
+    assert "weights_*" not in text
+    assert "create it in this run" not in text
+    assert "preparation actions" not in text
+    assert "n_eff" not in text
+    assert "diverse_gate" not in text
+    assert "0.2/0.3/0.5" in text
+    assert "evaluate_strategy" in text

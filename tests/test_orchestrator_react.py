@@ -1171,6 +1171,20 @@ def test_gpu_selector_sets_cuda_and_gpu_specific_ollama_url(monkeypatch):
         R.configure_ollama_gpu("gpu1")
 
 
+def test_run_command_is_saved_with_environment(tmp_path, monkeypatch):
+    import run_tsf_orchestrator as R
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    monkeypatch.setenv("REACT_OLLAMA_URL", "http://127.0.0.1:11435")
+    R._save_run_command(str(tmp_path), ["python3", "run_tsf_orchestrator.py", "--gpu", "1"])
+    text = (tmp_path / "run_command.txt").read_text()
+    assert "python3 run_tsf_orchestrator.py --gpu 1" in text
+    assert "CUDA_VISIBLE_DEVICES=1" in text
+    assert "REACT_OLLAMA_URL=http://127.0.0.1:11435" in text
+    R._save_run_command(str(tmp_path), ["python3", "second"])
+    assert (tmp_path / "run_commands.log").read_text().count("python3") == 2
+
+
 def test_llm_seed_cli_is_parsed():
     import run_tsf_orchestrator as R
 

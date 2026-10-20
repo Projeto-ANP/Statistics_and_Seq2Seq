@@ -417,14 +417,20 @@ def build_system_prompt_v2(
         "    that gap is statistically distinguishable.",
         "  - FORECAST SHAPE: normalized last-validation actual + top-model forecasts;",
         "    blind-test model forecasts and agreement. Test actual is never shown.",
-        "  - HANDLES: pools and weight vectors created in this run, with concentration.",
+        *([
+            "  - SEEDED POOL HANDLES: optional Phase-2 references; no new handles",
+            "    are created in direct mode.",
+        ] if direct_models else [
+            "  - HANDLES: pools and weight vectors created in this run, with concentration.",
+        ]),
         "",
         *([
             "DIRECT COMBINATION MODE:",
             "  The only action is evaluate_strategy. Each turn is ONE tested combination.",
             "  Pass 'models' (the subset) and 'combine' in the same call; the harness",
             "  builds the pool and any weights internally. There are no separate",
-            "  pool/weight/diagnostic actions.",
+            "  pool/weight/diagnostic actions. Phase-2 pool handles such as",
+            "  'pool_full' may also be passed as 'pool'.",
             "  Examples:",
             '    evaluate_strategy {"combine":"trimmed_mean","models":["ARIMA","ETS","rf"],"trim_pct":0.2}',
             *([
@@ -449,6 +455,7 @@ def build_system_prompt_v2(
                 "",
             ] if allow_agent_score_preset else [
                 f"  The scoring criterion is FIXED to '{score_preset}' (normalized SMAPE).",
+                "  The 3 windows are aggregated as 0.2/0.3/0.5, the most recent highest.",
                 "  POCID is reported separately and does not affect the ranking. Do not",
                 "  pass score_preset.",
                 *([] if allow_best_single else [
@@ -476,10 +483,10 @@ def build_system_prompt_v2(
         "  If the leader is narrow (median, DBA, or a small pool) and the next",
         "  validation scores are close, a broad softmax/weighted over the active",
         "  pool is a useful comparison. This is a check, not a rule.",
-        "  When building a pool for a mean/weighted combination, individual error",
-        "  is not the only criterion: models from different correlation groups or",
-        "  forecast clusters can complement each other, and a slightly weaker model",
-        "  can help. This is a hint, not a rule.",
+        "  When choosing the model subset for a mean/weighted combination, individual",
+        "  error is not the only criterion: models from different correlation groups",
+        "  or forecast clusters can complement each other, and a slightly weaker",
+        "  model can help. This is a hint, not a rule.",
         "",
         "CLASSIC STARTING POINTS (optional, not a required order):",
         "  mean(pool_full), median(pool_full), trimmed_mean(pool_full, trim_pct=0.2),",
@@ -533,25 +540,33 @@ def build_system_prompt_v2(
             "    score worse.",
             "",
             "BUDGET RULES (no accept):",
-            "  - One tested approach = one evaluate_strategy call. select_*, prune_*,",
-            "    and weights_* are preparation, not an approach.",
-            "  - A pool/weight handle is optional and not a commitment: reuse it",
-            "    while it still fits; build another when the subset changes.",
-            "  - Never spend two turns in a row without a score; never build a handle",
-            "    you will not score.",
             *([
-                "  - There are NO pre-evaluated seeded baselines in this run.",
-                "    The classic starting points (mean, median, dba, trimmed_mean,",
-                "    weighted) are available but optional; your first evaluate_strategy",
-                "    is the floor.",
+                "  - One tested approach = one evaluate_strategy call; pass the model",
+                "    subset and the combination in the same call.",
+            ] if direct_models else [
+                "  - One tested approach = one evaluate_strategy call. select_*, prune_*,",
+                "    and weights_* are preparation, not an approach.",
+                "  - A pool/weight handle is optional and not a commitment: reuse it",
+                "    while it still fits; build another when the subset changes.",
+                "  - Never spend two turns in a row without a score; never build a handle",
+                "    you will not score.",
+            ]),
+            *([
+                "  - There are NO pre-evaluated seeded baselines in this run; your first",
+                "    evaluate_strategy is the floor.",
             ] if no_seed_attempts else [
                 "  - The seeded baselines are already scored and are part of the final",
                 "    history. They are a reference, not a required starting point; test",
                 "    whichever combination the series characteristics justify.",
             ]),
             "  - The diagnostics are already in the turn context; do not spend turns on them.",
-            "  - The scoring budget counts evaluate_strategy calls; preparation actions",
-            "    do not consume it. A separate cap on total turns also applies.",
+            *([
+                "  - The scoring budget counts evaluate_strategy calls; the separate",
+                "    cap on total turns also applies.",
+            ] if direct_models else [
+                "  - The scoring budget counts evaluate_strategy calls; preparation actions",
+                "    do not consume it. A separate cap on total turns also applies.",
+            ]),
             "  - The last validation window is the closest to the blind test; it is a",
             "    useful signal, but do not treat it as a rule.",
             "  - If the observation says 'already_tested', change the model subset or",
@@ -567,17 +582,24 @@ def build_system_prompt_v2(
                 "  - For best_single, only 'model' matters. Changing the pool/models is a",
                 "    no-op; change the model, not the pool.",
             ] if allow_best_single else []),
-            "  - Use exact model names from the MODEL POOL. 'weights' must be a known",
-            "    method name or an existing handle.",
+            "  - Use exact model names from the MODEL POOL; 'weights' is a known",
+            "    method name (see RULES).",
             "",
         ] if no_early_stop else []),
         "RULES:",
-        "- 'weights' is either an existing handle or a known method name (for",
-        "  example inverse_error); evaluate_strategy resolves it. You never see",
-        "  the numbers, and you do not need to.",
-        "- A handle is only valid with the pool it was computed on.",
-        "- Repeating a strategy already in the history wastes an iteration.",
-        "- Never assume w1 or pool1 exists: create it in this run before you refer to it.",
+        *([
+            "- 'weights' must be a known method name (for example inverse_error);",
+            "  evaluate_strategy resolves it. Phase-2 pool handles may be reused, but",
+            "  the agent creates no new handles in direct mode.",
+            "- Repeating a strategy already in the history wastes an iteration.",
+        ] if direct_models else [
+            "- 'weights' is either an existing handle or a known method name (for",
+            "  example inverse_error); evaluate_strategy resolves it. You never see",
+            "  the numbers, and you do not need to.",
+            "- A handle is only valid with the pool it was computed on.",
+            "- Repeating a strategy already in the history wastes an iteration.",
+            "- Never assume w1 or pool1 exists: create it in this run before you refer to it.",
+        ]),
         *([] if no_early_stop else [
             "- When you accept, justify the choice in terms of OBSERVABLE SERIES",
             "  CHARACTERISTICS (trend, seasonality, ranking stability, redundancy), not",
@@ -922,7 +944,7 @@ def build_turn_prompt(
     if leader:
         parts.append("")
         open_("leader_diagnostics")
-        parts.append("LEADER DIAGNOSTICS (validation only; n_eff = models actually carrying weight):")
+        parts.append("LEADER DIAGNOSTICS (validation only):")
         parts.append(_compact(leader, limit=600))
         close_("leader_diagnostics")
 
@@ -956,22 +978,34 @@ def build_turn_prompt(
     parts.append("")
     open_("handles")
     if handles:
-        # Not all of these are the agent's doing: Phase 2 seeds stability pools
-        # before the loop opens, so they are already registered on iteration 1.
-        # Calling them "yours" invited the model to assume a matching `w1` had
-        # been created alongside them, which is how the "unknown weights handle"
-        # errors started.
-        parts.append("HANDLES AVAILABLE (seeded by Phase 2, plus anything you create):")
+        # Phase 2 seeds stability pools before the loop opens. Under scoring_budget
+        # all other actions are withheld, so the agent can reuse those pools but
+        # cannot create new handles; say that instead of inviting a tool call.
+        if getattr(state.config, "scoring_budget", False):
+            parts.append("HANDLES AVAILABLE (seeded by Phase 2; no new handles in direct mode):")
+        else:
+            parts.append("HANDLES AVAILABLE (seeded by Phase 2, plus anything you create):")
         parts.append(_compact(handles, limit=600))
         if not state.weights:
-            parts.append(
-                "  no weight handles exist yet - create one with a weights_* tool "
-                "before any combine='weighted' strategy"
-            )
+            if getattr(state.config, "scoring_budget", False):
+                parts.append(
+                    "  weights are passed as method names in evaluate_strategy; "
+                    "no separate weight handle is created in this mode"
+                )
+            else:
+                parts.append(
+                    "  no weight handles exist yet - create one with a weights_* tool "
+                    "before any combine='weighted' strategy"
+                )
     else:
         # Saying "none" matters: handles reset per series, and a model that just
         # finished another one will otherwise reach for a `w1` that does not exist.
-        parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
+        if getattr(state.config, "scoring_budget", False):
+            parts.append(
+                "HANDLES AVAILABLE: none; direct mode creates no pool/weight handles"
+            )
+        else:
+            parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
     close_("handles")
 
     methods = _available_weight_methods(state)

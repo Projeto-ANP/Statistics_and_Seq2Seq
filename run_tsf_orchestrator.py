@@ -65,8 +65,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -178,7 +180,6 @@ def exec_dataset_orchestrator(
     max_total_turns: int = 0,
     final_strategy: str = "argmin",
     seed_gate_margin: float = 0.01,
-    diverse_margin: float = 0.10,
     final_top_m: int = 3,
     final_eta: float = 5.0,
     mcs_alpha: float = 0.10,
@@ -371,7 +372,6 @@ def exec_dataset_orchestrator(
     cfg.max_total_turns = int(max_total_turns)
     cfg.final_strategy = final_strategy
     cfg.seed_gate_margin = float(seed_gate_margin)
-    cfg.diverse_margin = float(diverse_margin)
     cfg.final_top_m = int(final_top_m)
     cfg.final_eta = float(final_eta)
     cfg.mcs_alpha = float(mcs_alpha)
@@ -438,6 +438,11 @@ def exec_dataset_orchestrator(
 
     experiment = f"orchestrator_react_{version}"
     out_dir = output_dir or results_dir
+    if not dry_run:
+        try:
+            _save_run_command(os.path.join(out_dir, experiment))
+        except Exception:
+            pass
 
     todo = list(indices) if indices is not None else None
     if todo is None and limit:
@@ -611,7 +616,6 @@ def exec_dataset_orchestrator(
                 f"         PROVENANCE tools={prov.get('n_tool_calls', 0)}"
                 f" evaluate_calls={prov.get('n_evaluate_calls', 0)}"
                 f" pool={len(outcome.selected_models())}"
-                f" effective={len(outcome.effective_models())}"
                 f" ok={prov.get('provenance_ok')}"
             )
             red = outcome.reducibility()
@@ -807,6 +811,26 @@ def configure_ollama_gpu(gpu: Optional[str]) -> None:
     )
 
 
+def _save_run_command(directory: str, command: Optional[Sequence[str]] = None) -> None:
+    os.makedirs(directory, exist_ok=True)
+    invocation = list(command or [sys.executable, *sys.argv])
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    lines = [
+        "# Exact command used for this run",
+        f"# started: {now}",
+        f"# cwd: {os.getcwd()}",
+    ]
+    for key in ("CUDA_VISIBLE_DEVICES", "REACT_OLLAMA_URL", "OLLAMA_NUM_CTX", "REACT_CONFIG"):
+        if os.environ.get(key) is not None:
+            lines.append(f"# {key}={os.environ[key]}")
+    lines += ["", shlex.join(invocation), ""]
+    text = "\n".join(lines)
+    with open(os.path.join(directory, "run_command.txt"), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    with open(os.path.join(directory, "run_commands.log"), "a", encoding="utf-8") as fh:
+        fh.write(f"# {now}\n{text}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Forecast combination with a single ReAct agent over deterministic tools.",
@@ -845,19 +869,13 @@ def build_parser() -> argparse.ArgumentParser:
                         "not tool turns; preparation does not consume the budget")
     p.add_argument("--max-total-turns", type=int, default=0,
                    help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs", "diverse_gate"],
+    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
                         "averages the top --final-top-m; mcs averages the confidence "
                         "set the validation cannot separate from the leader "
                         "(--mcs-alpha); seed_gate keeps the best seeded baseline "
-                        "unless an agent attempt improves on it by --seed-gate-margin; "
-                        "diverse_gate keeps the best validation attempt unless the "
-                        "top-3 spread is within --diverse-margin, in which case it "
-                        "prefers the tied attempt with more effective models")
-    p.add_argument("--diverse-margin", type=float, default=0.10,
-                   help="relative top-3 spread treated as a tie by --final-strategy "
-                        "diverse_gate (default 0.10)")
+                        "unless an agent attempt improves on it by --seed-gate-margin")
     p.add_argument("--mcs-alpha", type=float, default=0.10,
                    help="rejection level of the Diebold-Mariano test that builds the "
                         "MCS committee: p < alpha against the leader leaves the set "
@@ -1007,7 +1025,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_total_turns=args.max_total_turns,
             final_strategy=args.final_strategy,
             seed_gate_margin=args.seed_gate_margin,
-            diverse_margin=args.diverse_margin,
             final_top_m=args.final_top_m,
             final_eta=args.final_eta,
             mcs_alpha=args.mcs_alpha,
