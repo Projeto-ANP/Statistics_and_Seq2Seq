@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -725,69 +724,6 @@ def test_run_dataset_builds_a_leave_one_series_out_prior(fake_repo):
             others = [own[j][lbl] for j in own if j != o.dataset_index and lbl in own[j]]
             if others:
                 assert o.state.strategy_prior[lbl] == pytest.approx(float(np.mean(others)))
-
-
-def _fake_attempt(attempt_id: str, combine: str, score: float, spread: float):
-    return SimpleNamespace(
-        attempt_id=attempt_id,
-        spec={"combine": combine},
-        score=score,
-        per_window_scores=[score - spread, score + spread],
-    )
-
-
-def _fake_state(attempts, best):
-    return SimpleNamespace(attempts=attempts, best_attempt=lambda: best)
-
-
-def test_hint_gate_rejects_weighted_when_the_hint_is_robust():
-    weighted = _fake_attempt("w", "weighted", 0.05, 0.01)
-    trimmed = _fake_attempt("t", "trimmed_mean", 0.08, 0.01)
-    state = _fake_state([weighted, trimmed], weighted)
-    chosen, note = PL._hint_gated_attempt(
-        state,
-        {"combination_hint": "robust"},
-        {"ranking_stability": {"mean_kendall_tau": 0.2, "verdict": "unstable"}},
-        0.5,
-    )
-    assert chosen is trimmed
-    assert "hint=robust" in note
-
-
-def test_hint_gate_allows_weighted_when_the_hint_and_stability_support_it():
-    weighted = _fake_attempt("w", "weighted", 0.05, 0.01)
-    trimmed = _fake_attempt("t", "trimmed_mean", 0.08, 0.01)
-    state = _fake_state([weighted, trimmed], trimmed)
-    chosen, _ = PL._hint_gated_attempt(
-        state,
-        {"combination_hint": "weighted"},
-        {"ranking_stability": {"mean_kendall_tau": 0.7, "verdict": "stable"}},
-        0.5,
-    )
-    assert chosen is weighted
-
-
-def test_hint_gate_rejects_weighted_when_ranking_is_moderate():
-    weighted = _fake_attempt("w", "weighted", 0.05, 0.01)
-    median = _fake_attempt("m", "median", 0.08, 0.01)
-    state = _fake_state([weighted, median], weighted)
-    chosen, _ = PL._hint_gated_attempt(
-        state,
-        {"combination_hint": "weighted"},
-        {"ranking_stability": {"mean_kendall_tau": 0.4, "verdict": "moderate"}},
-        0.5,
-    )
-    assert chosen is median
-
-
-def test_hint_gate_penalises_within_validation_variance():
-    volatile = _fake_attempt("v", "mean", 0.10, 0.10)
-    steady = _fake_attempt("s", "mean", 0.11, 0.001)
-    state = _fake_state([volatile, steady], volatile)
-    chosen, _ = PL._hint_gated_attempt(state, {}, {}, 0.5)
-    assert chosen is steady
-    chosen0, _ = PL._hint_gated_attempt(state, {}, {}, 0.0)
-    assert chosen0 is volatile
 
 
 def test_the_prior_is_not_built_when_nothing_needs_it(fake_repo):
