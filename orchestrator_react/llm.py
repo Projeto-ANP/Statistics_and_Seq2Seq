@@ -140,7 +140,13 @@ class OllamaClient:
         message = response.get("message") if hasattr(response, "get") else getattr(response, "message", None)
         content = (message.get("content") if hasattr(message, "get") else getattr(message, "content", "")) or ""
         thinking = (message.get("thinking") if hasattr(message, "get") else getattr(message, "thinking", "")) or ""
-        meta: Dict[str, Any] = {"num_ctx": num_ctx, "thinking_chars": len(thinking), "content_chars": len(content)}
+        meta: Dict[str, Any] = {
+            "num_ctx": num_ctx,
+            "seed": options.get("seed"),
+            "temperature": temperature,
+            "thinking_chars": len(thinking),
+            "content_chars": len(content),
+        }
         if thinking:
             # Persist the reasoning text itself, not just its length: the artifacts
             # are where a reader checks WHY the agent proposed a strategy, and

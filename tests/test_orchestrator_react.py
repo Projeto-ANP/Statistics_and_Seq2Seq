@@ -1171,6 +1171,13 @@ def test_gpu_selector_sets_cuda_and_gpu_specific_ollama_url(monkeypatch):
         R.configure_ollama_gpu("gpu1")
 
 
+def test_llm_seed_cli_is_parsed():
+    import run_tsf_orchestrator as R
+
+    args = R.build_parser().parse_args(["--dataset", "ETTM1", "--llm-seed", "17"])
+    assert args.llm_seed == 17
+
+
 def test_parse_reasoning_normalises_booleans_and_keeps_named_levels():
     import run_tsf_orchestrator as R
 

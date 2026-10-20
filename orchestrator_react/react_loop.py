@@ -108,6 +108,8 @@ class ReactResult:
     #: Transient API-level failures (see `LLM_ERROR_RETRIES`) that were re-asked
     #: and recovered from, rather than immediately ending the loop.
     llm_error_retries: int = 0
+    #: One record per re-ask, with the failed and retry sampling parameters.
+    retry_events: List[Dict[str, Any]] = field(default_factory=list)
     #: Catalog entries this run could not support, mapped to the reason. Recorded
     #: so a row states which action space produced it.
     withheld_tools: Dict[str, str] = field(default_factory=dict)
@@ -152,6 +154,7 @@ class ReactResult:
             "n_trajectory_steps": len(self.trajectory),
             "empty_responses": self.empty_responses,
             "llm_error_retries": self.llm_error_retries,
+            "retry_events": list(self.retry_events),
             "withheld_tools": dict(self.withheld_tools),
             "score_weights": dict(self.score_weights),
             "score_weights_name": self.score_weights_name,
@@ -348,10 +351,20 @@ def run_react_loop(
                     break
                 error_left -= 1
                 result.llm_error_retries += 1
+                failed = _sampling_snapshot(client)
                 if hasattr(client, "seed_offset"):
                     # Same seed + same prompt fails the same way (the "error parsing
                     # tool call" 500 is deterministic), so retries must vary it.
                     client.seed_offset = (LLM_ERROR_RETRIES - error_left) + (EMPTY_RESPONSE_RETRIES - empty_left)
+                retry = _sampling_snapshot(client)
+                result.retry_events.append({
+                    "iteration": iteration,
+                    "kind": "llm_error",
+                    "retry": int(LLM_ERROR_RETRIES - error_left),
+                    "error": str(exc),
+                    "failed": failed,
+                    "next": retry,
+                })
                 result.errors.append(
                     f"iteration {iteration}: transient LLM error, retrying "
                     f"({LLM_ERROR_RETRIES - error_left}/{LLM_ERROR_RETRIES}): {exc}"
@@ -365,8 +378,18 @@ def run_react_loop(
                 break
             empty_left -= 1
             result.empty_responses += 1
+            failed = _sampling_snapshot(client)
             if hasattr(client, "seed_offset"):
                 client.seed_offset = (LLM_ERROR_RETRIES - error_left) + (EMPTY_RESPONSE_RETRIES - empty_left)
+            retry = _sampling_snapshot(client)
+            result.retry_events.append({
+                "iteration": iteration,
+                "kind": "empty_response",
+                "retry": int(EMPTY_RESPONSE_RETRIES - empty_left),
+                "failed": failed,
+                "failed_meta": dict(llm_meta),
+                "next": retry,
+            })
             empty_metas.append(dict(llm_meta))
             why = ", ".join(
                 f"{k}={llm_meta[k]}" for k in ("done_reason", "eval_count", "thinking_chars", "num_ctx")
@@ -616,6 +639,21 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _sampling_snapshot(client: Any) -> Dict[str, Any]:
+    role = getattr(client, "role", None)
+    offset = int(getattr(client, "seed_offset", 0) or 0)
+    seed = getattr(role, "seed", None) if role is not None else None
+    temperature = getattr(role, "temperature", None) if role is not None else None
+    return {
+        "seed": None if seed is None else int(seed) + offset,
+        "temperature": (
+            None if temperature is None
+            else round(min(0.9, float(temperature) + 0.15 * offset), 3)
+        ),
+        "seed_offset": offset,
+    }
+
+
 def _leader_diagnostics(state: ReactState, no_accept: bool = False) -> Dict[str, Any]:
     """Deterministic answer to "how safe is stopping now?".
 
@@ -723,6 +761,7 @@ def _finalize_trace(state: ReactState, result: "ReactResult", started: float) ->
         "parse_failures": len(result.parse_failures),
         "empty_responses": result.empty_responses,
         "llm_error_retries": result.llm_error_retries,
+        "retry_events": len(result.retry_events),
         "best_changes": len(leader_changes),
         "time_to_first_best_s": leader_changes[0]["at_s"] if leader_changes else None,
         "time_after_last_improvement_s": (
