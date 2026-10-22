@@ -228,3 +228,65 @@ def test_v10_direct_prompt_matches_the_scoring_budget():
     assert "diverse_gate" not in text
     assert "0.2/0.3/0.5" in text
     assert "evaluate_strategy" in text
+
+
+def test_direct_prompt_advertises_per_horizon_preparation():
+    text = P.build_system_prompt_v2(
+        prompt_format="text", no_early_stop=True, direct_models=True
+    )
+    assert "PREPARATION IS ALLOWED" in text
+    assert "PER-HORIZON EXAMPLE" in text
+    assert "select_top_k" in text
+    assert "weights_topk_per_horizon" in text
+
+
+def test_per_horizon_tool_chain_only_for_direct_seasonal_series():
+    card = {"seasonal_strength": 0.9, "n_points": 1000, "seasonal_period": 12}
+    direct = make_state(config=ReactConfig(scoring_budget=True))
+    chain = P.per_horizon_tool_chain(direct, card)
+    assert chain is not None
+    assert "select_top_k" in chain and "smape" in chain
+    assert P.per_horizon_tool_chain(
+        direct, {**card, "seasonal_strength": 0.1}
+    ) is None
+    assert P.per_horizon_tool_chain(
+        direct, card, {"select_top_k": "withheld"}
+    ) is None
+    not_direct = make_state(config=ReactConfig(scoring_budget=False))
+    assert P.per_horizon_tool_chain(not_direct, card) is None
+
+
+def test_turn_prompt_contains_the_optional_tool_chain():
+    s = make_state(config=ReactConfig(scoring_budget=True))
+    series = T.series_profile(s)
+    chain = "select_top_k(...) -> weights_topk_per_horizon(...) -> evaluate_strategy(...)"
+    text = P.build_turn_prompt(s, series, {}, [], 1, 8, tool_chain=chain)
+    assert "OPTIONAL TOOL CHAIN" in text
+    assert chain in text
+
+
+def test_no_seed_hides_phase2_pools_from_handles_and_untried_menu():
+    s = make_state(config=ReactConfig(no_seed_attempts=True, scoring_budget=True))
+    POOL.run_phase2(s, s.config)
+    assert s.pools  # Phase 2 still registered handles
+    assert not s.attempts  # but nothing was scored
+    series = T.series_profile(s)
+    text = P.build_turn_prompt(s, series, {}, [], 1, 8)
+    assert "HANDLES AVAILABLE: none yet; use select_*" in text
+    assert "pool1" not in text
+
+
+def test_direct_preparation_exposes_only_select_and_weights():
+    cfg = ReactConfig(
+        scoring_budget=True, direct_preparation=True, catalog_v2=True,
+        extra_actions=True,
+    )
+    withheld = R.withheld_tools(cfg, 3)
+    assert "select_top_k" not in withheld
+    assert "weights_topk_per_horizon" not in withheld
+    assert "evaluate_strategy" not in withheld
+    assert "error_summary" in withheld
+    assert "combine_mean" in withheld
+    cfg_off = ReactConfig(scoring_budget=True, direct_preparation=False)
+    off = R.withheld_tools(cfg_off, 3)
+    assert "select_top_k" in off and "weights_topk_per_horizon" in off

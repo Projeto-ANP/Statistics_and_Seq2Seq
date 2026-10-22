@@ -210,6 +210,46 @@ Depois disso, o pipeline completo pode rodar com:
 --final-strategy seasonal_veto --final-selector-temperature 0.2
 ```
 
+## v11.1 — deixar o agente chegar na receita por horizonte
+
+O modo `--scoring-budget` original esconde `select_*`/`weights_*` e só deixa
+`evaluate_strategy`. Para o agente conseguir montar a receita por horizonte
+sozinho, use `--direct-preparation`. As ações de preparação não consomem o
+orçamento de scores; o limite de turnos continua valendo.
+
+O prompt v2 agora inclui:
+
+- `PREPARATION IS ALLOWED` no modo direto;
+- um exemplo `select_top_k(k=7, metric="smape")` → `weights_topk_per_horizon(k=5,
+  metric="smape")` → `evaluate_strategy(weighted)`;
+- uma dica condicional para séries sazonais com muitos ciclos;
+- uma `OPTIONAL TOOL CHAIN` no bloco `NEXT UNTRIED`;
+- com `--no-seed-attempts`, os pools estáveis da Phase 2 não aparecem nos
+  handles nem no menu, para o agente não começar ancorado neles.
+
+Smoke no ETTM1 (3 séries):
+
+```bash
+python3 run_tsf_orchestrator.py \
+    --dataset ETTM1 --source ETTM1.tsf --source-dir ../forecasting_datasets \
+    --combinator gpt-oss:20b --version v11_topk_prompt_smoke --gpu 1 \
+    --reasoning low --llm-seed 11 --prompt-v2 --catalog-v2 \
+    --no-early-stop --scoring-budget --direct-preparation \
+    --max-iterations 12 --max-total-turns 24 --temperature 0.7 \
+    --score-preset smape_only --score-window-mode weighted \
+    --no-agent-score-preset --no-seed-attempts --no-best-single \
+    --final-strategy seasonal_guard --final-selector-max-candidates 10 \
+    --indices 0 1 2
+```
+
+Depois, no artefato de cada série, procure em `react.trajectory` por
+`select_top_k` e `weights_topk_per_horizon`, e em `ranking_trace.attempts` por
+uma tentativa `weighted` cujo weights recipe seja `topk_mean_per_horizon`. O
+`final_choice` mostra se o guard viu e escolheu essa família.
+
+Se o agente não usar as ferramentas, o exemplo/dica não bastou; aí vale testar
+um reasoning maior ou um modelo diferente antes de partir para o seed.
+
 ## Comando do pipeline real (smoke)
 
 Depois de validar o replay, rode o pipeline de ponta a ponta em duas séries:

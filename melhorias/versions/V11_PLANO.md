@@ -581,12 +581,344 @@ gate (0,5 e 10 ciclos) são escolhas de desenho e devem ser tratados como tal.
 - testes em `tests/test_final_choice.py` cobrem gate, guard, veto, baixa
   confiança, erro de LLM, prompt binário e integração no pipeline.
 
-Comandos no README da pasta 10. O dry-run do `compare_three.py` reproduziu os
-números do seasonal baseline: low +0,005767 e medium +0,004927 na média dos
-datasets. Falta a run real do veto binário (LLM) no servidor para decidir se ele
-agrega sobre o guard. Próximo passo: rodar o `compare_three.py` com o LLM no low
-e no medium, e só levar para o pipeline completo a política que vencer o guard
-determinístico.
+### 11.2 Resultado da comparação três-a-três
+
+O dry-run do `compare_three.py` reproduziu o seasonal baseline. A run real do
+veto binário foi feita no low e no medium:
+
+| run | argmin | guard | guard+veto | veto vs guard |
+|---|---:|---:|---:|---:|
+| low | 0,239556 | 0,233789 | 0,235905 | **-0,002116** |
+| medium | 0,238025 | 0,233099 | 0,236058 | **-0,002959** |
+
+- O LLM foi chamado em 48 (low) / 49 (medium) séries, as que o guard queria
+  trocar; aceitou a troca em 28/33 e manteve o líder em 20/16.
+- `veto_accuracy` (dataset mean): 0,590 low / 0,350 medium. Nos quartis de
+  `seasonal_gap` o veto ficou perto de chance.
+- O dano está concentrado no ETTH1: na série 0, o guard melhorava
+  +0,095 (low) / +0,115 (medium), mas o LLM manteve o líder com confiança
+  `high`, dizendo que o líder seguia melhor o ciclo sazonal. A série 2 do ETTH1
+  repete o padrão. Esses dois casos anulam o ganho do guard no ETT.
+- As razões do LLM são plausíveis, mas não predizem o teste. O veto binário não
+  agrega de forma robusta.
+
+**Decisão:** adotar `seasonal_guard` como estratégia final da v11. O veto binário
+fica registrado como resultado negativo/ablação: o LLM agrega na busca do v10,
+não na escolha final entre líder e candidato sazonal.
+
+Próximo passo: rodar o pipeline completo com `--final-strategy seasonal_guard`
+para gerar os artefatos oficiais e comparar com o v10. O comando está no README
+da pasta 10.
+
+### 11.3 Mineração de regras nas features do agente
+
+Além do seasonal guard, foi feita uma varredura sistemática de ~50 regras
+determinísticas sobre a shortlist e as features que o agente vê: min/max de
+`level_1`, `slope`, `range`, `volatility`, `naive_dist`, `seasonal_dist`,
+`pool_dist`, `outside_band`, `validation_score`; regras condicionais por perfil
+(`seasonal_strength`, ciclos, `trend_strength`, entropia); margens; filtros de
+banda; e "não-líder mais próximo do líder". Tudo avaliado por série, comparando
+com o argmin e com o oráculo da shortlist, no low e no medium.
+
+| regra | low ds / série | medium ds / série |
+|---|---:|---:|
+| `seasonal_guard` | +0,005767 / +0,000818 | +0,004927 / +0,000707 |
+| `guard + max_outside (baixa sazonalidade)` | +0,006101 / +0,001380 | +0,005187 / +0,000864 |
+| `max_outside_band` sozinho | +0,002364 / +0,000362 | +0,002204 / +0,000037 |
+| `two_anchor` (sazonal + naive) | -0,000446 / +0,001442 | -0,003163 / +0,000350 |
+| `seasonal_margin_0.02` | +0,005446 / -0,002116 | +0,002284 / -0,003323 |
+| argmin | 0 / 0 | 0 / 0 |
+
+O achado secundário é `max_outside_band`: escolher o candidato com a maior
+fração de pontos fora da banda q10–q90 do pool. Sozinho, ele é positivo nas duas
+médias, mas negativo no NN5; combinado com o guard apenas para séries de
+sazonalidade fraca e ciclos suficientes, ele adiciona +0,00095 (ANP) no low e
++0,00023 no medium, com ponto estimado positivo mas **IC 95% incluindo zero**.
+
+As regras intuitivas falham: escolher o mais próximo do último valor
+(-0,0206 low / -0,0232 medium), o mais próximo da mediana do pool, o maior
+slope/range/volatilidade, o que “segue a tendência”, o não-líder mais próximo do
+líder, ou o melhor de validação dentro da banda. O viés de continuidade/
+centralidade que o LLM mostrava também é ruim nos dados.
+
+Decisão: manter `seasonal_guard` como estratégia final. A adição de
+`max_outside_band` para séries de baixa sazonalidade fica como hipótese para uma
+run independente; o ganho sobre o guard é pequeno e o IC inclui zero. A varredura
+de ~50 regras na mesma base também tem risco de múltiplas comparações; o medium
+replica trajetórias, mas não é um teste independente.
+
+Script: `aprovacao_solida/10_final_choice_replay/mine_rules.py`.
+Saída: `outputs/resultados/v11_rule_mining/rule_summary.csv`.
+
+### 11.4 Comparação com FFORMA, ADE e v10
+
+SMAPE (teste), 321 séries, mesmas janelas de teste:
+
+| dataset | FFORMA | ADE | v10 low | v10 medium | guard low | guard medium |
+|---|---:|---:|---:|---:|---:|---:|
+| ANP_MONTHLY | **0,216593** | 0,217722 | 0,219567 | 0,218291 | 0,219451 | 0,218177 |
+| ETTH1 | 0,300054 | 0,395094 | 0,240080 | 0,241423 | 0,226407 | **0,224214** |
+| ETTH2 | 0,203528 | 0,226148 | **0,174797** | 0,175173 | 0,176668 | 0,177029 |
+| ETTM1 | **0,439569** | 0,457223 | 0,509871 | 0,505415 | 0,487956 | 0,491870 |
+| ETTM2 | **0,165421** | 0,187240 | 0,176754 | 0,171824 | 0,175984 | 0,171275 |
+| NN5_WEEKLY_DATASET | 0,119654 | 0,117800 | 0,116270 | **0,116027** | 0,116270 | **0,116027** |
+| **MÉDIA DAS MÉDIAS** | 0,240803 | 0,266871 | 0,239556 | 0,238025 | 0,233789 | **0,233099** |
+| **AGREGADO (321 séries)** | 0,188354 | 0,191779 | 0,188715 | 0,187741 | 0,187897 | **0,187034** |
+
+POCID (maior é melhor):
+
+| resumo | FFORMA | ADE | v10 low | v10 medium | guard low | guard medium |
+|---|---:|---:|---:|---:|---:|---:|
+| MÉDIA DAS MÉDIAS | 52,357 | 51,446 | 53,526 | 53,465 | **54,234** | 53,638 |
+| AGREGADO (321 séries) | **56,829** | 55,337 | 55,759 | 56,591 | 55,797 | 56,505 |
+
+Leitura:
+
+- O guard medium é o melhor SMAPE nas duas agregações; o guard low é o melhor
+  POCID na média das médias.
+- Contra o v10, o guard melhora ANP, ETTH1, ETTM1 e ETTM2 e piora um pouco o
+  ETTH2; no NN5 não há troca. O ganho é concentrado em ETTH1/ETTM1.
+- Contra o FFORMA, o guard ganha nas duas agregações de SMAPE (0,2331 vs 0,2408
+  na média; 0,1870 vs 0,1884 no agregado), mas o FFORMA continua melhor em
+  ANP, ETTM1 e ETTM2. O agregado de POCID do FFORMA (56,829) ainda é o melhor.
+- O ADE é o mais fraco em SMAPE nas duas agregações, embora tenha um ANP
+  competitivo.
+- O ganho do guard não é uniforme: é uma aposta em ETTH1/ETTM1, onde o
+  seasonal naive é confiável; por isso o gate exclui ANP/NN5.
+
+Os números de v10 são os runs `v10x_low`/`v10x_medium` (mesmas trajetórias do
+guard). O doc histórico do v10 traz 0,239104 na média, praticamente igual ao
+v10x_low (0,239556). FFORMA/ADE vêm dos CSVs de `timeseries/mestrado/resultados`.
+As tabelas completas estão em `comparison_smape.csv` e `comparison_pocid.csv`.
+
+### 11.5 Sem ETTM1/ETTM2
+
+Tirando os dois ETTM (4 datasets, 307 séries), o SMAPE fica:
+
+| resumo | FFORMA | ADE | v10 low | v10 medium | guard low | guard medium |
+|---|---:|---:|---:|---:|---:|---:|
+| MÉDIA DAS MÉDIAS | 0,209957 | 0,239191 | 0,187678 | 0,187729 | 0,184699 | **0,183862** |
+| AGREGADO (307 séries) | 0,183148 | 0,185831 | 0,181665 | 0,180860 | 0,181327 | **0,180443** |
+
+- O guard medium continua o melhor nas duas agregações de SMAPE. O ganho sobre
+  o v10 medium cai para +0,003867 na média e +0,000417 no agregado, mas continua
+  positivo.
+- O POCID muda de figura: sem ETTM, a média das médias é do FFORMA (57,883);
+  v10 medium 56,595, guard medium 56,545. No agregado, FFORMA 57,537,
+  v10 medium 57,019, guard medium 56,901. O ganho de POCID do guard era
+  concentrado no ETTM1.
+- O ganho de SMAPE do guard **não é só ETTM**: o ETTH1 é o principal
+  contribuinte; por isso o guard ainda vence sem os ETTM. Mas a vantagem de
+  POCID desaparece.
+
+Tabelas: `comparison_smape_sem_ETTM.csv` e `comparison_pocid_sem_ETTM.csv`.
+
+### 11.6 Tabela reduzida: guard low × FFORMA/ADE × median/mean/dba
+
+SMAPE (teste), 321 séries:
+
+| dataset | guard low | FFORMA | ADE | median | mean | dba |
+|---|---:|---:|---:|---:|---:|---:|
+| ANP_MONTHLY | 0,219451 | **0,216593** | 0,217722 | 0,219412 | 0,220649 | 0,225205 |
+| ETTH1 | **0,226407** | 0,300054 | 0,395094 | 0,260200 | 2,000000 | 1,999999 |
+| ETTH2 | **0,176668** | 0,203528 | 0,226148 | 0,181522 | 1,719699 | 1,725712 |
+| ETTM1 | 0,487956 | **0,439569** | 0,457223 | 0,544269 | 2,000000 | 1,999999 |
+| ETTM2 | 0,175984 | **0,165421** | 0,187240 | 0,199735 | 1,740484 | 1,743807 |
+| NN5_WEEKLY_DATASET | **0,116270** | 0,119654 | 0,117800 | 0,120134 | 0,119939 | 0,122563 |
+| **MÉDIA DAS MÉDIAS** | **0,233789** | 0,240803 | 0,266871 | 0,254212 | 1,300128 | 1,302881 |
+| **AGREGADO (321 séries)** | **0,187897** | 0,188354 | 0,191779 | 0,191800 | 0,329260 | 0,332955 |
+
+POCID (média das médias / agregado):
+
+| resumo | guard low | FFORMA | ADE | median | mean | dba |
+|---|---:|---:|---:|---:|---:|---:|
+| MÉDIA DAS MÉDIAS | **54,234** | 52,357 | 51,446 | 54,048 | 49,413 | 49,821 |
+| AGREGADO (321 séries) | 55,797 | **56,829** | 55,337 | 55,808 | 54,632 | 54,576 |
+
+Atenção: `mean` e `dba` são a combinação do pool completo e explodem no ETT
+(SMAPE ~2,0) porque o pool tem previsões com escala absurda. O `median` é o
+único simples robusto no ETT, mas ainda perde do guard e do FFORMA. O guard low
+ganha nas duas agregações de SMAPE; no POCID agregado, o FFORMA ainda lidera.
+
+Tabelas: `comparison_smape_guard_low_simple.csv` e
+`comparison_pocid_guard_low_simple.csv`.
+
+### 11.7 Sensibilidade dos parâmetros do gate
+
+Grade de `seasonal_strength` (0,0–0,9) × ciclos mínimos (0–50), no low e no
+medium. Ganho vs argmin:
+
+| strength | ciclos | low ds / série | medium ds / série | gate low |
+|---:|---:|---:|---:|---:|
+| 0,3 | 10 | +0,005970 / +0,000682 | +0,005134 / +0,000564 | 115 |
+| **0,4** | **10** | **+0,006209 / +0,000850** | **+0,005159 / +0,000717** | 88 |
+| 0,5 | 10 | +0,005767 / +0,000818 | +0,004927 / +0,000707 | 64 |
+| 0,6 | 10 | +0,005768 / +0,000822 | +0,004920 / +0,000705 | 41 |
+| 0,4 | 2 | +0,005878 / +0,000165 | +0,004691 / -0,000253 | 199 |
+| 0,4 | 50 | +0,006197 / +0,000811 | +0,005146 / +0,000673 | 14 |
+| 0,5 | 50 | +0,005748 / +0,000752 | +0,004908 / +0,000642 | 11 |
+
+- `min_cycles` precisa ser >= 5 para excluir o NN5; com 0/2 o NN5 entra e a
+  média por série cai.
+- A região 0,4–0,6 de strength é um platô; 0,4/10 é o melhor ponto estimado nos
+  dois runs, mas a diferença sobre 0,5/10 é ~0,0002–0,0004 no ds e ~0,00001–
+  0,00003 por série — dentro do ruído.
+- Não há validação independente para escolher 0,4; o 0,5/10 era o valor
+  pré-especificado. Recomendação: manter 0,5/10 como default e reportar a
+  sensibilidade; 0,4/10 só se quiser o melhor ponto estimado, declarando que foi
+  escolhido na mesma base.
+
+Grade completa: `outputs/resultados/v11_rule_mining/seasonal_gate_sensitivity.csv`.
+
+### 11.8 STL/tendência como âncora
+
+Testamos duas formas de usar STL/tendência na escolha final:
+
+1. os “champions” de tendência/sazonalidade que o `series_profile` já calcula
+   via STL (o modelo base cujo componente STL melhor casou na validação);
+2. uma âncora de tendência linear ajustada no histórico recente.
+
+Regras e ganho vs argmin:
+
+| regra | low ds / série | medium ds / série |
+|---|---:|---:|
+| **seasonal_guard** | **+0,005767 / +0,000818** | **+0,004927 / +0,000707** |
+| `min_stl_season_dist` | -0,017624 / -0,003452 | -0,011190 / -0,003878 |
+| `min_stl_trend_dist` | -0,025634 / -0,003912 | -0,027540 / -0,005483 |
+| `champ_by_strength` | -0,022934 / -0,002939 | -0,021489 / -0,004347 |
+| `champ_by_score` | -0,026032 / -0,004789 | -0,027833 / -0,006460 |
+| `min_trend_anchor_dist` | -0,028054 / -0,002901 | -0,033439 / -0,004348 |
+| `trend_if_strong` | -0,019467 / -0,001172 | -0,020256 / -0,002017 |
+| `trend_or_seasonal` | -0,017162 / -0,000787 | -0,017366 / -0,001550 |
+
+Todas as âncoras STL/tendência ficaram **piores que o líder**, com taxa de troca
+de 69–80% e loss rate maior que win rate. O motivo: o champion é um modelo
+único escolhido na validação e a tendência linear não se sustenta na janela de
+teste; já o seasonal naive (repetir o último ciclo) é uma âncora robusta e
+simples. O guard sazonal continua sendo o único ganho consistente.
+
+A decomposição STL completa de “histórico + previsão do candidato” só é viável
+no servidor (statsmodels) e não foi priorizada: o resultado dos champions e da
+tendência não é encorajador. Script: `mine_stl_rules.py`; saída:
+`outputs/resultados/v11_rule_mining/stl_rule_summary.csv`.
+
+### 11.9 Componentes STL, tendência e ruído
+
+A lógica testada foi:
+
+1. decompor a série em tendência, sazonalidade e resíduo (STL);
+2. criar três âncoras: tendência extrapolada, ciclo sazonal repetido e nível de
+   ruído/forecastability;
+3. comparar cada candidato às âncoras e escolher o de menor distância
+   ponderada pelas forças dos componentes;
+4. usar o ruído como gate: não trocar quando a série é muito “limpa” e a
+   diferença entre candidatos é essencialmente ruído de validação.
+
+Evidência local:
+
+- âncoras de tendência/STL champion: todas negativas (seção 11.8);
+- âncora sazonal (seasonal guard): positiva e robusta;
+- gate de ruído em cima do guard:
+
+| regra | low: ds / série | medium: ds / série | trocas | loss |
+|---|---:|---:|---:|---:|
+| guard | +0,005767 / +0,000818 | +0,004927 / +0,000707 | 15,0% / 15,3% | 8,4% / 7,8% |
+| `spectral_entropy >= 0,45` | +0,005975 / +0,000926 | +0,005158 / +0,000781 | 4,7% / 4,4% | 1,6% / 1,6% |
+| `coef_variation >= 0,5` | +0,005962 / +0,000880 | +0,005148 / +0,000748 | 3,1% / 3,7% | 0,9% / 1,6% |
+| ambos | +0,005964 / +0,000887 | +0,005155 / +0,000769 | 1,6% / 1,6% | 0% / 0% |
+
+O gate duplo troca só 5 séries nas 321 e acerta todas nos dois runs; o ganho
+sobre o guard é pequeno (~+0,0002 ds, ~+0,00007 por série), mas o perfil de
+risco melhora muito (sem losses, muito menos trocas). O ganho continua vindo de
+ETTH1/ETTM1; o gate só remove as trocas ruins em ETTH2/ETTM2/ANP.
+
+Literatura que fundamenta a lógica:
+
+- decomposição e previsão por componente: Hyndman & Athanasopoulos, *Forecasting:
+  Principles and Practice*, seção “Forecasting with decomposition” (prever a
+  série dessazonalizada e o componente sazonal separadamente e recombinar);
+- múltiplas agregações temporais / MAPA: Kourentzes, Petropoulos & Trapero
+  (2014), *Improving forecasting by estimating time series structural components
+  across multiple frequencies*;
+- Theta method: Assimakopoulos & Nikolopoulos (2000), decomposição em theta
+  lines (tendência/curvatura);
+- Prophet: Taylor & Letham (2018), modelo aditivo trend + seasonality + noise;
+- seleção por features/meta-learning: FFORMA (Montero-Manso et al., 2020), que
+  já é baseline do projeto;
+- forecastability/entropy: spectral entropy como medida de previsibilidade
+  (Goerg, 2013); é a base do gate de ruído.
+
+Decisão: não adotar a âncora de tendência nem o champion STL. O gate de ruído é
+uma hipótese promissora de **v11.1** (guard + `spectral_entropy >= 0.45` e
+`coef_variation >= 0.5`), mas o ganho absoluto é pequeno e foi achado na mesma
+base; precisa de uma run independente antes de virar default. O guard puro
+continua sendo a escolha conservadora.
+
+Saída da grade de ruído: `outputs/resultados/v11_rule_mining/noise_gate_summary.csv`.
+
+### 11.10 Nova combinação para o ETTM: top-k por horizonte
+
+Busca de ~60 receitas no ETTM1/ETTM2. O achado mais forte **não é top1 na
+validação**, mas é uma opção nova que o guard escolhe pela forma sazonal:
+
+```text
+pool  = top7 por SMAPE na validação
+combine = weighted
+weights = topk_mean_per_horizon(k=5, metric=smape)
+```
+
+O agente não tentou essa combinação. Ela é fraca na validação (não entra no top1
+nem no top3 do ETTM1), mas no teste do ETTM1 dá 0,36396 contra 0,50987 do
+argmin e 0,43957 do FFORMA.
+
+Adicionando essa receita como candidata extra no shortlist do seasonal guard
+(o guard escolhe a menor `seasonal_dist`), respeitando o gate:
+
+| run | dataset | argmin | guard | guard + topk |
+|---|---|---:|---:|---:|
+| low | ETTM1 | 0,509871 | 0,487956 | **0,337102** |
+| low | ETTH1 | 0,240080 | 0,226407 | 0,226070 |
+| low | ETTM2 | 0,176754 | 0,175984 | 0,176014 |
+| low | ANP | 0,219567 | 0,219451 | 0,219540 |
+| low | ETTH2 | 0,174797 | 0,176668 | 0,176668 |
+| low | NN5 | 0,116270 | 0,116270 | 0,116270 |
+| low | **média dos datasets** | 0,239556 | 0,233789 | **0,208611** |
+| medium | **média dos datasets** | 0,238025 | 0,233099 | **0,208035** |
+
+No ETTM1, o topk é escolhido em 2/7 séries, justamente as duas em que o argmin
+explode (1,137 e 1,325); o topk cai para 0,645 e 0,762. No ETTM2/NN5 ele não é
+usado; no ANP é usado em ~12% das séries com uma perda média de 0,00009; no
+ETTH1 melhora 0,0003.
+
+Isso confirma a hipótese: **o gargalo do ETTM não é falta de boa combinação, é a
+validação não rankear essa combinação no topo.** A saída é semear a receita e
+deixar o guard escolhê-la pela forma sazonal, não pelo score de validação.
+
+Ressalvas: achado em 7 séries do ETTM1, com ganho concentrado em 2 séries; é uma
+hipótese forte, mas precisa de validação no pipeline completo/run independente.
+Para evitar a pequena perda no ANP, o seed do topk pode ser limitado a séries com
+`cycles >= 100` (ETT/ETTH), mantendo ANP/NN5 fora.
+
+Implementação v11.1 (sem seed): em vez de calcular e injetar a receita, o
+agente recebe ferramentas e exemplos para chegar nela:
+
+1. `--direct-preparation`: libera `select_*`/`weights_*` no modo
+   `--scoring-budget` (sem consumir o orçamento de scores);
+2. exemplo `select_top_k(k=7, metric="smape")` →
+   `weights_topk_per_horizon(k=5, metric="smape")` → `evaluate_strategy`;
+3. dica condicional para séries sazonais com muitos ciclos;
+4. `OPTIONAL TOOL CHAIN` no `NEXT UNTRIED`;
+5. com `--no-seed-attempts`, esconder os pools estáveis da Phase 2 dos handles e
+   do menu, para o agente não começar ancorado;
+6. no shortlist final, agrupar `weighted` por método de peso e usar
+   `--final-selector-max-candidates 10`, para o guard ver a família topk se o
+   agente a criar.
+
+Se o agente chegar na receita, o guard escolhe pela `seasonal_dist`; se não,
+testar reasoning/modelo diferente antes de considerar seed.
+
+CSVs: `topk_guard_low.csv`, `topk_guard_medium.csv` em
+`outputs/resultados/v11_combo_search/`.
 
 ---
 

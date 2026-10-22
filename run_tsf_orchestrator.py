@@ -178,6 +178,7 @@ def exec_dataset_orchestrator(
     no_early_stop: bool = False,
     scoring_budget: bool = False,
     max_total_turns: int = 0,
+    direct_preparation: bool = False,
     final_strategy: str = "argmin",
     seed_gate_margin: float = 0.01,
     final_top_m: int = 3,
@@ -381,6 +382,7 @@ def exec_dataset_orchestrator(
     cfg.no_early_stop = bool(no_early_stop)
     cfg.scoring_budget = bool(scoring_budget)
     cfg.max_total_turns = int(max_total_turns)
+    cfg.direct_preparation = bool(direct_preparation)
     cfg.final_strategy = final_strategy
     cfg.seed_gate_margin = float(seed_gate_margin)
     cfg.final_top_m = int(final_top_m)
@@ -945,6 +947,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "not tool turns; preparation does not consume the budget")
     p.add_argument("--max-total-turns", type=int, default=0,
                    help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
+    p.add_argument("--direct-preparation", action="store_true",
+                   help="with --scoring-budget: also allow select_* and weights_* "
+                        "preparation tools; they do not consume the scoring budget. "
+                        "Off by default to preserve the v10 one-action contract.")
     p.add_argument("--final-strategy",
                    choices=[
                        "argmin", "ensemble", "seed_gate", "mcs", "agent_family",
@@ -1141,6 +1147,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             no_early_stop=args.no_early_stop,
             scoring_budget=args.scoring_budget,
             max_total_turns=args.max_total_turns,
+            direct_preparation=args.direct_preparation,
             final_strategy=args.final_strategy,
             seed_gate_margin=args.seed_gate_margin,
             final_top_m=args.final_top_m,

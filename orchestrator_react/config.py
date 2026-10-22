@@ -120,6 +120,12 @@ class ReactConfig:
     #: Hard cap on total tool turns when `scoring_budget` is on. 0 means
     #: `2 * max_iterations`.
     max_total_turns: int = 0
+    #: With `scoring_budget`, allow preparation tools (`select_*`, `weights_*`)
+    #: in addition to `evaluate_strategy`. They do not consume the scoring budget;
+    #: the separate `max_total_turns` cap still applies. Off by default so a v10
+    #: replay keeps the one-action contract; v11 turns it on to let the agent
+    #: compose metric-ranked pools and per-horizon recipes itself.
+    direct_preparation: bool = False
     min_improvement: float = 1e-4  # minimum relative gain to count as progress
 
     # -- ablation 4: prompt format ----------------------------------------------

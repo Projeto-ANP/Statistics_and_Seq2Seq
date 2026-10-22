@@ -159,12 +159,26 @@ def withheld_tools(config: Any, n_windows: int, state: Optional[Any] = None) -> 
             "(too few series in the dataset, or xgboost unavailable)"
         )
     if getattr(config, "scoring_budget", False):
-        for name in TOOLS:
-            if name != "evaluate_strategy":
+        if getattr(config, "direct_preparation", False):
+            # v11: scoring is still one evaluate_strategy per turn, but the agent
+            # may build a metric-ranked pool/handle first. Diagnostics and the
+            # redundant combine_* wrappers remain out of the direct catalog.
+            for name in TOOLS:
+                if name == "evaluate_strategy":
+                    continue
+                if name.startswith("select_") or name.startswith("weights_"):
+                    continue
                 out[name] = (
-                    "scoring_budget: one evaluate_strategy per turn; pass the model "
-                    "subset as 'models' and the combination in the same call"
+                    "scoring_budget: only evaluate_strategy, select_* and weights_* "
+                    "are available in direct preparation mode"
                 )
+        else:
+            for name in TOOLS:
+                if name != "evaluate_strategy":
+                    out[name] = (
+                        "scoring_budget: one evaluate_strategy per turn; pass the model "
+                        "subset as 'models' and the combination in the same call"
+                    )
     return out
 
 

@@ -719,3 +719,27 @@ def test_orchestrator_config_wires_the_seasonal_guard(monkeypatch):
     assert cfg.final_strategy == "seasonal_guard"
     assert cfg.seasonal_guard_min_strength == 0.6
     assert cfg.seasonal_guard_min_cycles == 8.0
+
+
+def test_shortlist_splits_weighted_attempts_by_weight_method():
+    class Recipe:
+        def __init__(self, method):
+            self.method = method
+
+    class FakeState:
+        weights = {
+            "w1": Recipe("inverse_error"),
+            "w2": Recipe("topk_mean_per_horizon"),
+        }
+
+    attempts = [
+        FakeAttempt("a1", {"combine": "weighted", "weights": "w1"}, 0.10, [1, 2, 3]),
+        FakeAttempt("a2", {"combine": "weighted", "weights": "w2"}, 0.20, [3, 2, 1]),
+    ]
+    shortlist = FC.build_family_shortlist(
+        attempts,
+        lambda attempt: np.asarray(attempt.forecast, dtype=float),
+        family_key=lambda attempt: FC._family_key(attempt, FakeState()),
+    )
+    assert len(shortlist) == 2
+    assert {entry.attempt.attempt_id for entry in shortlist} == {"a1", "a2"}

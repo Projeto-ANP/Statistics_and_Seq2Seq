@@ -302,6 +302,7 @@ def run_react_loop(
                 else None
             ),
             untried=P.untried_candidates(state, pool_card),
+            tool_chain=P.per_horizon_tool_chain(state, series_card, withheld),
             repeat_notice=last_duplicate,
             no_accept=no_accept,
             score_presets=FINAL_SCORE_PRESETS if multi_preset else None,

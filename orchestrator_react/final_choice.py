@@ -170,6 +170,7 @@ def build_family_shortlist(
     max_candidates: int = 5,
     dedup_corr: float = 0.9999,
     max_abs: Optional[float] = None,
+    family_key: Optional[Callable[[Any], str]] = None,
 ) -> List[ShortlistEntry]:
     """Best *plausible* validation attempt of each combination family.
 
@@ -188,8 +189,11 @@ def build_family_shortlist(
     by_family: Dict[str, List[Any]] = {}
     family_order: List[str] = []
     for attempt in ranked:
-        spec = getattr(attempt, "spec", {}) or {}
-        family = str(spec.get("combine", "?"))
+        if family_key is not None:
+            family = str(family_key(attempt))
+        else:
+            spec = getattr(attempt, "spec", {}) or {}
+            family = str(spec.get("combine", "?"))
         if family not in by_family:
             by_family[family] = []
             family_order.append(family)
@@ -567,6 +571,23 @@ def _same_attempt(a: Any, b: Any) -> bool:
     return a_id is not None and a_id == b_id
 
 
+def _family_key(attempt: Any, state: Optional[ReactState]) -> str:
+    """Strategy family for the shortlist.
+
+    Weighted attempts are split by the weighting method, so a per-horizon
+    attempt is not silently dropped because a weighted inverse-error attempt
+    happened to score better. The agent's own top-k recipe gets its own family.
+    """
+    spec = getattr(attempt, "spec", {}) or {}
+    combine = str(spec.get("combine", "?"))
+    if combine == "weighted" and state is not None:
+        handle = spec.get("weights")
+        recipe = getattr(state, "weights", {}).get(str(handle))
+        if recipe is not None:
+            return f"weighted:{getattr(recipe, 'method', '?')}"
+    return combine
+
+
 def decide(
     parsed: ParsedChoice,
     entries: Sequence[ShortlistEntry],
@@ -673,6 +694,7 @@ def choose_final(
         forecast_for,
         max_candidates=config.final_selector_max_candidates,
         max_abs=max_abs,
+        family_key=lambda attempt: _family_key(attempt, state),
     )
     debug["shortlist_size"] = len(shortlist)
     if not shortlist:
@@ -873,6 +895,7 @@ def _seasonal_guard_core(
         forecast_for,
         max_candidates=config.final_selector_max_candidates,
         max_abs=max_abs,
+        family_key=lambda attempt: _family_key(attempt, state),
     )
     debug["shortlist_size"] = len(shortlist)
     if not shortlist:

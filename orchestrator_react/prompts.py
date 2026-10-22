@@ -365,6 +365,14 @@ def build_system_prompt_v2(
     tools = _public_tools(
         withheld_tools, reorder_weight_tools, no_early_stop, allow_agent_score_preset
     )
+    tool_names = {tool["name"] for tool in tools}
+    prep_available = any(
+        name.startswith("select_") or name.startswith("weights_")
+        for name in tool_names
+    )
+    per_horizon_available = (
+        "select_top_k" in tool_names and "weights_topk_per_horizon" in tool_names
+    )
     groups: Dict[str, List[str]] = {
         "diagnostics": [], "pool": [], "weights": [], "combination": [], "validation": [],
     }
@@ -418,19 +426,25 @@ def build_system_prompt_v2(
         "  - FORECAST SHAPE: normalized last-validation actual + top-model forecasts;",
         "    blind-test model forecasts and agreement. Test actual is never shown.",
         *([
-            "  - SEEDED POOL HANDLES: optional Phase-2 references; no new handles",
-            "    are created in direct mode.",
+            "  - SEEDED POOL HANDLES: optional Phase-2 references.",
         ] if direct_models else [
             "  - HANDLES: pools and weight vectors created in this run, with concentration.",
         ]),
         "",
         *([
             "DIRECT COMBINATION MODE:",
-            "  The only action is evaluate_strategy. Each turn is ONE tested combination.",
-            "  Pass 'models' (the subset) and 'combine' in the same call; the harness",
-            "  builds the pool and any weights internally. There are no separate",
-            "  pool/weight/diagnostic actions. Phase-2 pool handles such as",
-            "  'pool_full' may also be passed as 'pool'.",
+            "  The SCORING action is evaluate_strategy: each scored turn is ONE tested",
+            "  combination. Pass 'models' (the subset) and 'combine' in the same call;",
+            "  the harness builds the pool and any weights internally.",
+            *([
+                "  PREPARATION IS ALLOWED: select_* and weights_* build a pool/weights",
+                "  handle without consuming the scoring budget. Use them when the",
+                "  hypothesis needs a metric-ranked subset or a per-horizon weighting;",
+                "  then score the resulting handle with evaluate_strategy.",
+            ] if prep_available else [
+                "  There are no separate pool/weight/diagnostic actions.",
+            ]),
+            "  Phase-2 pool handles such as 'pool_full' may also be passed as 'pool'.",
             "  Examples:",
             '    evaluate_strategy {"combine":"trimmed_mean","models":["ARIMA","ETS","rf"],"trim_pct":0.2}',
             *([
@@ -438,6 +452,14 @@ def build_system_prompt_v2(
             ] if allow_best_single else []),
             '    evaluate_strategy {"combine":"mean","models":["ARIMA","ETS","rf","catboost"]}',
             '    evaluate_strategy {"combine":"weighted","models":["..."],"weights":"inverse_error"}',
+            *([
+                "  PER-HORIZON EXAMPLE (optional; use when different models win at",
+                "  different horizons):",
+                '    select_top_k {"k": 7, "metric": "smape"}',
+                '    weights_topk_per_horizon {"pool": "<handle>", "k": 5, "metric": "smape"}',
+                '    evaluate_strategy {"combine": "weighted", "pool": "<handle>", "weights": "<handle>"}',
+                "",
+            ] if per_horizon_available else []),
             *([
                 "  MULTI-PRESET FINAL: every evaluate_strategy returns the same",
                 "  attempt scored under three criteria:",
@@ -469,7 +491,14 @@ def build_system_prompt_v2(
         *([
             "  2. Test one combination per turn with evaluate_strategy: pass the",
             "     model subset as 'models' and the combination; the harness builds",
-            "     the pool/weights. No separate pool/weight action is available.",
+            "     the pool/weights.",
+            *([
+                "     Preparation actions (select_*, weights_*) are allowed and do not",
+                "     consume the scoring budget; use them for metric-ranked subsets or",
+                "     per-horizon weighting, then score the handle.",
+            ] if prep_available else [
+                "     No separate pool/weight action is available.",
+            ]),
         ] if direct_models else [
             "  2. Test it with evaluate_strategy, building a pool or weights handle first",
             "     only when the hypothesis needs a subset or a fitted weighting.",
@@ -487,11 +516,20 @@ def build_system_prompt_v2(
         "  error is not the only criterion: models from different correlation groups",
         "  or forecast clusters can complement each other, and a slightly weaker",
         "  model can help. This is a hint, not a rule.",
+        *([
+            "  If the series is strongly seasonal and has many cycles, models may win at",
+            "  different horizons; a per-horizon recipe on a metric-ranked pool is a",
+            "  useful different kind of strategy. This is a hint, not a rule.",
+        ] if per_horizon_available else []),
         "",
         "CLASSIC STARTING POINTS (optional, not a required order):",
         "  mean(pool_full), median(pool_full), trimmed_mean(pool_full, trim_pct=0.2),",
         "  dba(pool_full), weighted(pool_full, weights='inverse_error'),",
         "  weighted(pool_full, weights='softmax_neg_error').",
+        *([
+            "  per-horizon (optional): select_top_k(k=7, metric='smape'),",
+            "  weights_topk_per_horizon(k=5, metric='smape'), then weighted(handle).",
+        ] if per_horizon_available else []),
         "  A simple baseline is often a useful reference; none is required.",
         "",
         "AVAILABLE TOOLS (this list is exhaustive - anything else is an error):",
@@ -543,6 +581,10 @@ def build_system_prompt_v2(
             *([
                 "  - One tested approach = one evaluate_strategy call; pass the model",
                 "    subset and the combination in the same call.",
+                *([
+                    "  - Preparation calls (select_*, weights_*) do not consume the scoring",
+                    "    budget; use them to build a handle, then score it.",
+                ] if prep_available else []),
             ] if direct_models else [
                 "  - One tested approach = one evaluate_strategy call. select_*, prune_*,",
                 "    and weights_* are preparation, not an approach.",
@@ -588,9 +630,16 @@ def build_system_prompt_v2(
         ] if no_early_stop else []),
         "RULES:",
         *([
-            "- 'weights' must be a known method name (for example inverse_error);",
-            "  evaluate_strategy resolves it. Phase-2 pool handles may be reused, but",
-            "  the agent creates no new handles in direct mode.",
+            *([
+                "- 'weights' is either an existing handle or a known method name (for",
+                "  example inverse_error); evaluate_strategy resolves it. Phase-2 pool",
+                "  handles may be reused; select_* / weights_* may create new handles.",
+                "- A handle is only valid with the pool it was computed on.",
+            ] if prep_available else [
+                "- 'weights' must be a known method name (for example inverse_error);",
+                "  evaluate_strategy resolves it. Phase-2 pool handles may be reused, but",
+                "  the agent creates no new handles in direct mode.",
+            ]),
             "- Repeating a strategy already in the history wastes an iteration.",
         ] if direct_models else [
             "- 'weights' is either an existing handle or a known method name (for",
@@ -676,7 +725,17 @@ def untried_candidates(
     ]
     candidates: List[Dict[str, Any]] = []
     seen_singles: set[str] = set()
-    pools = sorted(state.pools, key=lambda h: (h != FULL_POOL, h))
+    used_pools = {a.spec.get("pool") for a in state.attempts}
+    hide_phase2 = bool(getattr(state.config, "no_seed_attempts", False))
+    pools = [
+        h
+        for h in sorted(state.pools, key=lambda h: (h != FULL_POOL, h))
+        if (
+            not hide_phase2
+            or h in used_pools
+            or state.pool_meta.get(h, {}).get("origin") not in {"top_k_stable", "stable"}
+        )
+    ]
     for pool in pools:
         idx = state.get_pool(pool)
         models = [state.model_names[int(i)] for i in idx]
@@ -875,6 +934,7 @@ def build_turn_prompt(
     prompt_format: str = "text",
     leader: Optional[Dict[str, Any]] = None,
     untried: Optional[Sequence[Dict[str, Any]]] = None,
+    tool_chain: Optional[str] = None,
     repeat_notice: bool = False,
     no_accept: bool = False,
     score_presets: Optional[Sequence[str]] = None,
@@ -974,7 +1034,9 @@ def build_turn_prompt(
         )
         close_("score_rankings")
 
-    handles = _handles_summary(state)
+    handles = _handles_summary(
+        state, hide_unscored=bool(getattr(state.config, "no_seed_attempts", False))
+    )
     parts.append("")
     open_("handles")
     if handles:
@@ -982,15 +1044,15 @@ def build_turn_prompt(
         # all other actions are withheld, so the agent can reuse those pools but
         # cannot create new handles; say that instead of inviting a tool call.
         if getattr(state.config, "scoring_budget", False):
-            parts.append("HANDLES AVAILABLE (seeded by Phase 2; no new handles in direct mode):")
+            parts.append("HANDLES AVAILABLE (created in this run):")
         else:
             parts.append("HANDLES AVAILABLE (seeded by Phase 2, plus anything you create):")
         parts.append(_compact(handles, limit=600))
         if not state.weights:
             if getattr(state.config, "scoring_budget", False):
                 parts.append(
-                    "  weights are passed as method names in evaluate_strategy; "
-                    "no separate weight handle is created in this mode"
+                    "  weights are passed as method names or handles; use weights_* "
+                    "to create a handle if needed"
                 )
             else:
                 parts.append(
@@ -1002,7 +1064,8 @@ def build_turn_prompt(
         # finished another one will otherwise reach for a `w1` that does not exist.
         if getattr(state.config, "scoring_budget", False):
             parts.append(
-                "HANDLES AVAILABLE: none; direct mode creates no pool/weight handles"
+                "HANDLES AVAILABLE: none yet; use select_* / weights_* to create one, "
+                "then evaluate_strategy"
             )
         else:
             parts.append("HANDLES AVAILABLE: none yet (pools and weights start empty)")
@@ -1023,17 +1086,25 @@ def build_turn_prompt(
         )
     close_("weight_methods")
 
-    if untried:
+    if untried or tool_chain:
         parts.append("")
         open_("untried")
         parts.append(
             "NEXT UNTRIED COMBINATIONS (not in the history; order arbitrary, NOT a ranking):"
         )
-        for i, spec in enumerate(untried):
+        if untried:
+            for i, spec in enumerate(untried):
+                parts.append(
+                    f"  {chr(65 + i)}. "
+                    f"{json.dumps(spec, ensure_ascii=False, default=str)}"
+                )
+        else:
+            parts.append("  (none listed)")
+        if tool_chain:
             parts.append(
-                f"  {chr(65 + i)}. "
-                f"{json.dumps(spec, ensure_ascii=False, default=str)}"
+                "  OPTIONAL TOOL CHAIN (preparation + score; not a ranked candidate):"
             )
+            parts.append(f"    {tool_chain}")
         close_("untried")
 
     if repeat_notice:
@@ -1209,12 +1280,67 @@ def _available_weight_methods(state: ReactState) -> List[str]:
     return methods
 
 
-def _handles_summary(state: ReactState) -> Dict[str, Any]:
-    """Pools and weight handles the agent can still refer to."""
+def per_horizon_tool_chain(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    withheld: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Optional direct-mode tool chain for a per-horizon recipe.
+
+    It is only a hint: the agent still decides whether to call it, which pool
+    rank/k and which weights k/metric to use. It is suppressed outside the
+    scoring-budget mode and when the two tools are withheld.
+    """
+    if not getattr(state.config, "scoring_budget", False):
+        return None
+    if withheld and (
+        "select_top_k" in withheld or "weights_topk_per_horizon" in withheld
+    ):
+        return None
+    if "topk_per_horizon" not in _available_weight_methods(state):
+        return None
+    try:
+        strength = float(series_card.get("seasonal_strength"))
+        n_points = float(series_card.get("n_points"))
+        period = float(series_card.get("seasonal_period") or 0)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not np.isfinite(strength)
+        or strength < 0.5
+        or period < 2
+        or n_points < 10.0 * period
+    ):
+        return None
+    return (
+        'select_top_k({"k": 7, "metric": "smape"}) -> '
+        'weights_topk_per_horizon({"pool": "<handle>", "k": 5, "metric": "smape"}) -> '
+        'evaluate_strategy({"combine": "weighted", "pool": "<handle>", '
+        '"weights": "<handle>"})'
+    )
+
+
+def _handles_summary(
+    state: ReactState, hide_unscored: bool = False
+) -> Dict[str, Any]:
+    """Pools and weight handles the agent can still refer to.
+
+    With ``hide_unscored`` (the v10/v11 agent-only run) the Phase-2 stability
+    pools and the unscored pooled meta-model are not advertised: they exist as
+    handles, but showing them anchors the agent on a subset it never chose. A
+    handle the agent created is always shown, scored or not.
+    """
+    used_pools = {a.spec.get("pool") for a in state.attempts}
+    phase2_origins = {"top_k_stable", "stable", "full"}
     pools = {
         h: {"k": len(idx), "models": [state.model_names[i] for i in idx][:6]}
         for h, idx in state.pools.items()
         if h != "pool_full"
+        and (
+            not hide_unscored
+            or h in used_pools
+            or state.pool_meta.get(h, {}).get("origin") not in phase2_origins
+        )
     }
     used = {a.spec.get("weights") for a in state.attempts if a.spec.get("weights")}
     weights = {
@@ -1225,6 +1351,11 @@ def _handles_summary(state: ReactState) -> Dict[str, Any]:
             "scored": h in used,
         }
         for h, r in state.weights.items()
+        if (
+            not hide_unscored
+            or h in used
+            or r.method != "pooled_meta_model"
+        )
     }
     out: Dict[str, Any] = {}
     if pools:
