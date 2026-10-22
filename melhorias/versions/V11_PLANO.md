@@ -519,7 +519,78 @@ Baselines determinísticos em todas as versões:
 
 ---
 
-## 11. Nota de branches
+## 11. Resultado da v0 (replay offline)
+
+Run `orchestrator_react_v10x_low`, 321 séries, 6 datasets. O replay usa as
+trajetórias do v10x; o teste real só entra na avaliação.
+
+| política | SMAPE médio dos datasets | SMAPE médio por série | ganho vs argmin (datasets) |
+|---|---:|---:|---:|
+| argmin (v10) | 0,239556 | 0,188715 | — |
+| LLM v0 (top por família, cego) | 0,254375 | 0,190183 | -0,014819 |
+| `closest_seasonal` (sem gate) | 0,234874 | 0,190863 | +0,004683 |
+| `seasonal_guard` (gate) | 0,233789 | 0,187897 | +0,005767 |
+
+Detalhes da v0:
+
+- override em 62,9% das séries, `KEEP` em 37,1%, nenhum fallback;
+- confiança: 157 high, 162 medium, 2 low;
+- overrides com `high` tiveram ganho -0,0030; `medium` +0,00002 — confiança
+  não está calibrada;
+- o escolhido foi o melhor da shortlist em 20,9% das séries, contra 24,3% do
+  argmin; regret médio vs shortlist +0,01075. O LLM é pior que o líder em
+  escolher dentro da própria shortlist;
+- ajudou no ANP (+0,00168), mas quebrou no ETTM1 (-0,07046), ETTH1 (-0,00888),
+  ETTM2 (-0,00503), ETTH2 (-0,00485) e NN5 (-0,00137);
+- o viés do prompt para “começar perto do último valor / ficar dentro da banda
+  do pool” coincide com a regra `closest_pool_median`, que é ruim
+  (-0,02565 vs argmin).
+
+O achado mais forte é o **seasonal guard** determinístico:
+
+- gate: `seasonal_strength >= 0.5` e `n_points >= 10 * seasonal_period`;
+- se o gate é verdadeiro, escolhe o candidato da shortlist com menor
+  `seasonal_dist` (mais próximo do seasonal naive); senão, mantém o argmin;
+- low: +0,005767 na média dos datasets e +0,000818 na média por série;
+- medium: +0,004927 na média dos datasets e +0,000707 na média por série;
+- troca em ~15% das séries; ganho concentrado em ETTM1/ETTH1, sem perder no
+  ANP/NN5 (o gate exclui esses casos na prática).
+
+Conclusão: **a v0 do LLM não está aprovada**. Não rodar o passo 5 ainda. O
+próximo passo é a v0.1:
+
+1. implementar `final_strategy="seasonal_guard"` como baseline determinístico;
+2. reduzir o LLM a um veto binário: `KEEP` vs o candidato mais próximo do
+   seasonal naive, somente quando o gate é verdadeiro;
+3. comparar argmin × seasonal_guard × seasonal_guard + veto do LLM;
+4. só rodar o pipeline completo (passo 5) se a v0.1 vencer o seasonal_guard.
+
+Ressalva: o medium replica as trajetórias com outro seed/reasoning, mas usa as
+mesmas séries e janelas de teste; não é um teste independente. Os parâmetros do
+gate (0,5 e 10 ciclos) são escolhas de desenho e devem ser tratados como tal.
+
+### 11.1 v0.1 implementada
+
+- `final_choice.choose_seasonal_guard` e `final_choice.choose_seasonal_veto`;
+- `ReactConfig.final_strategy` aceita `"seasonal_guard"` e `"seasonal_veto"`;
+- flags `--seasonal-guard-min-strength` e `--seasonal-guard-min-cycles`;
+- o veto binário usa o mesmo role `final_selector`, chama o LLM apenas quando o
+  guard quer trocar e cai no guard em erro de LLM/parsing;
+- `aprovacao_solida/10_final_choice_replay/compare_three.py` compara
+  argmin × guard × guard+veto nas mesmas trajetórias;
+- testes em `tests/test_final_choice.py` cobrem gate, guard, veto, baixa
+  confiança, erro de LLM, prompt binário e integração no pipeline.
+
+Comandos no README da pasta 10. O dry-run do `compare_three.py` reproduziu os
+números do seasonal baseline: low +0,005767 e medium +0,004927 na média dos
+datasets. Falta a run real do veto binário (LLM) no servidor para decidir se ele
+agrega sobre o guard. Próximo passo: rodar o `compare_three.py` com o LLM no low
+e no medium, e só levar para o pipeline completo a política que vencer o guard
+determinístico.
+
+---
+
+## 12. Nota de branches
 
 Hoje `v3_proposta_final` e `v11_plus` apontam para o mesmo commit. Antes de
 divergir, garantir que a v10 está congelada em `v3_proposta_final` (tag/merge)

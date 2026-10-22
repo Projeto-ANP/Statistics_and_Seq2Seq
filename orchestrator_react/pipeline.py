@@ -492,10 +492,10 @@ def run_series(
         on_step=on_step,
     )
 
-    # ── Phase 3.5 — blind final selection among family winners (v11) ────────
-    # This runs after the loop, so the trajectory and the validation ranking are
-    # exactly the v10 ones. It sees only the blind prompt: no model names, no
-    # validation scores/ranks, no test actuals.
+    # ── Phase 3.5 — final choice after the v10 loop ─────────────────────────
+    # Everything here runs after the loop, on the exact v10 trajectory. The
+    # deterministic guard needs no LLM; the veto/agent-family strategies get a
+    # fresh, blind context with no names, scores, ranks or test actuals.
     if config.final_strategy == "agent_family":
         choice_client = selector_client
         if choice_client is None and config.final_selector.enabled:
@@ -511,6 +511,33 @@ def run_series(
             dataset=dataset,
             dataset_index=dataset_index,
         )
+    elif config.final_strategy == "seasonal_guard":
+        chosen, choice_debug = final_choice_mod.choose_seasonal_guard(
+            state=state,
+            series_card=outcome.series_card,
+            config=config,
+            dataset=dataset,
+            dataset_index=dataset_index,
+        )
+    elif config.final_strategy == "seasonal_veto":
+        choice_client = selector_client
+        if choice_client is None and config.final_selector.enabled:
+            choice_client = build_client(config.final_selector)
+        if choice_client is None:
+            choice_client = client
+        chosen, choice_debug = final_choice_mod.choose_seasonal_veto(
+            state=state,
+            series_card=outcome.series_card,
+            diagnosis=outcome.diagnosis,
+            client=choice_client,
+            config=config,
+            dataset=dataset,
+            dataset_index=dataset_index,
+        )
+    else:
+        chosen, choice_debug = None, {}
+
+    if choice_debug:
         outcome.final_choice = choice_debug
         decision = str(choice_debug.get("decision") or "")
         previous = outcome.react.final_attempt
@@ -523,16 +550,20 @@ def run_series(
                 f"fallback={choice_debug.get('fallback')})"
             )
             outcome.react.final_attempt = chosen
-            reason = (choice_debug.get("parsed") or {}).get("reason") or ""
-            if reason:
-                # Put the selector's rationale in the CSV's free-text field; the
-                # full prompt/response stays in the artifact's `final_choice` block.
-                outcome.react.justification = f"final_choice: {reason}"
         elif decision == "fallback":
             outcome.warnings.append(
                 f"final_choice fallback ({choice_debug.get('fallback')}): kept leader "
                 f"{choice_debug.get('leader_id')}"
             )
+        justification = choice_debug.get("justification")
+        if not justification:
+            justification = (choice_debug.get("parsed") or {}).get("reason") or ""
+            if justification:
+                justification = f"final_choice: {justification}"
+        if justification:
+            # Put the final rationale in the CSV's free-text field; the full
+            # prompt/response stays in the artifact's `final_choice` block.
+            outcome.react.justification = justification
 
     # ── Phase 4 — deterministic application to the test forecasts ───────────
     attempt = outcome.react.final_attempt
@@ -570,10 +601,10 @@ def run_series(
             alpha=config.mcs_alpha, max_members=config.mcs_max_members,
             score_margin=config.mcs_score_margin,
         )
-    elif config.final_strategy == "agent_family":
-        # `attempt` is already the selector's choice (or the leader on fallback).
+    elif config.final_strategy in {"agent_family", "seasonal_guard", "seasonal_veto"}:
+        # `attempt` is already the final choice (or the leader on fallback).
         forecast, debug = state.apply_to_test(attempt.spec)
-        debug["method"] = f"{debug.get('method')} (agent_family)"
+        debug["method"] = f"{debug.get('method')} ({config.final_strategy})"
     else:
         forecast, debug = state.apply_to_test(attempt.spec)
     if forecast.size != state.horizon or not np.all(np.isfinite(forecast)):

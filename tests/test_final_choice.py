@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from orchestrator_react import final_choice as FC
 from orchestrator_react import tools as T
 from orchestrator_react.config import ReactConfig
-from orchestrator_react.llm import ScriptedLLM
+from orchestrator_react.llm import LLMError, ScriptedLLM
 from orchestrator_react.state import FULL_POOL
 
 from test_orchestrator_react import make_state  # noqa: E402
@@ -46,6 +46,28 @@ def _state(config: ReactConfig | None = None):
 
 def _forecast_for(state):
     return lambda attempt: state.apply_to_test(attempt.spec)[0]
+
+
+def _guard_state(active: bool = True):
+    """Two known candidates: leader far from the seasonal naive, challenger equal to it."""
+    state = make_state(config=ReactConfig(max_iterations=2))
+    period = 12
+    horizon = state.horizon
+    last = float(state.y_true[-1, -1])
+    seasonal = np.resize(np.asarray(state.train_series[-period:], dtype=float), horizon)
+    leader = FakeAttempt(
+        "ID_LEADER_000", {"combine": "mean", "pool": FULL_POOL}, 0.10,
+        np.full(horizon, last + 10.0),
+    )
+    challenger = FakeAttempt(
+        "ID_SEASONAL_111", {"combine": "median", "pool": FULL_POOL}, 0.20, seasonal
+    )
+    state.attempts = [leader, challenger]
+    card = dict(T.series_profile(state))
+    card["seasonal_period"] = period
+    card["seasonal_strength"] = 0.9 if active else 0.1
+    card["n_points"] = 1000
+    return state, card, leader, challenger
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -463,3 +485,237 @@ def test_artifact_payload_includes_final_choice_only_when_present():
         dataset="FAKE", dataset_index=1, horizon=2, success=False, error="failed"
     )
     assert "final_choice" not in CW.artifacts_payload(without_choice)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# seasonal guard and binary veto
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def test_seasonal_gate_requires_strength_and_cycles():
+    card = {"seasonal_strength": 0.9, "n_points": 1000, "seasonal_period": 12}
+    assert FC.seasonal_gate(card)["active"]
+    assert not FC.seasonal_gate({**card, "n_points": 100})["active"]
+    assert not FC.seasonal_gate({**card, "seasonal_strength": 0.1})["active"]
+    assert not FC.seasonal_gate({**card, "seasonal_period": 1})["active"]
+    assert not FC.seasonal_gate({"seasonal_strength": None})["active"]
+
+
+def test_seasonal_guard_switches_only_when_gate_active():
+    state, card, leader, challenger = _guard_state(active=True)
+    chosen, debug = FC.choose_seasonal_guard(
+        state, card, ReactConfig(), "FAKE", 0,
+        forecast_for=lambda attempt: np.asarray(attempt.forecast, dtype=float),
+    )
+    assert debug["gate"]["active"]
+    assert debug["decision"] == "switch"
+    assert chosen is challenger
+    assert debug["seasonal_id"] == "ID_SEASONAL_111"
+    assert debug["leader_id"] == "ID_LEADER_000"
+    assert len(debug["shortlist"]) == 2
+    assert debug["shortlist"][0]["seasonal_dist"] is not None
+
+    state2, card2, leader2, challenger2 = _guard_state(active=False)
+    chosen2, debug2 = FC.choose_seasonal_guard(
+        state2, card2, ReactConfig(), "FAKE", 0,
+        forecast_for=lambda attempt: np.asarray(attempt.forecast, dtype=float),
+    )
+    assert not debug2["gate"]["active"]
+    assert debug2["decision"] == "keep"
+    assert chosen2 is leader2
+
+
+def test_seasonal_veto_accepts_and_vetoes():
+    state, card, leader, challenger = _guard_state(active=True)
+    config = ReactConfig(final_strategy="seasonal_veto", final_selector_shuffle_seed=0)
+    forecast_for = lambda attempt: np.asarray(attempt.forecast, dtype=float)
+
+    _, dry = FC.choose_seasonal_veto(
+        state, card, {}, None, config, "FAKE", 0,
+        forecast_for=forecast_for, dry_run=True,
+    )
+    assert dry["decision"] == "switch"
+    assert dry["prompt"]["user"]
+    assert dry["leader_label"] in {"A", "B"}
+    assert dry["seasonal_label"] in {"A", "B"}
+
+    accept = ScriptedLLM(
+        [f"CHOICE: {dry['seasonal_label']}\nCONFIDENCE: high\nREASON: seasonal"]
+    )
+    chosen, debug = FC.choose_seasonal_veto(
+        state, card, {}, accept, config, "FAKE", 0, forecast_for=forecast_for
+    )
+    assert chosen is challenger
+    assert debug["decision"] == "switch" and not debug["veto"]
+
+    veto = ScriptedLLM(
+        [f"CHOICE: {dry['leader_label']}\nCONFIDENCE: high\nREASON: leader"]
+    )
+    chosen, debug = FC.choose_seasonal_veto(
+        state, card, {}, veto, config, "FAKE", 0, forecast_for=forecast_for
+    )
+    assert chosen is leader
+    assert debug["decision"] == "keep" and debug["veto"]
+
+
+def test_seasonal_veto_low_confidence_keeps_leader():
+    state, card, leader, challenger = _guard_state(active=True)
+    config = ReactConfig(final_strategy="seasonal_veto", final_selector_shuffle_seed=0)
+    forecast_for = lambda attempt: np.asarray(attempt.forecast, dtype=float)
+    _, dry = FC.choose_seasonal_veto(
+        state, card, {}, None, config, "FAKE", 0,
+        forecast_for=forecast_for, dry_run=True,
+    )
+    client = ScriptedLLM(
+        [f"CHOICE: {dry['seasonal_label']}\nCONFIDENCE: low\nREASON: unsure"]
+    )
+    chosen, debug = FC.choose_seasonal_veto(
+        state, card, {}, client, config, "FAKE", 0, forecast_for=forecast_for
+    )
+    assert chosen is leader
+    assert debug["decision"] == "keep" and debug["veto"]
+    assert debug["veto_reason"] == "low_confidence"
+
+
+class _FailingClient:
+    name = "failing"
+
+    def complete(self, system: str, user: str) -> str:
+        raise LLMError("server down")
+
+
+def test_seasonal_veto_llm_error_falls_back_to_guard():
+    state, card, leader, challenger = _guard_state(active=True)
+    config = ReactConfig(final_strategy="seasonal_veto", final_selector_shuffle_seed=0)
+    forecast_for = lambda attempt: np.asarray(attempt.forecast, dtype=float)
+    chosen, debug = FC.choose_seasonal_veto(
+        state, card, {}, _FailingClient(), config, "FAKE", 0, forecast_for=forecast_for
+    )
+    assert chosen is challenger
+    assert debug["fallback"] == "llm_error"
+    assert debug["decision"] == "switch"
+
+
+def test_binary_prompt_has_no_hidden_labels_and_shows_seasonal_naive():
+    state, card, leader, challenger = _guard_state(active=True)
+    config = ReactConfig(final_strategy="seasonal_veto", final_selector_shuffle_seed=0)
+    forecast_for = lambda attempt: np.asarray(attempt.forecast, dtype=float)
+    _, debug = FC.choose_seasonal_veto(
+        state, card, {}, None, config, "FAKE", 0,
+        forecast_for=forecast_for, dry_run=True,
+    )
+    system, user = debug["prompt"]["system"], debug["prompt"]["user"]
+    assert "SEASONAL NAIVE" in user
+    assert "validation_score" not in user.lower()
+    assert "attempt_id" not in user.lower()
+    assert "origin" not in user.lower()
+    for name in state.model_names:
+        assert name not in system
+        assert name not in user
+    for attempt in (leader, challenger):
+        assert attempt.attempt_id not in user
+    assert "CHOICE: <A|B>" in system
+
+
+def test_pipeline_seasonal_guard_wires_the_choice(fake_repo):
+    from orchestrator_react import pipeline as PL
+    from test_ingest_and_pool import MODELS
+    from test_pipeline import step
+
+    config = ReactConfig(max_iterations=2, final_strategy="seasonal_guard")
+    combinator = ScriptedLLM(
+        [
+            step("evaluate_strategy", {"combine": "mean", "pool": FULL_POOL}),
+            step("evaluate_strategy", {"combine": "median", "pool": FULL_POOL}),
+        ]
+    )
+    outcome = PL.run_series(
+        MODELS,
+        "FAKE",
+        0,
+        config=config,
+        source_file="fake.tsf",
+        source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+        client=combinator,
+    )
+    assert outcome.success
+    assert outcome.final_choice["mode"] == "seasonal_guard"
+    assert outcome.final_choice["gate"]["active"] is False
+    assert outcome.final_choice["decision"] == "keep"
+    assert outcome.react.final_attempt is not None
+    assert outcome.final_choice["chosen_id"] == outcome.react.final_attempt.attempt_id
+
+
+def test_pipeline_seasonal_veto_skips_llm_when_gate_inactive(fake_repo):
+    from orchestrator_react import pipeline as PL
+    from test_ingest_and_pool import MODELS
+    from test_pipeline import step
+
+    config = ReactConfig(max_iterations=2, final_strategy="seasonal_veto")
+    combinator = ScriptedLLM(
+        [
+            step("evaluate_strategy", {"combine": "mean", "pool": FULL_POOL}),
+            step("evaluate_strategy", {"combine": "median", "pool": FULL_POOL}),
+        ]
+    )
+    selector = ScriptedLLM([])  # must not be called: the fake series fails the gate
+    outcome = PL.run_series(
+        MODELS,
+        "FAKE",
+        0,
+        config=config,
+        source_file="fake.tsf",
+        source_dir=fake_repo["source_dir"],
+        results_dir=fake_repo["results_dir"],
+        client=combinator,
+        selector_client=selector,
+    )
+    assert outcome.success
+    assert outcome.final_choice["mode"] == "seasonal_veto"
+    assert outcome.final_choice["llm_called"] is False
+    assert outcome.final_choice["decision"] == "keep"
+    assert not selector.calls
+
+
+def test_cli_flags_parse_for_seasonal_policies():
+    from run_tsf_orchestrator import build_parser
+
+    args = build_parser().parse_args(
+        [
+            "--dataset", "FAKE",
+            "--final-strategy", "seasonal_veto",
+            "--seasonal-guard-min-strength", "0.6",
+            "--seasonal-guard-min-cycles", "8",
+        ]
+    )
+    assert args.final_strategy == "seasonal_veto"
+    assert args.seasonal_guard_min_strength == 0.6
+    assert args.seasonal_guard_min_cycles == 8.0
+
+
+def test_orchestrator_config_wires_the_seasonal_guard(monkeypatch):
+    import run_tsf_orchestrator as R
+
+    captured = {}
+
+    def fake_run_dataset(**kwargs):
+        captured.update(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(R._pipeline, "run_dataset", fake_run_dataset)
+    R.exec_dataset_orchestrator(
+        models=["good"],
+        dataset="FAKE",
+        use_llm=False,
+        dry_run=True,
+        indices=[],
+        llm_logs=False,
+        final_strategy="seasonal_guard",
+        seasonal_guard_min_strength=0.6,
+        seasonal_guard_min_cycles=8.0,
+    )
+    cfg = captured["config"]
+    assert cfg.final_strategy == "seasonal_guard"
+    assert cfg.seasonal_guard_min_strength == 0.6
+    assert cfg.seasonal_guard_min_cycles == 8.0

@@ -770,3 +770,459 @@ def choose_final(
             float(chosen.score) if _num(getattr(chosen, "score", None)) is not None else None
         )
     return chosen, debug
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# deterministic seasonal guard and binary veto (v11.1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def seasonal_gate(
+    series_card: Dict[str, Any],
+    min_strength: float = 0.5,
+    min_cycles: float = 10.0,
+) -> Dict[str, Any]:
+    """Is the seasonal naive estimable enough to be used as an anchor?
+
+    The gate is deliberately conservative: a strong seasonal component is not
+    enough when the history has only a couple of cycles (NN5: 105 points, period
+    52), and a long history is not enough when the series is not seasonal (ANP).
+    """
+    try:
+        strength = float(series_card.get("seasonal_strength"))
+        n_points = float(series_card.get("n_points"))
+        period = float(series_card.get("seasonal_period") or 0)
+    except (TypeError, ValueError):
+        return {
+            "active": False,
+            "reason": "invalid_profile",
+            "min_strength": float(min_strength),
+            "min_cycles": float(min_cycles),
+        }
+
+    info: Dict[str, Any] = {
+        "seasonal_strength": strength if np.isfinite(strength) else None,
+        "n_points": n_points if np.isfinite(n_points) else None,
+        "period": period if np.isfinite(period) else None,
+        "min_strength": float(min_strength),
+        "min_cycles": float(min_cycles),
+        "active": False,
+    }
+    if not np.isfinite(strength) or not np.isfinite(n_points) or not np.isfinite(period):
+        info["reason"] = "invalid_profile"
+        return info
+    if period < 2:
+        info["reason"] = "period_too_short"
+        return info
+    if strength < float(min_strength):
+        info["reason"] = "seasonal_strength_below_min"
+        return info
+    if n_points < float(min_cycles) * period:
+        info["reason"] = "not_enough_cycles"
+        return info
+    info["active"] = True
+    info["reason"] = "active"
+    return info
+
+
+def _seasonal_guard_core(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    config: ReactConfig,
+    dataset: str,
+    dataset_index: int,
+    forecast_for: Optional[Callable[[Any], np.ndarray]] = None,
+) -> Tuple[Optional[Any], Dict[str, Any], Dict[str, Any], List[ShortlistEntry], Optional[Any], Optional[ShortlistEntry]]:
+    leader = state.best_attempt()
+    debug: Dict[str, Any] = {
+        "mode": "seasonal_guard",
+        "leader_id": getattr(leader, "attempt_id", None),
+        "leader_spec": getattr(leader, "spec", None),
+        "leader_validation_score": (
+            float(leader.score)
+            if leader is not None and _num(getattr(leader, "score", None)) is not None
+            else None
+        ),
+        "decision": "keep",
+        "reason": None,
+        "fallback": None,
+        "shortlist": [],
+        "shortlist_size": 0,
+        "seasonal_id": None,
+        "chosen_id": getattr(leader, "attempt_id", None),
+    }
+    if leader is None:
+        debug["decision"] = "fallback"
+        debug["fallback"] = "no_leader"
+        return None, debug, {}, [], None, None
+    if forecast_for is None:
+        forecast_for = lambda attempt: state.apply_to_test(attempt.spec)[0]
+
+    try:
+        ctx = build_series_context(state, series_card)
+    except Exception as exc:
+        debug["decision"] = "fallback"
+        debug["fallback"] = f"context_error:{type(exc).__name__}"
+        return leader, debug, {}, [], leader, None
+
+    max_abs = float(config.final_selector_degenerate_factor) * max(
+        abs(float(ctx["last_actual"])), float(ctx["scale"]), 1.0
+    )
+    shortlist = build_family_shortlist(
+        state.attempts,
+        forecast_for,
+        max_candidates=config.final_selector_max_candidates,
+        max_abs=max_abs,
+    )
+    debug["shortlist_size"] = len(shortlist)
+    if not shortlist:
+        debug["decision"] = "fallback"
+        debug["fallback"] = "all_candidates_degenerate"
+        return leader, debug, ctx, [], leader, None
+
+    if not any(_same_attempt(entry.attempt, leader) for entry in shortlist):
+        debug["original_leader_id"] = getattr(leader, "attempt_id", None)
+        leader = shortlist[0].attempt
+        debug["leader_replaced_with"] = getattr(leader, "attempt_id", None)
+        debug["leader_id"] = getattr(leader, "attempt_id", None)
+        debug["leader_spec"] = getattr(leader, "spec", None)
+        debug["leader_validation_score"] = (
+            float(leader.score) if _num(getattr(leader, "score", None)) is not None else None
+        )
+        debug["chosen_id"] = getattr(leader, "attempt_id", None)
+
+    gate = seasonal_gate(
+        series_card,
+        min_strength=config.seasonal_guard_min_strength,
+        min_cycles=config.seasonal_guard_min_cycles,
+    )
+    debug["gate"] = gate
+
+    features_by_id: Dict[str, Dict[str, Optional[float]]] = {}
+    distances: List[Tuple[float, ShortlistEntry]] = []
+    for entry in shortlist:
+        features = _candidate_features(entry.forecast, ctx)
+        features_by_id[str(getattr(entry.attempt, "attempt_id", ""))] = features
+        value = features.get("seasonal_dist")
+        if value is not None and np.isfinite(float(value)):
+            distances.append((float(value), entry))
+
+    debug["shortlist"] = [
+        {
+            "label": "",
+            "attempt_id": getattr(entry.attempt, "attempt_id", None),
+            "spec": getattr(entry.attempt, "spec", None),
+            "validation_score": (
+                float(entry.attempt.score)
+                if _num(getattr(entry.attempt, "score", None)) is not None
+                else None
+            ),
+            "seasonal_dist": features_by_id.get(
+                str(getattr(entry.attempt, "attempt_id", "")), {}
+            ).get("seasonal_dist"),
+            "features": features_by_id.get(
+                str(getattr(entry.attempt, "attempt_id", "")), {}
+            ),
+        }
+        for entry in shortlist
+    ]
+
+    if not gate.get("active"):
+        debug["decision"] = "keep"
+        debug["reason"] = "gate_inactive"
+        debug["chosen_id"] = getattr(leader, "attempt_id", None)
+        return leader, debug, ctx, shortlist, leader, None
+    if not distances:
+        debug["decision"] = "keep"
+        debug["reason"] = "no_seasonal_distance"
+        debug["chosen_id"] = getattr(leader, "attempt_id", None)
+        return leader, debug, ctx, shortlist, leader, None
+
+    distances.sort(key=lambda item: item[0])
+    best_value, best_entry = distances[0]
+    leader_entry = next(
+        (entry for entry in shortlist if _same_attempt(entry.attempt, leader)), None
+    )
+    leader_seasonal = (
+        features_by_id.get(str(getattr(leader_entry.attempt, "attempt_id", "")), {}).get(
+            "seasonal_dist"
+        )
+        if leader_entry is not None
+        else None
+    )
+    debug["seasonal_id"] = getattr(best_entry.attempt, "attempt_id", None)
+    debug["seasonal_dist"] = float(best_value)
+    debug["leader_seasonal_dist"] = leader_seasonal
+    debug["seasonal_gap"] = (
+        float(leader_seasonal) - float(best_value)
+        if leader_seasonal is not None and np.isfinite(float(leader_seasonal))
+        else None
+    )
+
+    if _same_attempt(best_entry.attempt, leader):
+        debug["decision"] = "keep"
+        debug["reason"] = "leader_is_seasonal_best"
+        debug["chosen_id"] = getattr(leader, "attempt_id", None)
+        return leader, debug, ctx, shortlist, leader, best_entry
+
+    debug["decision"] = "switch"
+    debug["reason"] = "seasonal_switch"
+    debug["chosen_id"] = getattr(best_entry.attempt, "attempt_id", None)
+    debug["chosen_spec"] = getattr(best_entry.attempt, "spec", None)
+    debug["chosen_validation_score"] = (
+        float(best_entry.attempt.score)
+        if _num(getattr(best_entry.attempt, "score", None)) is not None
+        else None
+    )
+    leader_text = (
+        f"{float(leader_seasonal):.3f}" if leader_seasonal is not None else "n/a"
+    )
+    debug["justification"] = (
+        f"seasonal_guard: switched to {debug['chosen_id']} "
+        f"(seasonal_dist {float(best_value):.3f} vs leader {leader_text}; "
+        f"gate {gate.get('reason')})"
+    )
+    return best_entry.attempt, debug, ctx, shortlist, leader, best_entry
+
+
+def choose_seasonal_guard(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    config: ReactConfig,
+    dataset: str,
+    dataset_index: int,
+    forecast_for: Optional[Callable[[Any], np.ndarray]] = None,
+) -> Tuple[Optional[Any], Dict[str, Any]]:
+    """Deterministic final choice: the seasonal guard.
+
+    Gate inactive -> keep the validation leader. Gate active -> switch to the
+    family winner closest to the seasonal naive. No LLM and no test actual.
+    """
+    chosen, debug, _, _, _, _ = _seasonal_guard_core(
+        state, series_card, config, dataset, dataset_index, forecast_for
+    )
+    return chosen, debug
+
+
+def build_binary_prompt(
+    series_card: Dict[str, Any],
+    diagnosis: Optional[Dict[str, Any]],
+    ctx: Dict[str, Any],
+    entries: Sequence[ShortlistEntry],
+) -> Tuple[str, str]:
+    """Binary prompt: two blind candidates, A vs B. No KEEP, no names/scores."""
+    system = """You are a forecast SELECTION agent.
+
+Two candidate forecasts are shown for the same blind future window. The test
+actual is NOT shown. Model names, validation scores, ranks and combination types
+are deliberately hidden.
+
+Your job is to choose the candidate that is more consistent with THIS series'
+seasonal pattern and recent behavior. One candidate may be the current leader;
+the other is a challenger. The labels do not tell you which is which.
+
+RUBRIC (apply in this order):
+1. Compare each trajectory to the SEASONAL NAIVE: phase, amplitude and level.
+2. Check continuity with the last observed value and a plausible scale/volatility.
+3. Reject an implausible jump or an exploding trajectory.
+4. Do not prefer a candidate just because it is smoother or more central. Choose
+   the one whose seasonal pattern is coherent with the series profile.
+
+Answer exactly three lines, nothing else:
+CHOICE: <A|B>
+CONFIDENCE: <low|medium|high>
+REASON: <one or two sentences citing the seasonal pattern and the series>
+"""
+
+    profile = _slim_profile(series_card)
+    diag = _slim_diagnosis(diagnosis)
+    points = ctx["points"]
+    last = float(ctx["last_actual"])
+    scale = float(ctx["scale"]) or 1.0
+    seasonal_scaled = (np.asarray(ctx["seasonal_forecast"], dtype=float)[points] - last) / scale
+
+    lines: List[str] = [
+        "SERIES PROFILE:",
+        json.dumps(profile, ensure_ascii=False, sort_keys=True),
+        "",
+        "LAST OBSERVED VALUE:",
+        f"last = {_fmt(ctx['last_actual'], 6)}",
+        f"recent scaled path (last = 0): {_fmt_list(ctx['last_path_scaled'])}",
+        "",
+        "SEASONAL NAIVE (same scale):",
+        f"{_fmt_list(seasonal_scaled)}",
+        "",
+        "POOL CONTEXT (all base models, blind window, same scale):",
+        f"scaled median: {_fmt_list(ctx['pool_median_path_scaled'])}",
+        f"q10-q90 band: {_fmt_band(ctx['pool_q10_path_scaled'], ctx['pool_q90_path_scaled'])}",
+        f"dispersion: {_fmt(ctx['pool_dispersion'], 3)}",
+        "",
+    ]
+    if diag:
+        lines += [
+            "DIAGNOSIS (a reading, not a rule):",
+            json.dumps(diag, ensure_ascii=False, sort_keys=True),
+            "",
+        ]
+    lines += [
+        "CANDIDATES (same scale; the test actual is NOT shown):",
+        "",
+    ]
+    for entry in entries:
+        blind = entry.blind
+        if blind is None:
+            continue
+        features = blind.features
+        lines += [
+            f"{blind.label}.",
+            f"  scaled forecast: {_fmt_list(blind.forecast_scaled)}",
+            f"  level at h=1: {_fmt(features.get('level_1'))}",
+            f"  slope: {_fmt(features.get('slope'))}",
+            f"  range: {_fmt(features.get('range'))}",
+            f"  volatility: {_fmt(features.get('volatility'))}",
+            f"  dist to last: {_fmt(features.get('naive_dist'))}",
+            f"  dist to seasonal naive: {_fmt(features.get('seasonal_dist'))}",
+            f"  dist to pool median: {_fmt(features.get('pool_dist'))}",
+            f"  outside band: {_fmt_pct(features.get('outside_band'))}",
+            "",
+        ]
+    lines.append(
+        "REMINDER: choose the candidate whose seasonal pattern and recent behavior "
+        "are most plausible for THIS series. Do not use hidden names, scores, or ranks."
+    )
+    return system, "\n".join(lines)
+
+
+def choose_seasonal_veto(
+    state: ReactState,
+    series_card: Dict[str, Any],
+    diagnosis: Optional[Dict[str, Any]],
+    client: Optional[LLMClient],
+    config: ReactConfig,
+    dataset: str,
+    dataset_index: int,
+    forecast_for: Optional[Callable[[Any], np.ndarray]] = None,
+    dry_run: bool = False,
+) -> Tuple[Optional[Any], Dict[str, Any]]:
+    """Seasonal guard plus a binary LLM veto of the seasonal switch.
+
+    The LLM is called only when the guard actually wants to switch. It sees two
+    blind candidates (leader vs seasonal-closest) and chooses the more plausible;
+    the code maps the label back to switch/keep. On any LLM/parse error the
+    deterministic guard is kept — it is the safe default.
+    """
+    chosen, guard_debug, ctx, shortlist, leader, seasonal_entry = _seasonal_guard_core(
+        state, series_card, config, dataset, dataset_index, forecast_for
+    )
+    debug = dict(guard_debug)
+    debug["mode"] = "seasonal_veto"
+    debug["llm_called"] = False
+    debug["veto"] = False
+    debug["veto_reason"] = "no_switch"
+
+    if guard_debug.get("decision") != "switch" or seasonal_entry is None:
+        return chosen, debug
+
+    leader_entry = next(
+        (entry for entry in shortlist if _same_attempt(entry.attempt, leader)), None
+    )
+    if leader_entry is None:
+        debug["fallback"] = "leader_not_in_shortlist"
+        debug["veto_reason"] = "leader_not_in_shortlist_kept_guard"
+        return chosen, debug
+
+    entries, by_label = blind_shortlist(
+        [leader_entry, seasonal_entry],
+        ctx,
+        dataset,
+        dataset_index,
+        config.final_selector_shuffle_seed,
+    )
+    system, user = build_binary_prompt(series_card, diagnosis, ctx, entries)
+    seasonal_label = next(
+        (
+            label
+            for label, entry in by_label.items()
+            if _same_attempt(entry.attempt, seasonal_entry.attempt)
+        ),
+        None,
+    )
+    leader_label = next(
+        (
+            label
+            for label, entry in by_label.items()
+            if _same_attempt(entry.attempt, leader)
+        ),
+        None,
+    )
+    debug["prompt"] = {"system": system, "user": user}
+    debug["leader_label"] = leader_label
+    debug["seasonal_label"] = seasonal_label
+
+    if dry_run:
+        debug["veto_reason"] = "dry_run"
+        return chosen, debug
+    if client is None:
+        debug["fallback"] = "no_client"
+        debug["veto_reason"] = "no_client_kept_guard"
+        return chosen, debug
+
+    try:
+        raw = client.complete(system, user)
+    except LLMError as exc:
+        debug["fallback"] = "llm_error"
+        debug["error"] = str(exc)[:400]
+        debug["veto_reason"] = "llm_error_kept_guard"
+        return chosen, debug
+    except Exception as exc:
+        debug["fallback"] = "llm_error"
+        debug["error"] = f"{type(exc).__name__}: {exc}"[:400]
+        debug["veto_reason"] = "llm_error_kept_guard"
+        return chosen, debug
+
+    debug["llm_called"] = True
+    debug["response"] = str(raw)
+    parsed = parse_choice(raw, "AB", allow_keep=False)
+    debug["parsed"] = {
+        "choice": parsed.choice,
+        "confidence": parsed.confidence,
+        "reason": parsed.reason,
+        "parse_error": parsed.parse_error,
+    }
+    if parsed.parse_error or not parsed.choice:
+        debug["fallback"] = "parse_error"
+        debug["veto_reason"] = "parse_error_kept_guard"
+        return chosen, debug
+
+    if parsed.choice == seasonal_label:
+        if config.final_selector_low_confidence_keep and parsed.confidence == "low":
+            debug["decision"] = "keep"
+            debug["veto"] = True
+            debug["veto_reason"] = "low_confidence"
+            debug["chosen_id"] = getattr(leader, "attempt_id", None)
+            debug["justification"] = (
+                f"seasonal_veto: kept leader (low confidence; {parsed.reason or 'seasonal candidate not confirmed'})"
+            )
+            return leader, debug
+        debug["decision"] = "switch"
+        debug["veto"] = False
+        debug["veto_reason"] = "accepted_seasonal"
+        debug["chosen_id"] = getattr(seasonal_entry.attempt, "attempt_id", None)
+        debug["justification"] = (
+            f"seasonal_veto: {parsed.reason or 'accepted the seasonal candidate'}"
+        )
+        return seasonal_entry.attempt, debug
+
+    if parsed.choice == leader_label:
+        debug["decision"] = "keep"
+        debug["veto"] = True
+        debug["veto_reason"] = "kept_leader"
+        debug["chosen_id"] = getattr(leader, "attempt_id", None)
+        debug["justification"] = (
+            f"seasonal_veto: kept leader ({parsed.reason or 'vetoed the seasonal switch'})"
+        )
+        return leader, debug
+
+    debug["fallback"] = "unknown_label"
+    debug["veto_reason"] = "unknown_label_kept_guard"
+    return chosen, debug

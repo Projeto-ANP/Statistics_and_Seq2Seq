@@ -110,6 +110,28 @@ REACT_OLLAMA_URL=http://127.0.0.1:11435 python3 \
     >> logs/v11_final_choice_replay_low.log 2>&1
 ```
 
+## Análise dos resultados
+
+Depois do replay, os dois analisadores não chamam LLM:
+
+```bash
+# Visão geral: summary, decisões, fallback, qualidade dentro da shortlist
+python3 aprovacao_solida/10_final_choice_replay/analyze_replay.py \
+    --output-dir outputs/resultados/v11_final_choice_replay/orchestrator_react_v10x_low_gpt-oss-20b \
+    --run orchestrator_react_v10x_low
+
+# Regras determinísticas vs LLM (pool median, last, seasonal, median forecast)
+python3 aprovacao_solida/10_final_choice_replay/analyze_deep.py \
+    --output-dir outputs/resultados/v11_final_choice_replay/orchestrator_react_v10x_low_gpt-oss-20b \
+    --run orchestrator_react_v10x_low
+
+# Seasonal guard determinístico, em qualquer run (low e medium)
+python3 aprovacao_solida/10_final_choice_replay/analyze_seasonal_rule.py \
+    --run orchestrator_react_v10x_low
+python3 aprovacao_solida/10_final_choice_replay/analyze_seasonal_rule.py \
+    --run orchestrator_react_v10x_medium
+```
+
 ## Saídas
 
 No diretório do run:
@@ -132,6 +154,61 @@ Colunas principais do `results.csv`:
 - `override_rate`, `keep_rate`, `fallback_rate`;
 - `win_rate`, `loss_rate`, `tie_rate` contra o argmin;
 - `mean_gain_vs_argmin`.
+
+## Comparação três-a-três (v0.1)
+
+Compara, nas mesmas trajetórias do v10x:
+
+1. `argmin` (v10);
+2. `seasonal_guard` determinístico;
+3. `seasonal_guard` + veto binário do LLM.
+
+O LLM só é chamado quando o guard quer trocar (≈15% das séries). Primeiro sem
+LLM, para conferir o guard e os prompts:
+
+```bash
+python3 aprovacao_solida/10_final_choice_replay/compare_three.py \
+    --run orchestrator_react_v10x_low --dry-run
+python3 aprovacao_solida/10_final_choice_replay/compare_three.py \
+    --run orchestrator_react_v10x_medium --dry-run
+```
+
+Depois com o veto real:
+
+```bash
+nohup env REACT_OLLAMA_URL=http://127.0.0.1:11435 python3 \
+    aprovacao_solida/10_final_choice_replay/compare_three.py \
+    --run orchestrator_react_v10x_low \
+    --model gpt-oss:20b --reasoning low --temperature 0.2 --llm-seed 11 \
+    > logs/v11_three_way_low.log 2>&1 &
+```
+
+Repita para `orchestrator_react_v10x_medium`.
+
+Saídas em `outputs/resultados/v11_three_way/<run>_<model>/` (o dry-run usa
+`<run>_<model>_dry_run/`, para não misturar com a run real):
+
+- `summary.csv` — argmin × guard × veto por dataset;
+- `results.csv` — por série, com `guard_gain_vs_argmin`,
+  `veto_gain_vs_guard`, `veto_correct`, `veto_reason`, etc.;
+- `prompts.jsonl` — só o prompt/resposta do veto;
+- `mapping.jsonl` — mapeamento A/B, leader/seasonal e métricas.
+
+Métricas que importam:
+
+- `veto_gain_vs_guard`: positivo = o LLM melhorou sobre o guard;
+- `veto_switch_rate`: em quantas chamadas o LLM aceitou a troca sazonal;
+- `veto_accuracy`: em quantas chamadas o LLM escolheu o melhor dos dois
+  candidatos (líder vs seasonal) no teste;
+- `veto_correct` é só para análise; não entra na decisão.
+
+Depois disso, o pipeline completo pode rodar com:
+
+```bash
+--final-strategy seasonal_guard
+# ou
+--final-strategy seasonal_veto --final-selector-temperature 0.2
+```
 
 ## Comando do pipeline real (smoke)
 

@@ -240,7 +240,8 @@ class ReactConfig:
     #: selector can only KEEP the leader or replace it with a shortlisted
     #: candidate; all names, scores, ranks and combination types are hidden.
     final_strategy: Literal[
-        "argmin", "ensemble", "prior_blend", "seed_gate", "mcs", "agent_family"
+        "argmin", "ensemble", "prior_blend", "seed_gate", "mcs",
+        "agent_family", "seasonal_guard", "seasonal_veto",
     ] = "argmin"
     #: Maximum number of family winners shown to the final selector (<= 5 in
     #: practice: weighted, median, dba, trimmed_mean, mean).
@@ -258,6 +259,11 @@ class ReactConfig:
     #: this factor times max(|last actual|, historical scale, 1). Keep the leader
     #: instead.
     final_selector_degenerate_factor: float = 100.0
+    #: Seasonal guard (v11, deterministic). The guard only acts when the seasonal
+    #: naive is estimable: seasonal_strength >= min_strength and the history has
+    #: at least min_cycles full periods. Otherwise it keeps the validation leader.
+    seasonal_guard_min_strength: float = 0.5
+    seasonal_guard_min_cycles: float = 10.0
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the

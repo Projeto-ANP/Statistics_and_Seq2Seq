@@ -201,6 +201,8 @@ def exec_dataset_orchestrator(
     final_selector_allow_keep: bool = True,
     final_selector_low_confidence_keep: bool = True,
     final_selector_degenerate_factor: float = 100.0,
+    seasonal_guard_min_strength: float = 0.5,
+    seasonal_guard_min_cycles: float = 10.0,
     combinator_reasoning: Any = None,
     combinator_temperature: Optional[float] = None,
     llm_seed: Optional[int] = None,
@@ -398,6 +400,8 @@ def exec_dataset_orchestrator(
     cfg.final_selector_allow_keep = bool(final_selector_allow_keep)
     cfg.final_selector_low_confidence_keep = bool(final_selector_low_confidence_keep)
     cfg.final_selector_degenerate_factor = float(final_selector_degenerate_factor)
+    cfg.seasonal_guard_min_strength = float(seasonal_guard_min_strength)
+    cfg.seasonal_guard_min_cycles = float(seasonal_guard_min_cycles)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -504,6 +508,7 @@ def exec_dataset_orchestrator(
         f"final        : {cfg.final_strategy}"
         f"{' top_m=' + str(cfg.final_top_m) if cfg.final_strategy == 'ensemble' else ''}"
         f"{' alpha=' + str(cfg.mcs_alpha) if cfg.final_strategy == 'mcs' else ''}"
+        f"{' guard=' + str(cfg.seasonal_guard_min_strength) + '/' + str(cfg.seasonal_guard_min_cycles) if cfg.final_strategy in {'seasonal_guard', 'seasonal_veto'} else ''}"
         f" | stable seeds: {cfg.seed_stable_pools}"
         f" | pooled: {cfg.pooled_meta_model}"
         f"{'/' + cfg.pooled_meta_model_objective if cfg.pooled_meta_model else ''}"
@@ -574,10 +579,14 @@ def exec_dataset_orchestrator(
     # model/base_url, a dead server would otherwise be discovered only after every
     # series had already run its 12-turn loop, and every choice would silently
     # fall back to the leader.
-    if cfg.final_selector.enabled and (
-        not cfg.combinator.enabled
-        or cfg.final_selector.model != cfg.combinator.model
-        or cfg.final_selector.base_url != cfg.combinator.base_url
+    if (
+        cfg.final_selector.enabled
+        and cfg.final_strategy in {"agent_family", "seasonal_veto"}
+        and (
+            not cfg.combinator.enabled
+            or cfg.final_selector.model != cfg.combinator.model
+            or cfg.final_selector.base_url != cfg.combinator.base_url
+        )
     ):
         ok_sel, detail_sel = check_client(build_client(cfg.final_selector))
         if ok_sel:
@@ -937,7 +946,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-total-turns", type=int, default=0,
                    help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
     p.add_argument("--final-strategy",
-                   choices=["argmin", "ensemble", "seed_gate", "mcs", "agent_family"],
+                   choices=[
+                       "argmin", "ensemble", "seed_gate", "mcs", "agent_family",
+                       "seasonal_guard", "seasonal_veto",
+                   ],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
                         "averages the top --final-top-m; mcs averages the confidence "
@@ -945,7 +957,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "(--mcs-alpha); seed_gate keeps the best seeded baseline "
                         "unless an agent attempt improves on it by --seed-gate-margin; "
                         "agent_family keeps the v10 loop and adds one blind final "
-                        "selection among the best attempt of each combination family")
+                        "selection among the best attempt of each combination family; "
+                        "seasonal_guard is deterministic (gate -> closest to the "
+                        "seasonal naive); seasonal_veto adds a binary LLM veto on top "
+                        "of the guard")
     p.add_argument("--final-selector-model", default=None,
                    help="model for the agent_family final selector (default: reuse "
                         "--combinator as a separate client)")
@@ -973,6 +988,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--final-selector-degenerate-factor", type=float, default=100.0,
                    help="reject a chosen forecast above this factor times the series "
                         "scale (default 100; keeps the leader)")
+    p.add_argument("--seasonal-guard-min-strength", type=float, default=0.5,
+                   help="minimum seasonal_strength for the seasonal guard to act "
+                        "(default 0.5)")
+    p.add_argument("--seasonal-guard-min-cycles", type=float, default=10.0,
+                   help="minimum n_points / seasonal_period for the seasonal guard "
+                        "to act (default 10)")
     p.add_argument("--mcs-alpha", type=float, default=0.10,
                    help="rejection level of the Diebold-Mariano test that builds the "
                         "MCS committee: p < alpha against the leader leaves the set "
@@ -1143,6 +1164,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_selector_allow_keep=args.final_selector_allow_keep,
             final_selector_low_confidence_keep=args.final_selector_low_confidence_keep,
             final_selector_degenerate_factor=args.final_selector_degenerate_factor,
+            seasonal_guard_min_strength=args.seasonal_guard_min_strength,
+            seasonal_guard_min_cycles=args.seasonal_guard_min_cycles,
             combinator_reasoning=parse_reasoning(args.reasoning),
             combinator_temperature=args.temperature,
             llm_seed=args.llm_seed,
