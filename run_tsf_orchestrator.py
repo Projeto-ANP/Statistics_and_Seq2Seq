@@ -192,6 +192,15 @@ def exec_dataset_orchestrator(
     seed_pooled_meta_model: bool = True,
     dataset_card: bool = True,
     final_prior_alpha: float = 0.0,
+    final_selector_model: Any = None,
+    final_selector_temperature: Optional[float] = None,
+    final_selector_reasoning: Any = None,
+    final_selector_seed: Optional[int] = None,
+    final_selector_shuffle_seed: int = 0,
+    final_selector_max_candidates: int = 5,
+    final_selector_allow_keep: bool = True,
+    final_selector_low_confidence_keep: bool = True,
+    final_selector_degenerate_factor: float = 100.0,
     combinator_reasoning: Any = None,
     combinator_temperature: Optional[float] = None,
     llm_seed: Optional[int] = None,
@@ -384,6 +393,11 @@ def exec_dataset_orchestrator(
     cfg.seed_pooled_meta_model = bool(seed_pooled_meta_model)
     cfg.dataset_card = bool(dataset_card)
     cfg.final_prior_alpha = float(final_prior_alpha)
+    cfg.final_selector_shuffle_seed = int(final_selector_shuffle_seed)
+    cfg.final_selector_max_candidates = int(final_selector_max_candidates)
+    cfg.final_selector_allow_keep = bool(final_selector_allow_keep)
+    cfg.final_selector_low_confidence_keep = bool(final_selector_low_confidence_keep)
+    cfg.final_selector_degenerate_factor = float(final_selector_degenerate_factor)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -423,6 +437,28 @@ def exec_dataset_orchestrator(
         for role in (cfg.combinator, cfg.diagnostician, cfg.reporter):
             role.seed = int(llm_seed)
 
+    # Final selector role (v11). If no dedicated model is given, it is a copy of
+    # the combinator role — a separate client with its own sampling controls, so
+    # the selection prompt can run at a lower temperature than the loop.
+    if final_selector_model is not None:
+        cfg.final_selector = _as_role(final_selector_model)
+    elif cfg.combinator.enabled:
+        cfg.final_selector = LLMRole(
+            model=cfg.combinator.model,
+            temperature=cfg.combinator.temperature,
+            base_url=cfg.combinator.base_url,
+            seed=cfg.combinator.seed,
+            reasoning=cfg.combinator.reasoning,
+        )
+    else:
+        cfg.final_selector = LLMRole(model=None)
+    if final_selector_temperature is not None:
+        cfg.final_selector.temperature = float(final_selector_temperature)
+    if final_selector_reasoning is not None:
+        cfg.final_selector.reasoning = final_selector_reasoning
+    if final_selector_seed is not None:
+        cfg.final_selector.seed = int(final_selector_seed)
+
     # Environment variables win, so a model can be swapped without editing code.
     # (This is also why there is no separate `diagnostic_llm` flag: it used to be
     # computed here, one line above where an env var could still change
@@ -435,6 +471,7 @@ def exec_dataset_orchestrator(
         cfg.combinator = LLMRole(model=None)
         cfg.diagnostician = LLMRole(model=None)
         cfg.reporter = LLMRole(model=None)
+        cfg.final_selector = LLMRole(model=None)
 
     experiment = f"orchestrator_react_{version}"
     out_dir = output_dir or results_dir
@@ -485,7 +522,8 @@ def exec_dataset_orchestrator(
         f"llm          : combinator={cfg.combinator.label()}"
         f"{' reasoning=' + str(cfg.combinator.reasoning) if cfg.combinator.reasoning is not None else ''} "
         f"{' seed=' + str(cfg.combinator.seed) if cfg.combinator.seed is not None else ''} "
-        f"diagnostician={cfg.diagnostician.label()} reporter={cfg.reporter.label()}"
+        f"diagnostician={cfg.diagnostician.label()} reporter={cfg.reporter.label()} "
+        f"final_selector={cfg.final_selector.label()}"
     )
     log(f"series       : {'all' if todo is None else todo}")
     # The pooled meta-model trains on the series of THIS call, so a resume chunk is
@@ -531,6 +569,35 @@ def exec_dataset_orchestrator(
                 raise RuntimeError(message)
             log("WARNING: continuing with the deterministic baseline per series")
         log("-" * 74)
+
+    # The final selector is a separate client. If it points at a different
+    # model/base_url, a dead server would otherwise be discovered only after every
+    # series had already run its 12-turn loop, and every choice would silently
+    # fall back to the leader.
+    if cfg.final_selector.enabled and (
+        not cfg.combinator.enabled
+        or cfg.final_selector.model != cfg.combinator.model
+        or cfg.final_selector.base_url != cfg.combinator.base_url
+    ):
+        ok_sel, detail_sel = check_client(build_client(cfg.final_selector))
+        if ok_sel:
+            log(f"final selector preflight: OK ({detail_sel!r})")
+        else:
+            message = (
+                "THE FINAL SELECTOR LLM DID NOT ANSWER\n"
+                f"  error    : {detail_sel}\n"
+                f"  model    : {cfg.final_selector.label()}\n"
+                f"  base_url : {cfg.final_selector.base_url}\n"
+                "  note     : agent_family would fall back to the validation leader "
+                "on every series.\n"
+                "             fix the model/server, or run with "
+                "allow_baseline_fallback=True to continue anyway."
+            )
+            print(message, flush=True)
+            if not allow_baseline_fallback:
+                raise RuntimeError(message)
+            log("WARNING: final selector unavailable; every series will keep the leader")
+    log("-" * 74)
 
     writer = (
         None
@@ -869,13 +936,43 @@ def build_parser() -> argparse.ArgumentParser:
                         "not tool turns; preparation does not consume the budget")
     p.add_argument("--max-total-turns", type=int, default=0,
                    help="hard cap on total turns with --scoring-budget (0 = 2 x max-iterations)")
-    p.add_argument("--final-strategy", choices=["argmin", "ensemble", "seed_gate", "mcs"],
+    p.add_argument("--final-strategy",
+                   choices=["argmin", "ensemble", "seed_gate", "mcs", "agent_family"],
                    default="argmin",
                    help="argmin (default) applies the best-scoring attempt; ensemble "
                         "averages the top --final-top-m; mcs averages the confidence "
                         "set the validation cannot separate from the leader "
                         "(--mcs-alpha); seed_gate keeps the best seeded baseline "
-                        "unless an agent attempt improves on it by --seed-gate-margin")
+                        "unless an agent attempt improves on it by --seed-gate-margin; "
+                        "agent_family keeps the v10 loop and adds one blind final "
+                        "selection among the best attempt of each combination family")
+    p.add_argument("--final-selector-model", default=None,
+                   help="model for the agent_family final selector (default: reuse "
+                        "--combinator as a separate client)")
+    p.add_argument("--final-selector-temperature", type=float, default=None,
+                   help="sampling temperature for the final selector (default: the "
+                        "combinator/config value)")
+    p.add_argument("--final-selector-reasoning", default=None, metavar="LEVEL",
+                   help="thinking level for the final selector (default: combinator)")
+    p.add_argument("--final-selector-seed", type=int, default=None,
+                   help="Ollama sampling seed for the final selector (default: "
+                        "combinator/config value)")
+    p.add_argument("--final-selector-shuffle-seed", type=int, default=0,
+                   help="deterministic A/B/C order per series for agent_family (default 0)")
+    p.add_argument("--final-selector-max-candidates", type=int, default=5,
+                   help="maximum family winners shown to the final selector (default 5)")
+    p.add_argument("--no-final-selector-allow-keep",
+                   dest="final_selector_allow_keep", action="store_false", default=True,
+                   help="ablation: the final selector must choose a candidate; KEEP "
+                        "is not allowed")
+    p.add_argument("--no-final-selector-low-confidence-keep",
+                   dest="final_selector_low_confidence_keep",
+                   action="store_false", default=True,
+                   help="ablation: allow low-confidence overrides (default: keep the "
+                        "leader on low confidence)")
+    p.add_argument("--final-selector-degenerate-factor", type=float, default=100.0,
+                   help="reject a chosen forecast above this factor times the series "
+                        "scale (default 100; keeps the leader)")
     p.add_argument("--mcs-alpha", type=float, default=0.10,
                    help="rejection level of the Diebold-Mariano test that builds the "
                         "MCS committee: p < alpha against the leader leaves the set "
@@ -1037,6 +1134,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             seed_pooled_meta_model=not args.no_seed_pooled,
             dataset_card=not args.no_dataset_card,
             final_prior_alpha=args.final_prior_alpha,
+            final_selector_model=args.final_selector_model,
+            final_selector_temperature=args.final_selector_temperature,
+            final_selector_reasoning=parse_reasoning(args.final_selector_reasoning),
+            final_selector_seed=args.final_selector_seed,
+            final_selector_shuffle_seed=args.final_selector_shuffle_seed,
+            final_selector_max_candidates=args.final_selector_max_candidates,
+            final_selector_allow_keep=args.final_selector_allow_keep,
+            final_selector_low_confidence_keep=args.final_selector_low_confidence_keep,
+            final_selector_degenerate_factor=args.final_selector_degenerate_factor,
             combinator_reasoning=parse_reasoning(args.reasoning),
             combinator_temperature=args.temperature,
             llm_seed=args.llm_seed,

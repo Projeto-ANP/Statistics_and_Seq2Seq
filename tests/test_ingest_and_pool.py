@@ -94,8 +94,12 @@ def fake_repo(tmp_path):
                         "regressor": f"{model}_normal",
                         "mape": 0.1, "pocid": 50.0, "smape": 0.1,
                         "rmse": 1.0, "msmape": 0.1, "mae": 1.0,
-                        "test": str(list(actual)),
-                        "predictions": str(list(preds)),
+                        # Plain floats, not numpy scalars: `str(list(np_array))`
+                        # renders `np.float64(...)` on recent numpy versions and
+                        # `extract_values` then parses the "64" in "float64" as a
+                        # data point. The production CSVs store plain numbers.
+                        "test": str([float(v) for v in actual]),
+                        "predictions": str([float(v) for v in preds]),
                         "start_test": pd.Timestamp("2000-01-31") + pd.DateOffset(months=(N_WINDOWS - k) * HORIZON),
                         "final_test": pd.Timestamp("2000-06-30") + pd.DateOffset(months=(N_WINDOWS - k) * HORIZON),
                     }

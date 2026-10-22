@@ -585,7 +585,7 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
     The CSV keeps the compact trajectory; this keeps everything, including the raw
     cards and the warnings, for the cases where a row looks odd and needs digging.
     """
-    return {
+    payload = {
         "dataset": outcome.dataset,
         "dataset_index": outcome.dataset_index,
         "success": outcome.success,
@@ -629,6 +629,12 @@ def artifacts_payload(outcome: Any) -> Dict[str, Any]:
         "report_text": outcome.report_text,
         "warnings": outcome.warnings,
     }
+    # v11 only: the blind final-selection audit. Kept out of the dict entirely
+    # for the other strategies, so a v10/`argmin` artifact retains its shape.
+    final_choice = getattr(outcome, "final_choice", None)
+    if final_choice:
+        payload["final_choice"] = final_choice
+    return payload
 
 
 # ──────────────────────────────────────────────────────────────────────────────

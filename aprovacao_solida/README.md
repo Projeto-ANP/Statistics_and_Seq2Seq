@@ -9,7 +9,8 @@ dissertação defensável sem reescrever a arquitetura:
 > séries + rastreabilidade).
 
 Tudo aqui é **determinístico** (roda em minutos, sem GPU) exceto o item 06, que
-é opcional e só documenta como rodar novamente com `--reasoning low`.
+é opcional e só documenta como rodar novamente com `--reasoning low`, e o item
+10, que é o replay da seleção final da v11 e chama o LLM uma vez por série.
 
 Branch: `v1_proposta_final` (contém este pacote + dois patches no core:
 `final_strategy="seed_gate"` e o salvamento do texto de reasoning nos artefatos).
@@ -45,6 +46,7 @@ em `logs/aprovacao_solida/`. Para um teste rápido antes do run completo, use
 | 06 | `06_sensibilidade_score/` | A escolha dos pesos (0,3, 0,3, 0,2, 0,2) dirige os resultados? | não | minutos |
 | 07 | `07_novas_combinacoes/` | As novas combinações (por horizonte, Caruana, best_single) melhoram o piso? Aprovadas, entram no catálogo | não | ~30 min |
 | 08 | `08_reasoning_e_harness/` | Como (e se) rerodar com `--reasoning low`, mais iterações e `seed_gate` | sim | horas |
+| 10 | `10_final_choice_replay/` | Replay offline da seleção final cega da v11 (melhor por família) | sim | ~1 chamada/série |
 
 No servidor, toda a bateria determinística roda em um único comando:
 `python3 aprovacao_solida/run_all.py` (Seção "Execução única no servidor").

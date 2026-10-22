@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
 
 import numpy as np
 
+from orchestrator_react import final_choice as final_choice_mod
 from orchestrator_react import ingest as ingest_mod
 from orchestrator_react import meta_model as meta_model_mod
 from orchestrator_react import phases as phases_mod
@@ -169,6 +170,10 @@ class SeriesOutcome:
     sanity: Dict[str, Any] = field(default_factory=dict)
     external_baselines: Dict[str, Any] = field(default_factory=dict)
     diagnosis: Dict[str, Any] = field(default_factory=dict)
+    #: Audit block for `final_strategy="agent_family"`: shortlist mapping, blind
+    #: prompt, raw response, parsed choice and fallback reason. Never contains
+    #: test actuals; the test metrics are computed later by the writer.
+    final_choice: Dict[str, Any] = field(default_factory=dict)
     report_text: str = ""
     config: Optional[ReactConfig] = None
     warnings: List[str] = field(default_factory=list)
@@ -398,6 +403,7 @@ def run_series(
     results_dir: str = ingest_mod.DEFAULT_RESULTS_DIR,
     frames: Optional[Dict[str, Any]] = None,
     client: Optional[LLMClient] = None,
+    selector_client: Optional[LLMClient] = None,
     diagnosis_hook: DiagnosisHook = phases_mod.run_diagnosis,
     report_hook: ReportHook = phases_mod.run_report,
     read_external_baselines: bool = True,
@@ -486,6 +492,48 @@ def run_series(
         on_step=on_step,
     )
 
+    # ── Phase 3.5 — blind final selection among family winners (v11) ────────
+    # This runs after the loop, so the trajectory and the validation ranking are
+    # exactly the v10 ones. It sees only the blind prompt: no model names, no
+    # validation scores/ranks, no test actuals.
+    if config.final_strategy == "agent_family":
+        choice_client = selector_client
+        if choice_client is None and config.final_selector.enabled:
+            choice_client = build_client(config.final_selector)
+        if choice_client is None:
+            choice_client = client
+        chosen, choice_debug = final_choice_mod.choose_final(
+            state=state,
+            series_card=outcome.series_card,
+            diagnosis=outcome.diagnosis,
+            client=choice_client,
+            config=config,
+            dataset=dataset,
+            dataset_index=dataset_index,
+        )
+        outcome.final_choice = choice_debug
+        decision = str(choice_debug.get("decision") or "")
+        previous = outcome.react.final_attempt
+        if chosen is not None and getattr(previous, "attempt_id", None) != getattr(
+            chosen, "attempt_id", None
+        ):
+            outcome.warnings.append(
+                f"final_choice applied {chosen.attempt_id} instead of leader "
+                f"{getattr(previous, 'attempt_id', None)} (decision={decision}, "
+                f"fallback={choice_debug.get('fallback')})"
+            )
+            outcome.react.final_attempt = chosen
+            reason = (choice_debug.get("parsed") or {}).get("reason") or ""
+            if reason:
+                # Put the selector's rationale in the CSV's free-text field; the
+                # full prompt/response stays in the artifact's `final_choice` block.
+                outcome.react.justification = f"final_choice: {reason}"
+        elif decision == "fallback":
+            outcome.warnings.append(
+                f"final_choice fallback ({choice_debug.get('fallback')}): kept leader "
+                f"{choice_debug.get('leader_id')}"
+            )
+
     # ── Phase 4 — deterministic application to the test forecasts ───────────
     attempt = outcome.react.final_attempt
     if attempt is None:
@@ -522,6 +570,10 @@ def run_series(
             alpha=config.mcs_alpha, max_members=config.mcs_max_members,
             score_margin=config.mcs_score_margin,
         )
+    elif config.final_strategy == "agent_family":
+        # `attempt` is already the selector's choice (or the leader on fallback).
+        forecast, debug = state.apply_to_test(attempt.spec)
+        debug["method"] = f"{debug.get('method')} (agent_family)"
     else:
         forecast, debug = state.apply_to_test(attempt.spec)
     if forecast.size != state.horizon or not np.all(np.isfinite(forecast)):

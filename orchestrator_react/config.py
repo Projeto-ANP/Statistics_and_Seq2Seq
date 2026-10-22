@@ -186,6 +186,11 @@ class ReactConfig:
     combinator: LLMRole = field(default_factory=lambda: LLMRole(model="gpt-oss:20b", temperature=0.2))
     diagnostician: LLMRole = field(default_factory=LLMRole)
     reporter: LLMRole = field(default_factory=LLMRole)
+    #: Optional final-selection role (v11 `final_strategy="agent_family"`). When
+    #: disabled, the pipeline reuses the combinator client; when enabled, it gets
+    #: its own sampling controls (the selection prompt wants a lower temperature
+    #: than the exploratory loop).
+    final_selector: LLMRole = field(default_factory=LLMRole)
 
     # -- deterministic protocol (not an ablation: the evaluation contract) -------
     backtest_mode: BacktestMode = "expanding"
@@ -230,7 +235,29 @@ class ReactConfig:
     #: instead of picking its top entry. It exists for the measured failure mode:
     #: first and second place are indistinguishable in most series, and betting on
     #: the top one keeps losing to the deterministic floor. See `ReactState.apply_mcs`.
-    final_strategy: Literal["argmin", "ensemble", "prior_blend", "seed_gate", "mcs"] = "argmin"
+    #: "agent_family" (v11) keeps the v10 loop untouched and adds one final,
+    #: blind selection among the best attempt of each combination family. The
+    #: selector can only KEEP the leader or replace it with a shortlisted
+    #: candidate; all names, scores, ranks and combination types are hidden.
+    final_strategy: Literal[
+        "argmin", "ensemble", "prior_blend", "seed_gate", "mcs", "agent_family"
+    ] = "argmin"
+    #: Maximum number of family winners shown to the final selector (<= 5 in
+    #: practice: weighted, median, dba, trimmed_mean, mean).
+    final_selector_max_candidates: int = 5
+    #: Allow the selector to answer KEEP, which keeps the validation leader.
+    final_selector_allow_keep: bool = True
+    #: When the selector says low confidence and picks a non-leader candidate,
+    #: keep the leader instead. Conservative default: a free override with low
+    #: confidence is exactly the failure mode the veto design is meant to avoid.
+    final_selector_low_confidence_keep: bool = True
+    #: Deterministic A/B/C order per (dataset, series). The mapping is recorded in
+    #: the artifact; the prompt only sees labels.
+    final_selector_shuffle_seed: int = 0
+    #: Reject a chosen candidate whose blind forecast is off-scale by more than
+    #: this factor times max(|last actual|, historical scale, 1). Keep the leader
+    #: instead.
+    final_selector_degenerate_factor: float = 100.0
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the
