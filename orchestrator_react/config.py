@@ -270,6 +270,10 @@ class ReactConfig:
     #: at least min_cycles full periods. Otherwise it keeps the validation leader.
     seasonal_guard_min_strength: float = 0.5
     seasonal_guard_min_cycles: float = 10.0
+    #: Minimum improvement in `seasonal_dist` over the leader required to switch.
+    #: Small gaps are usually noise; the v11 topk run switched on a 0.05 gap and
+    #: lost a good full-pool trimmed mean in ETTM2. 0.0 reproduces the v11.0 guard.
+    seasonal_guard_min_gap: float = 0.0
     #: Shrinkage weight for "prior_blend". 0.0 reproduces "argmin" exactly.
     final_prior_alpha: float = 0.0
     #: Relative validation-score improvement an agent attempt must show over the

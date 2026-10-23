@@ -687,11 +687,13 @@ def test_cli_flags_parse_for_seasonal_policies():
             "--final-strategy", "seasonal_veto",
             "--seasonal-guard-min-strength", "0.6",
             "--seasonal-guard-min-cycles", "8",
+            "--seasonal-guard-min-gap", "0.1",
         ]
     )
     assert args.final_strategy == "seasonal_veto"
     assert args.seasonal_guard_min_strength == 0.6
     assert args.seasonal_guard_min_cycles == 8.0
+    assert args.seasonal_guard_min_gap == 0.1
 
 
 def test_orchestrator_config_wires_the_seasonal_guard(monkeypatch):
@@ -743,3 +745,22 @@ def test_shortlist_splits_weighted_attempts_by_weight_method():
     )
     assert len(shortlist) == 2
     assert {entry.attempt.attempt_id for entry in shortlist} == {"a1", "a2"}
+
+
+def test_seasonal_guard_min_gap_keeps_leader_on_small_gap():
+    state, card, leader, challenger = _guard_state(active=True)
+    forecast_for = lambda attempt: np.asarray(attempt.forecast, dtype=float)
+    chosen, debug = FC.choose_seasonal_guard(
+        state, card, ReactConfig(seasonal_guard_min_gap=100.0), "FAKE", 0,
+        forecast_for=forecast_for,
+    )
+    assert chosen is leader
+    assert debug["decision"] == "keep"
+    assert debug["reason"] == "seasonal_gap_below_min"
+
+    chosen, debug = FC.choose_seasonal_guard(
+        state, card, ReactConfig(seasonal_guard_min_gap=0.0), "FAKE", 0,
+        forecast_for=forecast_for,
+    )
+    assert chosen is challenger
+    assert debug["decision"] == "switch"

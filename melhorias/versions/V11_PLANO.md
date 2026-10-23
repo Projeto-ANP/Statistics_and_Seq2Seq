@@ -920,6 +920,80 @@ testar reasoning/modelo diferente antes de considerar seed.
 CSVs: `topk_guard_low.csv`, `topk_guard_medium.csv` em
 `outputs/resultados/v11_combo_search/`.
 
+### 11.11 Run completa do v11_seasonal (low)
+
+A run real com `--final-strategy seasonal_guard` foi feita nos 6 datasets. O
+resultado **não** confirmou o ganho offline:
+
+| dataset | v11_seasonal | v10x_low | FFORMA |
+|---|---:|---:|---:|
+| ANP | 0,220603 | 0,219567 | 0,216593 |
+| ETTH1 | 0,226110 | 0,240080 | 0,300054 |
+| ETTH2 | 0,176888 | 0,174797 | 0,203528 |
+| ETTM1 | 0,487849 | 0,509871 | 0,439569 |
+| ETTM2 | 0,229306 | 0,176754 | **0,165421** |
+| NN5 | 0,116666 | **0,116270** | 0,119654 |
+| **MÉDIA** | 0,242904 | **0,239556** | 0,240803 |
+| **AGREGADO** | 0,189846 | 0,188715 | **0,188354** |
+
+O guard funcionou: o líder do agente tinha 0,249633 e o guard aplicou 0,242904
+(+0,006729). As trocas foram boas no ETTM1 (3/3, +0,0638 na média), ETTH1
+(3/3, +0,0336), ETTM2 (1/1, +0,0028); neutras no ANP (35 trocas, +0,0002);
+uma perda no ETTH2 (-0,0128); nenhuma no NN5.
+
+O problema é o **líder do ETTM2**: 0,229710 contra 0,176754 no v10x. Na série 5
+do ETTM2, o agente só tentou `pool1` (mean/median/trimmed/weighted), todas com
+teste ~0,63; não tentou `trimmed_mean(pool_full)`, que no v10x dava 0,288. O
+agente ancorou no pool estável da Phase 2 (`pool1`) e o guard não tem como
+consertar um histórico ruim.
+
+Conclusão: a decisão final funcionou, mas a run completa ficou pior que o v10
+por variância/ancoragem do agente no ETTM2. É exatamente o que o `topkguard`
+com `--no-seed-attempts` + handles da Phase 2 escondidos + `--direct-preparation`
+tenta corrigir.
+
+### 11.12 Run v11_topk_guard (real, low)
+
+O agente **usou** as ferramentas novas em todos os datasets:
+
+| dataset | select_top_k | weights_topk_per_horizon |
+|---|---:|---:|
+| ANP | 182 | 153 |
+| ETTH1 | 8 | 3 |
+| ETTH2 | 8 | 6 |
+| ETTM1 | 9 | 4 |
+| ETTM2 | 8 | 3 |
+| NN5 | 78 | 105 |
+
+SMAPE:
+
+| política | ANP | ETTH1 | ETTH2 | ETTM1 | ETTM2 | NN5 | média | agregado |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| v10x_low | 0,219567 | 0,240080 | 0,174797 | 0,509871 | 0,176754 | 0,116270 | 0,239556 | 0,188715 |
+| v11_seasonal | 0,220603 | 0,226110 | 0,176888 | 0,487849 | 0,229306 | 0,116666 | 0,242904 | 0,189846 |
+| v11_topk (sem gap) | 0,222833 | 0,228466 | 0,176736 | 0,455297 | 0,220161 | 0,120273 | 0,237294 | 0,191497 |
+| **v11_topk + gap 0,10** | 0,222630 | 0,227298 | 0,176736 | 0,457370 | **0,179115** | 0,120273 | **0,230570** | 0,190506 |
+| FFORMA | 0,216593 | 0,300054 | 0,203528 | 0,439569 | 0,165421 | 0,119654 | 0,240803 | 0,188354 |
+
+O agente chegou na receita com `k=3` (o exemplo dizia `k=5`), mas o guard passou
+a escolhê-la. No ETTM2 série 5, o agente finalmente achou o bom
+`trimmed_mean(pool_full)` (teste 0,288); o guard trocou para um topk
+`weighted(pool_full)` com teste 0,575 porque o gap sazonal era só 0,0507. O
+`--seasonal-guard-min-gap 0.10` mantém o líder e leva o ETTM2 de 0,220161 para
+0,179115.
+
+O topk+gap é o melhor na **média das médias** (0,230570), mas o **agregado**
+(0,190506) ainda fica atrás do v10/FFORMA. O agregado é puxado por ANP
+(0,222630 vs 0,219567) e NN5 (0,120273 vs 0,116270): o agente usou topk nesses
+datasets e o líder piorou; o guard não troca no NN5 (gate inativo) e no ANP fica
+quase neutro. O próximo lever é condicionar o exemplo/dica de topk a séries
+longas/sazonais (ETT), em vez de mostrá-lo para todos.
+
+O M4, que não entra na média oficial, ficou 0,09248 no topk vs 0,09096 no
+v10x_low.
+
+A flag `--seasonal-guard-min-gap` foi implementada; use 0.10 na próxima run.
+
 ---
 
 ## 12. Nota de branches

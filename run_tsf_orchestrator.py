@@ -204,6 +204,7 @@ def exec_dataset_orchestrator(
     final_selector_degenerate_factor: float = 100.0,
     seasonal_guard_min_strength: float = 0.5,
     seasonal_guard_min_cycles: float = 10.0,
+    seasonal_guard_min_gap: float = 0.0,
     combinator_reasoning: Any = None,
     combinator_temperature: Optional[float] = None,
     llm_seed: Optional[int] = None,
@@ -404,6 +405,7 @@ def exec_dataset_orchestrator(
     cfg.final_selector_degenerate_factor = float(final_selector_degenerate_factor)
     cfg.seasonal_guard_min_strength = float(seasonal_guard_min_strength)
     cfg.seasonal_guard_min_cycles = float(seasonal_guard_min_cycles)
+    cfg.seasonal_guard_min_gap = float(seasonal_guard_min_gap)
     cfg.pool_mode = pool_mode
     cfg.pool_k = int(pool_k)
     cfg.score_preset = score_preset
@@ -1000,6 +1002,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seasonal-guard-min-cycles", type=float, default=10.0,
                    help="minimum n_points / seasonal_period for the seasonal guard "
                         "to act (default 10)")
+    p.add_argument("--seasonal-guard-min-gap", type=float, default=0.0,
+                   help="minimum seasonal_dist improvement over the leader required "
+                        "to switch (default 0; use 0.10 to filter small/noisy gaps)")
     p.add_argument("--mcs-alpha", type=float, default=0.10,
                    help="rejection level of the Diebold-Mariano test that builds the "
                         "MCS committee: p < alpha against the leader leaves the set "
@@ -1173,6 +1178,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             final_selector_degenerate_factor=args.final_selector_degenerate_factor,
             seasonal_guard_min_strength=args.seasonal_guard_min_strength,
             seasonal_guard_min_cycles=args.seasonal_guard_min_cycles,
+            seasonal_guard_min_gap=args.seasonal_guard_min_gap,
             combinator_reasoning=parse_reasoning(args.reasoning),
             combinator_temperature=args.temperature,
             llm_seed=args.llm_seed,
