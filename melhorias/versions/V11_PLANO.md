@@ -994,6 +994,68 @@ v10x_low.
 
 A flag `--seasonal-guard-min-gap` foi implementada; use 0.10 na próxima run.
 
+### 11.13 Com M4 junto
+
+M4 tem 359 séries. Aqui a média é sobre os 7 datasets (peso igual por dataset) e o
+agregado é sobre as 680 séries. O `v11_seasonal` não tem M4 (a run foi só nos 6),
+então fica fora desta comparação de 7.
+
+SMAPE:
+
+| dataset | v10_low | v11_topk | v11_topk+gap 0.10 | FFORMA | ADE |
+|---|---:|---:|---:|---:|---:|
+| ANP | 0,219567 | 0,222833 | 0,222630 | 0,216593 | 0,217722 |
+| ETTH1 | 0,240080 | 0,228466 | 0,227298 | 0,300054 | 0,395094 |
+| ETTH2 | 0,174797 | 0,176736 | 0,176736 | 0,203528 | 0,226148 |
+| ETTM1 | 0,509871 | 0,455297 | 0,457370 | 0,439569 | 0,457223 |
+| ETTM2 | 0,176754 | 0,220161 | 0,179115 | 0,165421 | 0,187240 |
+| NN5 | 0,116270 | 0,120273 | 0,120273 | 0,119654 | 0,117800 |
+| M4 | 0,090964 | 0,092478 | 0,092397 | 0,099552 | 0,106894 |
+| **MÉDIA (7)** | 0,218329 | 0,216606 | **0,210831** | 0,220624 | 0,244017 |
+| **AGREGADO (680)** | **0,137108** | 0,139221 | 0,138710 | 0,141471 | 0,146965 |
+
+POCID (resumo):
+
+| resumo | v10_low | v11_topk | v11_topk+gap | FFORMA | ADE |
+|---|---:|---:|---:|---:|---:|
+| MÉDIA (7) | **54,230** | 53,906 | 53,973 | 53,370 | 52,281 |
+| AGREGADO (680) | 57,179 | 56,276 | 56,419 | **58,211** | 56,368 |
+
+Leitura: o topk+gap continua o melhor na **média dos 7**, mas o v10 ganha no
+**agregado das 680 séries**; o M4 do topk (0,0924) é um pouco pior que o do v10
+(0,0910), e o M4 tem 359 séries, então pesa muito no agregado. O FFORMA tem o
+melhor POCID agregado.
+
+### 11.14 Run v11_topk_guard_margin_low (real, 6 datasets)
+
+Foi a run real com `--direct-preparation --seasonal-guard-min-gap 0.10`. Sem M4.
+
+| dataset | v11_topk_gap | v10x_low | FFORMA |
+|---|---:|---:|---:|
+| ANP | 0,219267 | 0,219567 | 0,216593 |
+| ETTH1 | 0,223642 | 0,240080 | 0,300054 |
+| ETTH2 | 0,173056 | 0,174797 | 0,203528 |
+| ETTM1 | **0,430257** | 0,509871 | 0,439569 |
+| ETTM2 | **0,164238** | 0,176754 | 0,165421 |
+| NN5 | 0,119554 | 0,116270 | 0,119654 |
+| **MÉDIA** | **0,221669** | 0,239556 | 0,240803 |
+| **AGREGADO** | **0,187275** | 0,188715 | 0,188354 |
+
+POCID: média **53,870** e agregado **56,977**; também ganha do v10
+(53,526/55,759) e do FFORMA (52,357/56,829) nos dois resumos.
+
+O guard melhorou o líder do agente: 0,236583 -> 0,221669 na média, e
+0,189081 -> 0,187275 no agregado. Trocas: ETTM1 3/3 (+0,0821 na média), ETTH1
+1/1 (+0,0053), ETTM2 1/1 (+0,0023), ANP 9 trocas (-0,00027), ETTH2/NN5 sem troca.
+O agente usou `select_top_k`/`weights_topk_per_horizon` em todos os datasets.
+
+Caveats: é uma run única; parte do ganho é a trajetória do agente (a run topk
+anterior, sem gap, tinha 0,237294). O gap 0.10 foi escolhido nos artefatos
+anteriores; precisa de uma confirmação com outro seed ou reasoning. M4 não
+entrou; para a média de 7, rodar o M4 com esta config. Com o M4 do topk anterior
+(0,0924) como referência, a média7 ficaria ~0,2032 e o agregado7 ~0,1372
+(v10: 0,2183/0,1371).
+
 ---
 
 ## 12. Nota de branches
