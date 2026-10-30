@@ -1,0 +1,403 @@
+GPU: CUDA_VISIBLE_DEVICES=0; Ollama URL=http://127.0.0.1:11434 (start the server with CUDA_VISIBLE_DEVICES=0 OLLAMA_HOST=127.0.0.1:11434)
+dataset      : ETTM1
+reading from : ./timeseries/mestrado/resultados
+writing to   : ./timeseries/mestrado/resultados/orchestrator_react_v12_gemma_on
+source       : ETTM1.tsf
+models       : 19
+ablation     : v12_gemma_on-5835021828
+pool mode    : full | windows: 3 | backtest: expanding
+final        : seasonal_guard guard=0.5/10.0 | stable seeds: True | pooled: True/fforma seeded | card: True (min 20 series) | budget: 12 iters, patience 4
+protocol     : nested_selection=True | min_windows_for_ols=5 (weights_ols WITHHELD this run)
+llm          : combinator=gemma4:26b reasoning=True  seed=11 diagnostician=none reporter=none final_selector=gemma4:26b
+series       : all
+--------------------------------------------------------------------------
+llm preflight: OK ('OK')
+--------------------------------------------------------------------------
+--------------------------------------------------------------------------
+WARNING: 5 model(s) do not share the pool's windows on ETTM1 and are being DROPPED for every series: ['ONLY_CWT_catboost', 'ONLY_DWT_catboost', 'ONLY_DWT_rf', 'ONLY_FT_catboost', 'ONLY_FT_rf']
+         reason (first): different actuals from 'ARIMA' (starts 2018-06-25 20:00:00 vs 2018-06-24 20:00:00)
+         the remaining 14 models are combined; set drop_misaligned_models=False to fail instead.
+[   0]   iter 1 | evaluate_strategy {"combine": "mean", "pool": "pool_full"}
+[   0]     think: Establishing a baseline using a simple mean of all models, noting the seasonal_dominated regime.
+[   0]     obs  : rank 1/1 score=1.0 rmse=80155016271.7434 (best so far)
+[   0]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error", "rationale": "The simple mean is l...
+[   0]     think: The simple mean is likely being heavily penalized by the extreme errors in the tail of the model pool; I will test a weighted combination using inverse error to favor the high-performing seasonal m...
+[   0]     obs  : rank 1/2 score=0.6296 rmse=19999432.0751 (best so far)
+[   0]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "softmax_neg_error"}
+[   0]     think: The current leader uses `inverse_error` weighting, which might be too sensitive to the large error spread. I will test `softmax_neg_error` to see if a more aggressive weighting approach performs be...
+[   0]     obs  : rank 1/3 score=0.3443 rmse=19999432.022 (best so far)
+/home/lucas.castro/.conda/envs/agno/lib/python3.11/site-packages/tslearn/bases/bases.py:15: UserWarning: h5py not installed, hdf5 features will not be supported.
+Install h5py to use hdf5 features: http://docs.h5py.org/
+  warn(h5py_msg)
+[   0]   iter 4 | evaluate_strategy {"combine": "dba", "pool": "pool_full", "dba_max_iter": 30}
+[   0]     think: Given the high seasonal_strength and the success of weighted models, I'll test DBA to see if a non-linear combination better captures the seasonal shape.
+[   0]     obs  : rank 3/4 score=1.0 rmse=132368007659.2551, leader is a3 (weighted w=w2)
+[   0]   iter 5 | select_top_k {"k": 7, "metric": "smape"}
+[   0]     think: The ranking stability is moderate, suggesting that the best models might change. I will first select a subset of the top 7 models to reduce the impact of high-error models.
+[   0]     obs  : pool pool4 k=7 ['DWT_rf', 'CWT_rf', 'ONLY_CWT_rf', 'DWT_catboost', 'CWT_catboost']
+[   0]   iter 6 | evaluate_strategy {"combine": "mean", "pool": "pool4", "rationale": "Testing if a simple mean of the top-k models is more rob...
+[   0]     think: Given the moderate ranking stability, I want to see if a simple mean of the top-performing models in pool4 outperforms the full-pool weighted strategies.
+[   0]     obs  : rank 1/5 score=0.2021 rmse=5.4582 (best so far)
+[   0]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error", "rationale": "Applying inverse error w...
+[   0]     think: The leader is a simple mean of `pool4`, and since the series is `seasonal_dominated`, I want to see if weighting the models in `pool4` by their inverse error improves the score.
+[   0]     obs  : rank 2/6 score=0.2075 rmse=6.3932, leader is a5 (mean pool=pool4)
+[   0]   iter 8 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error"}
+[   0]     think: Given the seasonal_dominated regime and the fact that inverse_error weighting on pool4 performed worse than a simple mean, I want to test if a more aggressive softmax_neg_error weighting on the sam...
+[   0]     obs  : rank 2/7 score=0.2052 rmse=6.0275, leader is a5 (mean pool=pool4)
+[   0]   iter 9 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "Testing robustness of the top subset using median inst...
+[   0]     think: The leader is a simple mean of a high-performing subset (`pool4`), and given the `seasonal_dominated` regime, I want to see if a more robust estimator like `median` can improve performance on `pool4`.
+[   0]     obs  : rank 1/8 score=0.1356 rmse=3.7304 (best so far)
+[   0]   iter 10 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2}
+[   0]     think: Given the seasonal_dominated regime and the success of the median strategy, I suspect that some models in the pool are producing outlier forecasts. I will test a trimmed_mean on pool4 to see if it ...
+[   0]     obs  : rank 2/9 score=0.1827 rmse=4.3728, leader is a8 (median pool=pool4)
+[   0]   iter 11 | evaluate_strategy {"combine": "dba", "pool": "pool4", "dba_max_iter": 30, "rationale": "Testing DBA as a non-linear robust al...
+[   0]     think: The leader is a `median` combination on `pool4`, which suggests that the series' `seasonal_dominated` nature and `moderate` ranking stability lead to heavy-tailed error distributions where robust a...
+[   0]     obs  : rank 3/10 score=0.1933 rmse=5.6594, leader is a8 (median pool=pool4)
+[   0]   iter 12 | select_top_k {"k": 7, "metric": "smape"}
+[   0]     think: The current leader is a robust median, but the series is seasonal-dominated and the combination hint suggests weighting. I will test if a per-horizon top-k mean can capture shifts in model performa...
+[   0]     obs  : pool pool4 k=7 ['DWT_rf', 'CWT_rf', 'ONLY_CWT_rf', 'DWT_catboost', 'CWT_catboost']
+[   0]   iter 13 | weights_topk_per_horizon {"pool": "pool4", "k": 5, "metric": "smape"}
+[   0]     think: The series is seasonal_dominated, suggesting that the best models might change across the 24-step horizon. I will use the pool created by the previous select_top_k (pool4) to prepare a per-horizon ...
+[   0]     obs  : handle w5 mode=topk_mean_per_horizon active=7/7 conc=0.004
+[   0]   iter 14 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w5"}
+[   0]     think: The series is seasonal_dominated, suggesting that temporal patterns are strong and model performance might vary across the horizon. I will test the w5 handle, which uses topk_per_horizon weighting ...
+[   0]     obs  : rank 2/11 score=0.1804 rmse=4.9226, leader is a8 (median pool=pool4)
+[   0]   iter 15 | select_forward {"max_steps": 10, "metric": "rmse"}
+[   0]     think: The current leader is a median combination of a top-performing subset (`pool4`), and the series shows moderate ranking stability (ranking tau 0.399). I will attempt to find a more robust model subs...
+[   0]     obs  : pool pool5 k=1 ['DWT_rf']
+[   0]   iter 16 | weights_meta_model {"pool": "pool4", "scope": "series", "metric": "smape"}
+[   0]     think: The current leader is a robust median combination on a subset of models (pool4), and the series is seasonal-dominated with moderate ranking stability. I will test if a meta-model weighting on the s...
+[   0]     obs  : handle w6 mode=softmax_fallback active=7/7 conc=0.004
+[   0]   iter 17 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w6"}
+[   0]     think: The series is seasonal_dominated, and since the median is currently the best performing strategy, I want to see if the meta-model weights (w6) can provide a more sophisticated combination for the p...
+[   0]     obs  : rank 8/12 score=0.2076 rmse=5.9672, leader is a8 (median pool=pool4)
+[   0] weighted       score= 0.1804 origin=agent    iters=17 stop=scoring_budget_exhausted
+         TEST  smape=0.6451  rmse=3.8399  pocid=56.52  mape=1078788936681510.6250
+         FORECAST [4.159, 1.679, -2.996, -5.95, -5.588, -5.327, -5.348, -5.351, -5.348, -5.221, -5.187, -5.543, -5.633, -5.749, -4.87, -3.952, -2.791, 5.675, 6.273, 6.487, 6.74, 6.887, 6.951, 7.057]
+         PROVENANCE tools=17 evaluate_calls=12 pool=7 ok=True
+[   1]   iter 1 | evaluate_strategy {"combine": "trimmed_mean", "models": ["ARIMA", "ETS", "THETA", "rf", "CWT_rf", "DWT_rf", "FT_rf", "CWT_cat...
+[   1]     think: The ranking stability is low (unstable) and there is a massive spread in error across the pool, so I will test a trimmed mean to mitigate the impact of poorly performing models.
+[   1]     obs  : rank 1/1 score=0.3059 rmse=2.6939 (best so far)
+[   1]   iter 2 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error"}
+[   1]     think: The ranking is unstable and the error spread is extremely large, so I want to test if weighting models by their inverse error can better leverage the top performers compared to the trimmed mean.
+[   1]     obs  : rank 2/2 score=0.4139 rmse=4728349393.3691, leader is a1 (trimmed_mean trim=0.2)
+[   1]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool_full"}
+[   1]     think: The ranking is unstable (ranking_verdict: unstable), and the previous weighted strategy failed due to high error variance; I will test a median combination to improve robustness.
+[   1]     obs  : rank 1/3 score=0.2099 rmse=2.1535 (best so far)
+[   1]   iter 4 | evaluate_strategy {"combine": "dba", "pool": "pool_full", "dba_max_iter": 30}
+[   1]     think: Since the `ranking_verdict` is "unstable" and the `median` is the current leader, I will test `dba` to see if a shape-based combination can outperform point-wise robust estimators.
+[   1]     obs  : rank 4/4 score=1.0 rmse=6813111434.904, leader is a3 (median)
+[   1]   iter 5 | evaluate_strategy {"combine": "mean", "models": ["rf", "CWT_rf", "ONLY_CWT_rf", "DWT_rf", "FT_catboost", "DWT_catboost", "FT_...
+[   1]     think: The ranking is unstable, so I will test if a mean of the top 7 models (based on RMSE) outperforms the median of the full pool by removing the influence of the high-error models.
+[   1]     obs  : rank 1/5 score=0.1874 rmse=1.9484 (best so far)
+[   1]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error", "rationale": "The ranking is unstable,...
+[   1]     think: Given the unstable ranking and the success of the mean on the top subset, I will test if weighting the models in that subset by their inverse error improves performance.
+[   1]     obs  : rank 1/6 score=0.1872 rmse=1.9528 (best so far)
+[   1]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error", "rationale": "Testing if softmax w...
+[   1]     think: The ranking is unstable, so I will test if a more aggressive weighting using softmax on the top-performing pool (`pool4`) improves upon the current inverse-error leader.
+[   1]     obs  : rank 1/7 score=0.1872 rmse=1.9523 (best so far)
+[   1]   iter 8 | evaluate_strategy {"combine": "median", "pool": "pool4"}
+[   1]     think: Since the ranking is unstable (ranking_verdict: unstable), a median combination on the top-performing subset (pool4) might be more robust than the current weighted leader.
+[   1]     obs  : rank 4/8 score=0.1948 rmse=2.0342, leader is a7 (weighted pool=pool4 w=w3)
+[   1]   iter 9 | evaluate_strategy {"combine": "dba", "pool": "pool4"}
+[   1]     think: The ranking is unstable and the error correlation is high; I will test if the DBA (Dynamic Baseline Averaging) method can find a more effective non-linear combination of the top-performing models i...
+[   1]     obs  : rank 4/9 score=0.1894 rmse=1.957, leader is a7 (weighted pool=pool4 w=w3)
+[   1]   iter 10 | weights_topk_per_horizon {"pool": "pool4", "k": 3, "metric": "rmse"}
+[   1]     think: The ranking is unstable, so I will test a per-horizon top-k weighting strategy to see if different models dominate at different parts of the 24-step horizon.
+[   1]     obs  : handle w4 mode=topk_mean_per_horizon active=7/7 conc=0.111
+[   1]   iter 11 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w4"}
+[   1]     think: The ranking is unstable (ranking_verdict: unstable), so I want to test if a per-horizon weighting strategy can better capture the changing model performance across the horizon.
+[   1]     obs  : rank 4/10 score=0.188 rmse=1.9923, leader is a7 (weighted pool=pool4 w=w3)
+[   1]   iter 12 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2}
+[   1]     think: The ranking is unstable (ranking_tau), so I will test if a trimmed mean on the top-performing models (pool4) provides more robustness against window-specific fluctuations than the current weighted ...
+[   1]     obs  : rank 6/11 score=0.1894 rmse=1.9739, leader is a7 (weighted pool=pool4 w=w3)
+[   1]   iter 13 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "forward"}
+[   1]     think: The ranking is unstable (ranking_tau 0.179), so I will use Caruana forward selection weighting on the full model pool to find a more robust combination.
+[   1]     obs  : rank 10/12 score=0.3347 rmse=4728349393.3691, leader is a7 (weighted pool=pool4 w=w3)
+[   1] weighted       score= 0.1872 origin=agent    iters=13 stop=scoring_budget_exhausted
+         TEST  smape=0.2695  rmse=1.4227  pocid=52.17  mape=0.3299
+         FORECAST [5.924, 5.785, 5.731, 5.623, 5.577, 5.574, 5.565, 5.486, 5.417, 5.367, 5.37, 5.385, 5.386, 5.401, 5.372, 5.34, 5.365, 5.399, 5.415, 5.447, 5.454, 5.486, 5.508, 5.527]
+         PROVENANCE tools=13 evaluate_calls=12 pool=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.001796)
+[   2]   iter 1 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error"}
+[   2]     think: Given the "seasonal_dominated" regime and the hint for a "weighted" combination, I will test an inverse-error weighted average of the full pool to see if it effectively mitigates the impact of high...
+[   2]     obs  : rank 1/1 score=0.3677 rmse=1793610352.17 (best so far)
+[   2]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "models": ["DWT_rf", "CWT_catboost", "DWT_catboost", "ARIMA", "THETA", "CWT_rf"...
+[   2]     think: The current leader uses a weighted approach, but the high relative error spread and the presence of extreme outliers in the error table suggest that a simple mean or weighted average might be sensi...
+[   2]     obs  : rank 1/2 score=0.1707 rmse=3.0775 (best so far)
+[   2]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "softmax_neg_error", "rationale": "Testing softmax ...
+[   2]     think: The extreme error spread in the model pool suggests that simple inverse error weighting may be unstable; I will test softmax weighting to see if it provides a more robust combination, guided by the...
+[   2]     obs  : rank 2/3 score=0.3616 rmse=1793610352.17, leader is a2 (trimmed_mean trim=0.2)
+[   2]   iter 4 | evaluate_strategy {"combine": "median", "pool": "pool_full"}
+[   2]     think: The series is seasonal_dominated and the error spread is massive, which likely caused the weighted strategies to fail. Since trimmed_mean was the best, I will test median as a robust alternative to...
+[   2]     obs  : rank 2/4 score=0.1881 rmse=3.6117, leader is a2 (trimmed_mean trim=0.2)
+[   2]   iter 5 | select_top_k {"k": 7, "metric": "rmse"}
+[   2]     think: The series is seasonal_dominated, and the current leader is a trimmed_mean, which suggests that pruning high-error models is effective. I will attempt to build a more concentrated pool of the top-p...
+[   2]     obs  : pool pool4 k=7 ['DWT_rf', 'CWT_catboost', 'DWT_catboost', 'ARIMA', 'THETA']
+[   2]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error"}
+[   2]     think: Since the series is seasonal_dominated and the leader is a trimmed mean, I want to see if a weighted combination of only the most performant models (the top 7 in pool4) can improve upon the global ...
+[   2]     obs  : rank 3/5 score=0.1923 rmse=5.5579, leader is a2 (trimmed_mean trim=0.2)
+[   2]   iter 7 | evaluate_strategy {"combine": "dba", "pool": "pool_full", "dba_max_iter": 30, "rationale": "Testing shape-based aggregation t...
+[   2]     think: Given the high seasonal strength (0.7688), I want to test if a shape-based aggregation like DBA can better capture the seasonal patterns than simple means, even with the large error spread in the f...
+[   2]     obs  : rank 6/6 score=1.0 rmse=6140194653.8697, leader is a2 (trimmed_mean trim=0.2)
+[   2]   iter 8 | weights_topk_per_horizon {"pool": "pool_full", "k": 5, "metric": "rmse"}
+[   2]     think: The high `seasonal_strength` suggests that the best models may change across the horizon, so I will prepare a per-horizon top-k weighting strategy on the full pool to see if model performance shift...
+[   2]     obs  : handle w4 mode=topk_mean_per_horizon active=12/14 conc=0.041
+[   2]   iter 9 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "w4"}
+[   2]     think: The series is seasonal_dominated, and since the leader is a trimmed_mean, I want to test if a per-horizon weighting strategy (using the top-k models at each step) can better capture the varying mod...
+[   2]     obs  : rank 4/7 score=0.339 rmse=1793610352.17, leader is a2 (trimmed_mean trim=0.2)
+[   2]   iter 10 | select_top_k {"k": 5, "metric": "rmse"}
+[   2]     think: The current leader is a trimmed mean, which suggests that models with extreme errors are problematic. I will use a preparation tool to create a more focused pool of the top 5 models by RMSE to see ...
+[   2]     obs  : pool pool5 k=5 ['DWT_rf', 'CWT_catboost', 'DWT_catboost', 'ARIMA', 'THETA']
+[   2]   iter 11 | evaluate_strategy {"combine": "weighted", "pool": "pool5", "weights": "inverse_error"}
+[   2]     think: The series is seasonal_dominated, and given that the leader is a trimmed mean, I want to test if a weighted combination of the top-performing models in pool5 can improve on that.
+[   2]     obs  : rank 1/8 score=0.1684 rmse=5.5661 (best so far)
+[   2]   iter 12 | select_top_k {"k": 7, "metric": "smape"}
+[   2]     think: The series is seasonal_dominated, suggesting that the best models might vary across the horizon. I will test a per-horizon top-k weighting strategy to see if it outperforms the current static weigh...
+[   2]     obs  : pool pool6 k=7 ['DWT_rf', 'CWT_rf', 'ONLY_CWT_rf', 'FT_rf', 'ARIMA']
+[   2]   iter 13 | weights_topk_per_horizon {"pool": "pool6", "k": 3, "metric": "rmse"}
+[   2]     think: Given the seasonal_dominated regime, I want to test if the best models change across the horizon using a top-k per horizon weighting on pool6.
+[   2]     obs  : handle w6 mode=topk_mean_per_horizon active=7/7 conc=0.035
+[   2]   iter 14 | evaluate_strategy {"combine": "weighted", "pool": "pool6", "weights": "w6"}
+[   2]     think: The series is seasonal_dominated, so a per-horizon weighting strategy might better capture the varying performance of models across the cycle. I will test the previously prepared per-horizon weight...
+[   2]     obs  : rank 5/9 score=0.2329 rmse=6.4152, leader is a8 (weighted pool=pool5 w=w5)
+[   2]   iter 15 | evaluate_strategy {"combine": "median", "pool": "pool4"}
+[   2]     think: The series is seasonal_dominated and the diagnosis warns that weight estimation with only 3 windows is high variance. Since the current leader relies on inverse-error weighting, I will test a more ...
+[   2]     obs  : rank 5/10 score=0.2061 rmse=5.6136, leader is a8 (weighted pool=pool5 w=w5)
+[   2]   iter 16 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error"}
+[   2]     think: The series is seasonal_dominated, and the leader is a weighted combination of a small, high-performing pool (pool5). I will test if a weighted combination of the slightly different pool4 using inve...
+[   2]     obs  : rank 4/10 score=0.1923 rmse=5.5579, leader is a8 (weighted pool=pool5 w=w5) [already tested]
+[   2]   iter 17 | evaluate_strategy {"combine": "dba", "pool": "pool4"}
+[   2]     think: The series is seasonal_dominated and the leader uses a small weighted pool. I will test the dba (Dynamic Baseline Aggregation) combination on pool4 to see if capturing the seasonal shape can improv...
+[   2]     obs  : rank 6/11 score=0.2174 rmse=5.1494, leader is a8 (weighted pool=pool5 w=w5)
+[   2]   iter 18 | select_top_k {"k": 7, "metric": "rmse"}
+[   2]     think: Given the high seasonal_strength (0.7688), I suspect that the best models vary across the horizon. I will prepare a per-horizon top-k weighting strategy.
+[   2]     obs  : pool pool4 k=7 ['DWT_rf', 'CWT_catboost', 'DWT_catboost', 'ARIMA', 'THETA']
+[   2]   iter 19 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error", "rationale": "Testing softmax weig...
+[   2]     think: The series is seasonal_dominated and has a moderate ranking stability, so I will test a softmax weighting on the top-performing models (pool4) to see if it handles the error distribution more robus...
+[   2]     obs  : rank 5/12 score=0.1956 rmse=5.5732, leader is a8 (weighted pool=pool5 w=w5)
+[   2] weighted       score= 0.2329 origin=agent    iters=19 stop=scoring_budget_exhausted
+         TEST  smape=0.8554  rmse=5.2427  pocid=56.52  mape=0.8112
+         FORECAST [0.13, -0.785, -1.706, -12.677, -12.262, -11.974, -11.978, -12.016, -12.165, -11.281, -6.879, -12.115, -12.29, -12.342, -12.142, 1.874, 2.457, 1.66, 2.078, 2.137, 2.16, 2.19, 2.334, 3.108]
+         PROVENANCE tools=19 evaluate_calls=13 pool=7 ok=True
+[   3]   iter 1 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error", "rationale": "Unstable ranking sug...
+[   3]     think: The ranking is unstable (Kendall's tau is low), suggesting that any single best model might not perform consistently, so I will test a robust weighted combination using inverse error across the ful...
+[   3]     obs  : rank 1/1 score=0.4519 rmse=2317329484.4046 (best so far)
+[   3]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "models": ["rf", "CWT_rf", "FT_catboost", "DWT_rf", "ONLY_CWT_rf", "DWT_catboos...
+[   3]     think: The ranking is unstable (ranking_verdict: unstable), suggesting that some models may perform very poorly in certain windows; I will test a trimmed mean to see if removing these outliers improves ro...
+[   3]     obs  : rank 1/2 score=0.3856 rmse=1.8133 (best so far)
+[   3]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool_full"}
+[   3]     think: Given the unstable ranking (ranking_verdict: unstable) and the extreme error spread in the pool, I will test the median to see if it provides a more robust central tendency than the current leader,...
+[   3]     obs  : rank 1/3 score=0.2417 rmse=1.3755 (best so far)
+[   3]   iter 4 | evaluate_strategy {"combine": "mean", "models": ["rf", "CWT_rf", "FT_catboost", "DWT_rf", "ONLY_CWT_rf"]}
+[   3]     think: The current leader is the median, which suggests that robustness to the high error spread and unstable ranking is crucial. I will test if a simple mean of the top-performing models can outperform t...
+[   3]     obs  : rank 1/4 score=0.1931 rmse=1.1058 (best so far)
+[   3]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error"}
+[   3]     think: The ranking is unstable (ranking_verdict: unstable), so I will test if weighting the top-performing models in pool4 by their inverse error provides a more precise combination than a simple mean.
+[   3]     obs  : rank 2/5 score=0.1947 rmse=1.1264, leader is a4 (mean pool=pool4)
+[   3]   iter 6 | evaluate_strategy {"combine": "dba", "pool": "pool4", "dba_max_iter": 30}
+[   3]     think: Given the unstable ranking and the success of the mean of `pool4`, I want to test if a non-linear combination like DBA on the same pool can better capture the series' patterns.
+[   3]     obs  : rank 1/6 score=0.1907 rmse=1.0927 (best so far)
+[   3]   iter 7 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "softmax_neg_error"}
+[   3]     think: The low `ranking_tau` indicates unstable model rankings, and the error table shows a massive spread between top models and the rest of the pool; I will test `softmax_neg_error` on the full pool to ...
+[   3]     obs  : rank 6/7 score=0.4338 rmse=2317329484.4046, leader is a6 (dba pool=pool4)
+[   3]   iter 8 | select_top_k {"k": 7, "metric": "smape"}
+[   3]     think: The ranking instability (ranking_tau) suggests that model performance varies; I'll start by selecting a top-k pool to refine the model subset for a per-horizon weighting strategy.
+[   3]     obs  : pool pool5 k=7 ['rf', 'CWT_rf', 'DWT_rf', 'FT_catboost', 'ONLY_CWT_rf']
+[   3]   iter 9 | weights_topk_per_horizon {"pool": "pool5", "k": 3, "metric": "rmse"}
+[   3]     think: The ranking is unstable and the seasonal strength is significant, suggesting models might perform differently at different horizons. I will prepare a per-horizon top-k weight handle on the recently...
+[   3]     obs  : handle w4 mode=topk_mean_per_horizon active=6/7 conc=0.086
+[   3]   iter 10 | evaluate_strategy {"combine": "weighted", "pool": "pool5", "weights": "w4", "rationale": "Testing per-horizon top-k mean to a...
+[   3]     think: Given the unstable ranking, I will test if a per-horizon weighting strategy can better capture the varying model performance across the forecast horizon.
+[   3]     obs  : rank 4/8 score=0.209 rmse=1.2468, leader is a6 (dba pool=pool4)
+[   3]   iter 11 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error"}
+[   3]     think: The ranking is unstable (ranking_verdict: unstable) and the current leader is a non-linear DBA combination on the top-performing pool (pool4). Since the inverse-error weighting (a5) performed worse...
+[   3]     obs  : rank 3/9 score=0.1946 rmse=1.1262, leader is a6 (dba pool=pool4)
+[   3]   iter 12 | evaluate_strategy {"combine": "median", "pool": "pool4"}
+[   3]     think: The unstable ranking tau suggests that a robust central tendency like the median might be more effective than the current dba leader when applied to the high-performing subset (pool4).
+[   3]     obs  : rank 5/10 score=0.204 rmse=1.176, leader is a6 (dba pool=pool4)
+[   3]   iter 13 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error", "rationale": "Testing inverse error we...
+[   3]     think: The ranking is unstable (ranking_verdict), so I want to test if inverse error weighting on the high-performing pool4 provides a more robust combination than the current DBA leader.
+[   3]     obs  : rank 4/10 score=0.1947 rmse=1.1264, leader is a6 (dba pool=pool4) [already tested]
+[   3]   iter 14 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2}
+[   3]     think: Since the ranking is unstable (ranking_tau: 0.194) and the leader is a robust combination (dba on pool4), I will test a trimmed mean on pool4 to see if removing the outlier model in each window imp...
+[   3]     obs  : rank 5/11 score=0.2011 rmse=1.155, leader is a6 (dba pool=pool4)
+[   3]   iter 15 | evaluate_strategy {"combine": "weighted", "pool": "pool5", "weights": "inverse_error", "rationale": "Testing a larger pool (p...
+[   3]     think: The ranking is unstable (ranking_tau: 0.194), and since the current leader uses a small, high-performing pool (pool4), I will test if a slightly larger pool (pool5) with inverse error weighting pro...
+[   3]     obs  : rank 8/12 score=0.212 rmse=1.2267, leader is a6 (dba pool=pool4)
+[   3] dba            score= 0.1907 origin=agent    iters=15 stop=scoring_budget_exhausted
+         TEST  smape=0.4117  rmse=1.2498  pocid=39.13  mape=0.5830
+         FORECAST [3.61, 3.663, 3.663, 3.663, 3.663, 3.754, 4.039, 3.749, 3.615, 3.447, 3.447, 3.538, 3.457, 3.422, 3.386, 3.298, 3.298, 3.298, 3.298, 3.298, 3.298, 3.227, 2.934, 3.126]
+         PROVENANCE tools=15 evaluate_calls=13 pool=5 ok=True
+[   4]   iter 1 | evaluate_strategy {"combine": "mean", "pool": "pool_full"}
+[   4]     think: The ranking stability is low (Kendall's tau = 0.223), indicating an unstable ranking, so I will start by establishing a baseline using a simple mean of the full pool.
+[   4]     obs  : rank 1/1 score=1.0 rmse=3620919238333.6157 (best so far)
+[   4]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "models": ["ARIMA", "ETS", "rf", "catboost", "THETA", "FT_catboost", "FT_rf", "...
+[   4]     think: The ranking is unstable (ranking_verdict: unstable), suggesting that some models may perform very differently across windows; I will test a trimmed mean to mitigate the influence of outlier models.
+[   4]     obs  : rank 1/2 score=0.1636 rmse=1.534 (best so far)
+[   4]   iter 3 | evaluate_strategy {"combine": "median", "pool": "pool_full"}
+[   4]     think: The ranking instability (ranking_tau: 0.223) and the success of the trimmed mean suggest that a more robust central tendency like the median might perform better than the mean.
+[   4]     obs  : rank 1/3 score=0.1618 rmse=1.5329 (best so far)
+[   4]   iter 4 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error"}
+[   4]     think: The ranking is unstable (ranking_verdict: unstable), so I will test if an inverse-error weighted combination can outperform the robust median by prioritizing models with lower historical errors.
+[   4]     obs  : rank 3/4 score=0.4932 rmse=2089949044.8636, leader is a3 (median)
+[   4]   iter 5 | evaluate_strategy {"combine": "dba", "pool": "pool_full", "dba_max_iter": 30}
+[   4]     think: The ranking is unstable (ranking_verdict: unstable), so I will test DBA to see if a trajectory-based robust averaging outperforms the current leader.
+[   4]     obs  : rank 4/5 score=1.0 rmse=6134829533063.68, leader is a3 (median)
+[   4]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "softmax_neg_error", "rationale": "Testing softmax ...
+[   4]     think: The `ranking_tau` is quite low (0.223), indicating unstable model rankings. I will test `softmax_neg_error` weighting on the full pool to see if it provides a more stable combination than the faile...
+[   4]     obs  : rank 3/6 score=0.3219 rmse=2089949044.8636, leader is a3 (median)
+[   4]   iter 7 | evaluate_strategy {"combine": "mean", "models": ["ONLY_CWT_rf", "DWT_rf", "CWT_rf", "ARIMA", "rf"], "rationale": "Testing if ...
+[   4]     think: The ranking is unstable, so I want to test if a simple mean of the top 5 models (based on overall RMSE) outperforms the full-pool median.
+[   4]     obs  : rank 1/7 score=0.1379 rmse=1.4264 (best so far)
+[   4]   iter 8 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error"}
+[   4]     think: Since the ranking is unstable, I want to test if weighting the models in the current best subset (pool4) by their inverse error improves upon the simple mean used in the leader.
+[   4]     obs  : rank 2/8 score=0.1386 rmse=1.4311, leader is a7 (mean pool=pool4)
+[   4]   iter 9 | evaluate_strategy {"combine": "median", "pool": "pool4"}
+[   4]     think: The ranking is unstable (ranking_verdict: unstable), so I want to see if the median of the top-performing models in pool4 provides more robustness than the current leader (mean).
+[   4]     obs  : rank 1/9 score=0.1366 rmse=1.4376 (best so far)
+[   4]   iter 10 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error"}
+[   4]     think: The unstable ranking (ranking_tau: 0.223) and the success of the median strategy suggest that a simple mean or aggressive weighting might be sensitive to model fluctuations; I will test if a softma...
+[   4]     obs  : rank 3/10 score=0.1385 rmse=1.4305, leader is a9 (median pool=pool4)
+[   4]   iter 11 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2}
+[   4]     think: The ranking is unstable (ranking_tau 0.223) and the current leader is a robust estimator (median), so I will test a trimmed mean on the top-performing pool (pool4) to see if it balances stability a...
+[   4]     obs  : rank 1/11 score=0.1347 rmse=1.4286 (best so far)
+[   4]   iter 12 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error", "rationale": "Testing if inverse e...
+[   4]     think: The current leader is a trimmed mean on a small subset (`pool4`), which suggests that outliers in model performance are a significant issue, consistent with the "unstable" ranking and high outlier ...
+[   4]     obs  : rank 9/11 score=0.4932 rmse=2089949044.8636, leader is a11 (trimmed_mean pool=pool4 trim=0.2) [already tested]
+[   4]   iter 13 | evaluate_strategy {"combine": "dba", "pool": "pool4", "dba_max_iter": 30}
+[   4]     think: The ranking is unstable, motivating a more robust combination approach. Since the previous `dba` attempt on the full pool was skewed by extreme outliers, I will test `dba` on the more stable `pool4...
+[   4]     obs  : rank 2/12 score=0.1348 rmse=1.4006, leader is a11 (trimmed_mean pool=pool4 trim=0.2)
+[   4] trimmed_mean   score= 0.1347 origin=agent    iters=13 stop=scoring_budget_exhausted
+         TEST  smape=0.2586  rmse=1.1028  pocid=52.17  mape=0.3040
+         FORECAST [4.529, 4.332, 4.376, 4.322, 4.485, 4.681, 4.66, 4.447, 4.303, 4.261, 4.271, 4.277, 4.296, 4.299, 4.295, 4.282, 4.378, 4.492, 4.626, 4.623, 4.551, 4.471, 4.434, 4.425]
+         PROVENANCE tools=13 evaluate_calls=13 pool=5 ok=True
+[   5]   iter 1 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error", "rationale": "Testing if inverse e...
+[   5]     think: The series is trend-dominated, and `rf` is consistently the top performer. I will test a weighted combination using inverse error across the full pool to see if the error-based weighting can effect...
+[   5]     obs  : rank 1/1 score=0.2888 rmse=208566964.1012 (best so far)
+[   5]   iter 2 | evaluate_strategy {"combine": "trimmed_mean", "models": ["rf", "DWT_catboost", "FT_catboost", "CWT_rf", "CWT_catboost", "DWT_...
+[   5]     think: The series is trend_dominated, and since the pool contains many models with very high errors, a selective strategy like a trimmed mean might perform better by removing those outliers.
+[   5]     obs  : rank 1/2 score=0.1604 rmse=0.4847 (best so far)
+[   5]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "softmax_neg_error", "rationale": "Using softmax of...
+[   5]     think: The combination hint is 'selective' and the series is 'trend_dominated', suggesting that the high-error models in the 'rest' group are likely pulling the mean away from the signal; I will test if a...
+[   5]     obs  : rank 2/3 score=0.2807 rmse=208566964.1012, leader is a2 (trimmed_mean trim=0.2)
+[   5]   iter 4 | select_top_k {"k": 7, "metric": "rmse"}
+[   5]     think: The series is trend_dominated, and the success of the trimmed_mean suggests that high-error models are a significant risk. I will try to create a more focused pool using select_top_k and then use a...
+[   5]     obs  : pool pool4 k=7 ['rf', 'DWT_catboost', 'FT_catboost', 'CWT_rf', 'CWT_catboost']
+[   5]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error"}
+[   5]     think: The series is trend_dominated and the diagnosis suggests a selective combination; I will test a weighted combination using only the top 7 models from pool4 to see if focusing on the best performers...
+[   5]     obs  : rank 1/4 score=0.1042 rmse=0.3421 (best so far)
+[   5]   iter 6 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error", "rationale": "Testing if softmax w...
+[   5]     think: Since the series is trend_dominated and a selective pool (pool4) with inverse error weighting performed best, I will test if a more aggressive softmax weighting on the same top-performing subset pr...
+[   5]     obs  : rank 2/5 score=0.1042 rmse=0.3422, leader is a4 (weighted pool=pool4 w=w3)
+[   5]   iter 7 | evaluate_strategy {"combine": "dba", "pool": "pool4"}
+[   5]     think: The series is trend_dominated, and the current leader uses a linear weighted combination of the top models; I want to test if a non-linear combination method like DBA on the same pool4 subset can b...
+[   5]     obs  : rank 1/6 score=0.1035 rmse=0.341 (best so far)
+[   5]   iter 8 | evaluate_strategy {"combine": "mean", "pool": "pool4", "rationale": "Testing if a simple mean of the top-performing models in...
+[   5]     think: The series is trend_dominated, and the current leader uses a selective pool (pool4) with dba. I want to see if a simple mean of the same top-performing models (pool4) provides a comparable or bette...
+[   5]     obs  : rank 4/7 score=0.1048 rmse=0.3433, leader is a6 (dba pool=pool4)
+[   5]   iter 9 | evaluate_strategy {"combine": "median", "pool": "pool4"}
+[   5]     think: The series is trend-dominated, and since the top models in pool4 are quite close in error, I will test if a median combination is more robust than the current leader, DBA.
+[   5]     obs  : rank 5/8 score=0.1073 rmse=0.3481, leader is a6 (dba pool=pool4)
+[   5]   iter 10 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2}
+[   5]     think: The combination hint is selective, and since a trimmed mean on the full pool performed poorly, I will test a trimmed mean on the more stable pool4 to see if it improves upon the DBA or weighted res...
+[   5]     obs  : rank 5/9 score=0.1069 rmse=0.3478, leader is a6 (dba pool=pool4)
+[   5]   iter 11 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "meta_model"}
+[   5]     think: The series is trend_dominated and has several correlated error groups. I will test if a meta_model trained on the full pool can effectively de-correlate these groups and outperform the current dba ...
+[   5]     obs  : ERROR invalid_argument: no pooled meta-model is available for this run: fewer than the minimum number of series in the dataset, or xgboost unava
+[   5]   iter 12 | select_forward {"max_steps": 6, "metric": "rmse"}
+[   5]     think: The series is trend-dominated with moderate ranking stability, and the diagnosis warns of correlated errors. I want to see if a greedy forward selection can identify a more efficient, non-redundant...
+[   5]     obs  : pool pool5 k=1 ['rf']
+[   5]   iter 13 | evaluate_strategy {"combine": "dba", "pool": "pool_full", "rationale": "Testing if DBA on the full pool can improve the shape...
+[   5]     think: The series is trend_dominated, and since DBA on the top-performing pool worked well, I want to see if applying DBA to the full pool can capture a better shape by incorporating more diverse models.
+[   5]     obs  : rank 10/10 score=1.0 rmse=1559425077.1997, leader is a6 (dba pool=pool4)
+[   5]   iter 14 | select_top_k {"k": 8, "metric": "rmse"}
+[   5]     think: The series is trend-dominated, and the current leader is a DBA combination on a subset of models (`pool4`). Since the leader is indistinguishable from other weighted combinations on the same pool, ...
+[   5]     obs  : pool pool6 k=8 ['rf', 'DWT_catboost', 'FT_catboost', 'CWT_rf', 'CWT_catboost']
+[   5]   iter 15 | evaluate_strategy {"combine": "weighted", "pool": "pool6", "weights": "inverse_error"}
+[   5]     think: The series is trend_dominated and the leader is a DBA on a small pool; I will test if a weighted combination of the top 8 models (pool6) using inverse error provides better performance.
+[   5]     obs  : rank 4/11 score=0.1043 rmse=0.3436, leader is a6 (dba pool=pool4)
+[   5]   iter 16 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error", "rationale": "Testing if softmax w...
+[   5]     think: The series is trend_dominated, and since the leader is a DBA combination of the top-performing models, I will test if a softmax weighting on the same pool provides a more effective emphasis on the ...
+[   5]     obs  : rank 3/11 score=0.1042 rmse=0.3422, leader is a6 (dba pool=pool4) [already tested]
+[   5]   iter 17 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error"}
+[   5]     think: The series is trend-dominated and the diagnosis suggests a selective combination; since the current leader uses a subset (pool4) and previous attempts with the full pool (a2) performed poorly, I wi...
+[   5]     obs  : rank 2/11 score=0.1042 rmse=0.3421, leader is a6 (dba pool=pool4) [already tested]
+[   5]   iter 18 | weights_topk_per_horizon {"pool": "pool4", "k": 3, "metric": "rmse"}
+[   5]     think: The series is trend-dominated, so models might excel at different parts of the horizon; I'll test a per-horizon top-k weighting strategy using the high-performing models in pool4.
+[   5]     obs  : handle w6 mode=topk_mean_per_horizon active=7/7 conc=0.035
+[   5]   iter 19 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "w6"}
+[   5]     think: The series is trend-dominated, and since the leader is a DBA on a small pool, I will test if a per-horizon top-k weighting (w6) can better capture the changing model performance across the horizon.
+[   5]     obs  : rank 1/12 score=0.0979 rmse=0.3308 (best so far)
+[   5] weighted       score= 0.0979 origin=agent    iters=19 stop=scoring_budget_exhausted
+         TEST  smape=0.1656  rmse=0.3069  pocid=60.87  mape=0.1861
+         FORECAST [1.867, 1.827, 1.767, 1.725, 1.735, 1.688, 1.685, 1.658, 1.661, 1.672, 1.673, 1.684, 1.675, 1.675, 1.68, 1.671, 1.687, 1.677, 1.68, 1.68, 1.725, 1.679, 1.68, 1.677]
+         PROVENANCE tools=19 evaluate_calls=14 pool=7 ok=True
+[   6]   iter 1 | select_top_k {"k": 7, "metric": "rmse"}
+[   6]     think: The series is trend-dominated and the model pool contains extreme error outliers, so I will first select the top 7 models to create a more stable pool and then test an inverse-error weighted combin...
+[   6]     obs  : pool pool4 k=7 ['FT_rf', 'CWT_rf', 'ONLY_CWT_rf', 'DWT_rf', 'FT_catboost']
+[   6]   iter 2 | evaluate_strategy {"combine": "mean", "pool": "pool4"}
+[   6]     think: The series is trend-dominated, and the diagnosis suggests a selective combination approach. I will test a simple mean of the top 7 models (pool4) to see if error cancellation among the high-perform...
+[   6]     obs  : rank 1/1 score=0.0213 rmse=0.6812 (best so far)
+[   6]   iter 3 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "inverse_error"}
+[   6]     think: The trend_strength is extremely high (0.9694), and the current leader is a simple mean of a top-k subset; I will test if an inverse-error weighted combination over the full pool provides a more eff...
+[   6]     obs  : rank 2/2 score=0.2353 rmse=6628106946.3292, leader is a1 (mean pool=pool4)
+[   6]   iter 4 | evaluate_strategy {"combine": "dba", "pool": "pool4", "dba_max_iter": 30}
+[   6]     think: The series is trend_dominated, and the current leader is a simple mean of a top-performing subset (pool4). I will test if a more sophisticated non-linear combination like DBA on the same subset can...
+[   6]     obs  : rank 2/3 score=0.0226 rmse=0.6457, leader is a1 (mean pool=pool4)
+[   6]   iter 5 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error"}
+[   6]     think: The series is trend_dominated, and the previous global weighting failed due to high error variance; I will test a softmax weighting on the top-performing subset (pool4) to see if it outperforms the...
+[   6]     obs  : rank 2/4 score=0.0214 rmse=0.6788, leader is a1 (mean pool=pool4)
+[   6]   iter 6 | evaluate_strategy {"combine": "median", "models": ["CWT_rf", "DWT_rf", "FT_rf", "CWT_catboost", "DWT_catboost", "FT_catboost"]}
+[   6]     think: The series is trend_dominated and the current leader is a simple mean of the top models, so I will test if the median of the same subset (pool4) offers better robustness.
+[   6]     obs  : rank 3/5 score=0.0224 rmse=0.7256, leader is a1 (mean pool=pool4)
+[   6]   iter 7 | evaluate_strategy {"combine": "weighted", "models": ["CWT_rf", "DWT_rf", "FT_rf", "CWT_catboost", "DWT_catboost", "FT_catboos...
+[   6]     think: The series is trend_dominated and the combination hint is selective, suggesting we should focus on the top-performing models. Since the mean of pool4 is the current leader, I will test if weighting...
+[   6]     obs  : rank 1/6 score=0.0211 rmse=0.6941 (best so far)
+[   6]   iter 8 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool_full", "trim_pct": 0.2}
+[   6]     think: The series is trend-dominated and the model pool shows a very high relative spread in errors, suggesting a few models are much better than the rest. I will test if a trimmed mean on the full pool c...
+[   6]     obs  : rank 6/7 score=0.0705 rmse=2.2594, leader is a6 (weighted pool=pool5 w=w3)
+[   6]   iter 9 | weights_meta_model {"pool": "pool_full", "scope": "series", "metric": "smape"}
+[   6]     think: The series is trend-dominated with moderate ranking stability, and given the presence of correlated error groups, I will test a meta-model weighting strategy to see if it can more effectively navig...
+[   6]     obs  : handle w4 mode=softmax_fallback active=8/14 conc=0.063
+[   6]   iter 10 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "w4"}
+[   6]     think: The series is trend_dominated, so I will test if the meta-model weights (w4) can better capture model performance across the full pool than the current leader's simple inverse-error weighting.
+[   6]     obs  : rank 8/8 score=0.6735 rmse=6628106946.3294, leader is a6 (weighted pool=pool5 w=w3)
+[   6]   iter 11 | evaluate_strategy {"combine": "median", "pool": "pool4", "rationale": "Testing median combination on the top models to improv...
+[   6]     think: The series is trend-dominated and the current leader is a weighted combination of a small subset of top-performing models. I want to test if a median combination on the same subset (`pool4`) provid...
+[   6]     obs  : rank 1/9 score=0.019 rmse=0.5988 (best so far)
+[   6]   iter 12 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "inverse_error", "rationale": "Testing if inverse error...
+[   6]     think: The series is trend_dominated, and since the median on the top-k pool (pool4) performed best, I want to test if an error-weighted combination on that same subset can provide better precision withou...
+[   6]     obs  : rank 4/10 score=0.0213 rmse=0.6777, leader is a9 (median pool=pool4)
+[   6]   iter 13 | evaluate_strategy {"combine": "weighted", "pool": "pool4", "weights": "softmax_neg_error", "rationale": "Testing if softmax w...
+[   6]     think: The series is trend-dominated and the current leader is a median combination on a small, high-performing pool (pool4). I want to test if a softmax-weighted combination on the same pool can provide ...
+[   6]     obs  : rank 5/10 score=0.0214 rmse=0.6788, leader is a9 (median pool=pool4) [already tested]
+[   6]   iter 14 | select_forward {"max_steps": 5, "metric": "rmse"}
+[   6]     think: The series is trend_dominated, and the current leader is a median combination on a subset (pool4). Since median outperformed mean and DBA, it suggests that reducing the influence of outlier models ...
+[   6]     obs  : pool pool6 k=1 ['FT_rf']
+[   6]   iter 15 | evaluate_strategy {"combine": "weighted", "pool": "pool_full", "weights": "softmax_neg_error", "rationale": "Testing if softm...
+[   6]     think: The series is trend_dominated, and since the current leader is a median of a small subset, I will test if a softmax-weighted combination of the full pool can effectively prioritize the top models w...
+[   6]     obs  : rank 9/11 score=0.2241 rmse=6628106946.3292, leader is a9 (median pool=pool4)
+[   6]   iter 16 | evaluate_strategy {"combine": "trimmed_mean", "pool": "pool4", "trim_pct": 0.2}
+[   6]     think: The series is trend-dominated, and since a median on the top models (pool4) performed best, a trimmed mean on the same subset might further reduce the impact of models that deviate from the trend.
+[   6]     obs  : rank 5/12 score=0.0214 rmse=0.6835, leader is a9 (median pool=pool4)
+[   6] median         score= 0.0190 origin=agent    iters=16 stop=scoring_budget_exhausted
+         TEST  smape=0.0574  rmse=0.6532  pocid=43.48  mape=0.0578
+         FORECAST [9.835, 9.861, 9.893, 9.892, 9.905, 9.911, 9.904, 9.906, 9.925, 9.945, 9.95, 9.948, 9.943, 9.93, 9.91, 9.902, 9.891, 9.876, 9.859, 9.844, 9.838, 9.835, 9.826, 9.819]
+         PROVENANCE tools=16 evaluate_calls=13 pool=7 ok=True
+         NOTE this strategy is numerically the MEAN of its own pool (max relative difference 0.003259)
+--------------------------------------------------------------------------
+done in 3773.4s | ok: 7 | failed: 0
+agent summary: ./timeseries/mestrado/resultados/orchestrator_react_v12_gemma_on/agent_summary.json
+
+DATASET SUMMARY over 7 series (mean across series):
+  this run   smape=0.3805  rmse=1.9740  pocid=51.55  mape=154112705240216.0938  mae=1.6521
+  mean       smape=2.0000  rmse=136084107294.9405  pocid=44.72  mape=52599961740521154543616.0000  <- this run is better
+  median     smape=0.5443  rmse=2.5657  pocid=58.39  mape=9059687099970.2324  <- this run is better
+  dba        smape=2.0000  rmse=195921298116.2774  pocid=47.20  mape=69231906943291170816.0000  <- this run is better
+  ADE        smape=0.4572  rmse=2.4809  pocid=50.93  mape=21115097813161.2109  <- this run is better
+  FFORMA     smape=0.4396  rmse=2.2985  pocid=51.55  mape=59253483494535.9609  <- this run is better
+  strategy chosen by the agent in 7/7 series
+  selection verdict: {'separated': 6, 'indistinguishable': 1}
+csv: ./timeseries/mestrado/resultados/orchestrator_react_v12_gemma_on/ETTM1.csv
+artifacts: ./timeseries/mestrado/resultados/orchestrator_react_v12_gemma_on/llm_artifacts/ETTM1
