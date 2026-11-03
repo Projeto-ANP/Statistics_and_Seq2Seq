@@ -2,7 +2,8 @@
 
 \section{Considerações iniciais}
 
-Este capítulo descreve o método desenvolvido para a combinação dinâmica de previsões de séries temporais utilizando um agente baseado em grandes modelos de linguagem. O objetivo deste trabalho foi investigar e desenvolver um método de combinação de modelos para previsão de valores em séries temporais (\textit{forecasting}) que integrasse abordagens lineares e não-lineares a partir de um conjunto diverso de modelos, incluindo métodos estatísticos e de aprendizagem de máquina, e que explorasse distintas representações dos dados durante a etapa de treinamento, obtidas a partir das transformações \textit{wavelet} e de Fourier, de modo a aumentar a diversidade do conjunto de preditores combinados. Para a etapa de combinação, foi desenvolvido o CREST, um método que delega a um agente baseado em modelo de linguagem a decisão de qual estratégia de combinação empregar para cada série, em substituição a uma regra fixa de ponderação aplicada indistintamente a todas as séries de um conjunto de dados, com o objetivo de superar os resultados obtidos pelos modelos individuais e por outras estratégias de combinação, como as baseadas em ponderação
+Este capítulo descreve o método desenvolvido para a combinação dinâmica de previsões de séries temporais utilizando um agente baseado em grandes modelos de linguagem. O objetivo deste trabalho foi investigar e desenvolver um método de combinação de modelos para previsão de valores em séries temporais (\textit{forecasting}) que integrasse abordagens lineares e não-lineares a partir de um conjunto diverso de modelos, incluindo métodos estatísticos e de aprendizagem de máquina, e que explorasse distintas representações dos dados durante a etapa de treinamento, obtidas a partir das transformações \textit{wavelet} e de Fourier, de modo a aumentar a diversidade do conjunto de preditores combinados. Para a etapa de combinação, foi desenvolvido o CREST, um método que delega a um agente baseado em modelo de linguagem a decisão de qual estratégia de combinação empregar para cada série, em substituição a uma regra fixa de ponderação aplicada indistintamente a todas as séries de um conjunto de dados, com o objetivo de investigar em que medida essa decisão, mediada por um agente, supera os modelos individuais e as estratégias de combinação estáticas e de meta-aprendizagem, e em que condições essa vantagem se manifesta.
+
 
 O restante deste capítulo está organizado da seguinte forma. A Seção~\ref{sec:formulacao} formaliza o problema de combinação de predições resolvido pelo método. A Seção~\ref{sec:crest} apresenta a visão geral do CREST e o fluxo completo de execução. A Seção~\ref{sec:preparacao} descreve o conhecimento construído em nível de conjunto de dados, que precede a atuação do agente. A Seção~\ref{sec:diagnostico} descreve como cada série é caracterizada antes da decisão de combinação. A Seção~\ref{sec:agente} detalha o agente combinador, seu catálogo de ações e seu ciclo de decisão. A Seção~\ref{sec:aplicacao} descreve como a estratégia decidida é aplicada e os mecanismos de rastreabilidade do método. Por fim, a Seção~\ref{sec:consideracoes-finais-proposta} encerra o capítulo com as considerações finais sobre a proposta.
 
@@ -126,38 +127,19 @@ Na segunda macro-fase, executada de forma independente para cada série $i$, com
 \subsection{Pseudocódigo}
 
 A seguir, o Algoritmo~\ref{alg:crest} apresenta a visão geral do método
-proposto, explicitando as entradas e saídas, a preparação em nível de conjunto
-de dados, a caracterização de cada série, a avaliação das estratégias iniciais,
-o ciclo de decisão do agente, os critérios de parada e a aplicação da
-estratégia selecionada. O mecanismo de pontuação, comum às duas macro-fases, é
-detalhado no Algoritmo~\ref{alg:pontuar}, e o diagnóstico interpretativo, no
-Algoritmo~\ref{alg:diagnostico}. A notação empregada é a da formulação da
-Seção~\ref{sec:formulacao}, complementada por: $\mathbf{z}_i$, o vetor das 26
-características de $X_i$; $\mathcal{G}_{-i}$, o meta-modelo entre séries
-ajustado sem a série $i$; $S_{\text{fix}}$, o conjunto de estratégias fixas
-descrito na Seção~\ref{sec:preparacao}, formado pela média, mediana e DBA sobre
-$\mathcal{M}$, pela média e média aparada sobre os $\kappa$ preditores mais
-estáveis, para $\kappa \in \{5,7,9\}$, e, quando disponível, pela ponderação
-definida pelo meta-modelo; $\mathcal{H}_i$, o histórico de tentativas da série
-$i$, formado por pares $(s, \text{score}_i(s))$; $\mathcal{A}$, o catálogo de 24
-ações descritas na Seção~\ref{sec:agente}, ao qual se soma o aceite, que não
-integra o catálogo e encerra o ciclo de decisão; $\hat{\mathbf{Y}}_i^{(\mathrm{teste})}$,
-a coleção das previsões de teste dos $M$ preditores; $T_i$, a avaliação do
-conjunto de preditores na série $i$; $\mathcal{C}_i$, o diagnóstico
-interpretativo; $K$, o orçamento de iterações; $P$, a paciência de estagnação;
-e $L$, o limite de repetições para falhas de comunicação. Em cada iteração, o
-agente responde exclusivamente com um \textit{Thought}, uma \textit{Action} e
-uma \textit{Action Input}.
+proposto. O mecanismo de pontuação, comum às duas macro-fases, é detalhado no Algoritmo~\ref{alg:pontuar}, e o diagnóstico interpretativo, no Algoritmo~\ref{alg:diagnostico}. A notação empregada é a da formulação da
+Seção~\ref{sec:formulacao}, complementada por: $\mathbf{z}_i$, o vetor das 26 características de $X_i$; $\mathcal{G}_{-i}$, o meta-modelo entre séries
+ajustado sem a série $i$; $S_{\text{fix}}$, o conjunto de estratégias fixas descrito na Seção~\ref{sec:preparacao}, formado pela média, mediana e DBA sobre $\mathcal{M}$, pela média e média aparada sobre os $\kappa$ preditores mais estáveis, para $\kappa \in \{5,7,9\}$, e, quando disponível, pela ponderação definida pelo meta-modelo; $\mathcal{H}_i$, o histórico de tentativas da série $i$, formado por pares $(s, \text{score}_i(s))$; $\mathcal{A}$, o catálogo de 12 ações descritas na Seção~\ref{sec:agente}, ao qual se soma o aceite, que não integra o catálogo e encerra o ciclo de decisão; $\hat{\mathbf{Y}}_i^{(\mathrm{teste})}$, a coleção das previsões de teste dos $M$ preditores; $T_i$, a avaliação do conjunto de preditores na série $i$; $\mathcal{C}_i$, o diagnóstico interpretativo; $K$, o orçamento de iterações; $P$, a paciência de estagnação; e $L$, o limite de repetições para falhas de comunicação. Em cada iteração, o agente responde exclusivamente com um \textit{Thought}, uma \textit{Action} e uma \textit{Action Input}.
 
 \begin{algorithm}[H]
+\footnotesize
 \caption{CREST: visão geral do método proposto}
 \label{alg:crest}
 \Entrada{$\mathcal{D}=\{X_i\}_{i=1}^{N}$; $\mathcal{M}=\{M_j\}_{j=1}^{M}$;
          horizonte $h$; janelas de validação
          $\{(\mathbf{y}_i^{(w)}, \hat{\mathbf{y}}_{i,j}^{(w)})\}_{i,j,w}$ com
          $w \in \{1,2,3\}$; previsões de teste
-         $\hat{\mathbf{Y}}_i^{(\mathrm{teste})}$; catálogo $\mathcal{A}$ com
-         $|\mathcal{A}|=24$; orçamento $K$; paciência $P$; limite $L$}
+         $\hat{\mathbf{Y}}_i^{(\mathrm{teste})}$; catálogo $\mathcal{A}$ com $|\mathcal{A}|=12$; orçamento $K$; paciência $P$; limite $L$}
 \Saida{$\{\hat{\mathbf{y}}_i^{(\mathrm{comb})}\}_{i=1}^{N}$ e métricas de
        desempenho}
 
@@ -228,6 +210,7 @@ $S_{\text{fix}} \gets \{\text{média}, \text{mediana}, \text{DBA}\}$
 \end{algorithm}
 
 \begin{algorithm}[H]
+\footnotesize
 \caption{Mecanismo de pontuação de estratégias}
 \label{alg:pontuar}
 \Entrada{Série $i$; estratégia $s$}
@@ -251,6 +234,7 @@ $\text{score}_i(s) \gets$ Equação~\eqref{eq:score}
 
 \begin{algorithm}[H]
 \caption{Diagnóstico interpretativo}
+\footnotesize
 \label{alg:diagnostico}
 \Entrada{Perfil $\mathbf{z}_i$; avaliação do conjunto de preditores $T_i$}
 \Saida{Diagnóstico $\mathcal{C}_i$}
@@ -310,18 +294,9 @@ Antes que o agente atue sobre qualquer série individual, duas formas de conheci
 \subsection{Mecanismo de pontuação de estratégias} \label{subsec:pontuacao}
 
 %Uma estratégia de combinação $s$ é definida por um subconjunto de preditores $\mathcal{M}_s \subseteq \mathcal{M}$ e por um método de agregação sobre as previsões desse subconjunto, podendo ser a média, a mediana, a média aparada, o DBA, ou uma média ponderada por um vetor de pesos $\mathbf{p}_s$. Aplicar $s$ à série $X_i$ na janela $w$ produz uma previsão combinada $\hat{\mathbf{y}}_{i,s}^{(w)} \in \mathbb{R}^h$.
-Uma estratégia de combinação $s$ especifica uma regra de
-seleção de preditores, um método de agregação e, quando
-aplicável, uma regra de cálculo de pesos. O método de
-agregação pode ser a média, mediana,
-DBA ou média ponderada.
+Uma estratégia de combinação $s$ especifica uma regra deseleção de preditores, um método de agregação e, quandoaplicável, uma regra de cálculo de pesos. O método deagregação pode ser a média, mediana, DBA ou média ponderada.
 
-Para a série $i$ e a janela de validação $w$, essas regras
-determinam um subconjunto não vazio
-$\mathcal{M}_{i,s}^{(w)} \subseteq \mathcal{M}$ e, quando
-aplicável, um vetor de pesos $\mathbf{p}_{i,s}^{(w)}$.
-A aplicação da estratégia produz o vetor de previsões
-combinadas
+Para a série $i$ e a janela de validação $w$, essas regras determinam um subconjunto não vazio $\mathcal{M}_{i,s}^{(w)} \subseteq \mathcal{M}$ e, quando aplicável, um vetor de pesos $\mathbf{p}_{i,s}^{(w)}$. A aplicação da estratégia produz o vetor de previsões combinadas
 \[
     \hat{\mathbf{y}}_{i,s}^{(w)}
     =
@@ -329,8 +304,7 @@ combinadas
     \in \mathbb{R}^{h}.
 \]
 
-Para avaliar $s$ na série $i$, os valores reais das três
-janelas de validação são concatenados em um único vetor:
+Para avaliar $s$ na série $i$, os valores reais das três janelas de validação são concatenados em um único vetor:
 \[
     \mathbf{y}_i^{(1:3)}
     =
@@ -438,50 +412,27 @@ Antes da primeira iteração do agente, o histórico de tentativas da série já
 Com o contexto da série já preparado, conforme descrito na Seção~\ref{sec:diagnostico}, o agente entra em ação para decidir a estratégia de combinação a ser empregada. Esta seção descreve o catálogo de ações sobre o qual o agente opera, o ciclo pelo qual ele raciocina e decide, e os critérios que encerram esse ciclo.
 
 \subsection{Catálogo de ações}
+As informações de diagnóstico (perfil da série, decomposição, tabela de erro dos preditores, estabilidade de ranking e correlação de erros) não constituem ações do catálogo: elas são calculadas uma única vez e entregues no contexto inicial do agente, descrito na Seção~\ref{sec:diagnostico}. O catálogo final reúne 12 ações determinísticas, organizadas em três categorias que correspondem às etapas da decisão de combinação: seleção de subconjunto, cálculo de pesos e avaliação de estratégias. Cada ação é implementada como uma função convencional, sem qualquer participação de modelo de linguagem em sua execução, e o agente interage com elas exclusivamente pelo nome da ação e pelos argumentos fornecidos em sua \textit{Action Input}, descrita na Seção~\ref{sec:agente}.
 
-O catálogo é composto por 24 ações determinísticas, organizadas em cinco categorias que correspondem às etapas naturais da tarefa de combinação: diagnóstico, seleção de pool, cálculo de pesos, combinação e validação. Cada ação é implementada como uma função convencional, sem qualquer participação de modelo de linguagem em sua execução, e o agente interage com elas exclusivamente pelo nome da ação e pelos argumentos fornecidos em sua \textit{Action Input}, descrita na Seção~\ref{sec:agente}.
-
-\textbf{Ações de diagnóstico.} Produzem as evidências sobre a série e sobre o conjunto de preditores $\mathcal{M}$, parte das quais já compõe o contexto inicial fornecido ao agente, descrito na Seção~\ref{sec:diagnostico}, mas que também podem ser recalculadas pelo agente ao longo do ciclo de decisão, com parâmetros distintos dos usados nesse contexto inicial. As ações disponíveis nessa categoria e suas respectivas descrições são apresentadas na Tabela~\ref{tab:acoes_descricao}.
-
-\begin{table}[H]
-\centering
-\caption{Ações de diagnóstico e suas respectivas descrições.}
-\label{tab:acoes_descricao}
-\begin{tabular}{@{}p{5cm}p{9cm}@{}}
-\toprule
-\textbf{Ação} & \textbf{Descrição} \\
-\midrule
-Perfil da série & Retorna comprimento, sazonalidade, estacionariedade, presença de \textit{outliers} e características do conjunto \textit{catch22}. \\
-Resumo da decomposição & Retorna a proporção da variância da série explicada por tendência, sazonalidade e resíduo. \\
-Resumo de erro dos preditores & Retorna a tabela de RMSE por preditor, ranqueada, limitada aos de melhor desempenho e a um resumo dos demais. \\
-Estabilidade do \textit{ranking} & Retorna o coeficiente de estabilidade do \textit{ranking} entre janelas e identifica quais preditores mais mudam de posição. \\
-Correlação de erro & Retorna grupos de preditores cujos resíduos são fortemente correlacionados entre si, indicando redundância. \\
-Teste de Diebold-Mariano & Compara dois preditores nomeados, com a correção para amostras pequenas de \citet{harvey1997testing}. \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{Ações de seleção de pool.} Produzem um subconjunto de $\mathcal{M}$, referenciado por um identificador que pode ser usado como argumento de ações posteriores, sem que o agente precise enumerar os preditores individualmente. A Tabela~\ref{tab:acoes_selecao_pool} apresenta as ações disponíveis para selecionar e refinar esses subconjuntos.
+\textbf{Ações de seleção de subconjunto.} Produzem um subconjunto de $\mathcal{M}$, referenciado por um identificador que pode ser usado como argumento de ações posteriores, sem que o agente precise enumerar os preditores individualmente. A Tabela~\ref{tab:acoes_selecao_pool} apresenta as ações dessa categoria.
 
 \begin{table}[H]
 \centering
-\caption{Ações de seleção de pool de preditores.}
+\caption{Ações de seleção de subconjunto de preditores.}
 \label{tab:acoes_selecao_pool}
 \begin{tabular}{@{}p{5cm}p{9cm}@{}}
 \toprule
 \textbf{Ação} & \textbf{Descrição} \\
 \midrule
-Seleção pelos $\kappa$ melhores &
-Seleciona os $\kappa$ preditores de menor erro nas janelas indicadas. \\
-Seleção pelos mais estáveis &
-Seleciona os $\kappa$ preditores mais consistentes entre janelas, combinando a posição média no \textit{ranking} com sua variação. \\
-Poda de redundância &
-Remove de um subconjunto os preditores redundantes identificados pela ação de correlação de erro, mantendo apenas o de menor erro em cada grupo. \\
+Seleção pelos $\kappa$ melhores & Seleciona os $\kappa$ preditores de menor erro nas janelas indicadas. \\
+Seleção pelos mais estáveis & Seleciona os $\kappa$ preditores mais consistentes entre janelas, combinando a posição média no \textit{ranking} com sua variação. \\
+Poda de redundância & Remove de um subconjunto os preditores redundantes identificados pela correlação de erro, mantendo apenas o de menor erro em cada grupo. \\
+Seleção gulosa de subconjunto & Adiciona iterativamente o preditor que mais reduz o erro da média corrente, mantendo os preditores escolhidos ao menos uma vez. \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{Ações de cálculo de pesos.} Produzem um vetor de pesos sobre um subconjunto de preditores, também referenciado por um identificador, nunca pelos valores numéricos em si. Conforme apresentado na Tabela~\ref{tab:acoes_pesos}, as ações dessa categoria utilizam diferentes critérios para determinar a contribuição de cada preditor na combinação.
+\textbf{Ações de cálculo de pesos.} Produzem um vetor de pesos sobre um subconjunto de preditores, também referenciado por um identificador, nunca pelos valores numéricos em si. A Tabela~\ref{tab:acoes_pesos} apresenta as ações dessa categoria.
 
 \begin{table}[H]
 \centering
@@ -492,64 +443,35 @@ Remove de um subconjunto os preditores redundantes identificados pela ação de 
 \textbf{Ação} & \textbf{Descrição} \\
 \midrule
 Peso pelo erro inverso & Pesos proporcionais ao inverso do erro de cada preditor, com um parâmetro que permite aproximar o resultado do peso uniforme. \\
-Peso por \textit{softmax} do erro & Pesos proporcionais ao \textit{softmax} do erro negativo, a formulação empregada pelo ADE \citep{ade}. \\
 Peso pela tendência do erro & Pesos que consideram para onde o erro de cada preditor está evoluindo ao longo das janelas, não apenas sua média; calculados, por padrão, a partir do erro absoluto médio (MAE) de cada preditor, para que um único ponto de erro elevado não domine a direção da tendência estimada. \\
-Peso por mínimos quadrados & Pesos obtidos por mínimos quadrados, na formulação de \citet{granger1984}, projetados sobre o simplex de probabilidade por padrão. \\
-Peso por características da série & Pesos de um meta-modelo ajustado especificamente para a série, a partir de suas características, no espírito do FFORMA \citep{fforma2019}; recorre à ação de \textit{softmax} do erro quando há poucas janelas disponíveis. \\
-Peso pelo meta-modelo entre séries & Pesos do meta-modelo descrito na Seção~\ref{sec:preparacao}, treinado com as demais séries do conjunto de dados. \\
+Peso pelo meta-modelo & Pesos de um meta-modelo ajustado a partir das características da própria série ou treinado com as demais séries do conjunto de dados, no espírito do FFORMA \citep{fforma2019}; recorre ao peso pelo erro inverso quando há poucas janelas disponíveis. \\
+Peso por mínimos quadrados & Pesos obtidos por mínimos quadrados, na formulação de \citet{granger1984}, projetados sobre o simplex de probabilidade por padrão; exige mais janelas de validação do que as três disponíveis no protocolo adotado e, por isso, não é oferecida. \\
+Peso pelo melhor preditor por passo & Pesos que se concentram, em cada passo do horizonte, no preditor de menor erro de validação naquele passo. \\
+Peso pela média dos melhores por passo & Pesos uniformes sobre os $\kappa$ preditores de menor erro em cada passo do horizonte. \\
+Peso pela seleção gulosa & Pesos proporcionais ao número de vezes que cada preditor é escolhido pela seleção gulosa com reposição. \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{Ações de combinação.} Produzem a previsão combinada propriamente dita, a partir de um subconjunto de preditores e, quando aplicável, de um vetor de pesos. As diferentes estratégias de combinação disponibilizadas ao agente estão descritas na Tabela~\ref{tab:acoes_combinacao}.
+\textbf{Ação de avaliação.} A avaliação da estratégia é a única ação por meio da qual uma estratégia passa a integrar o histórico de tentativas da série. Ela monta a estratégia especificada, executa o procedimento de \textit{backtest} descrito na Seção~\ref{subsec:pontuacao} e devolve ao agente a posição da tentativa no histórico, a pontuação obtida e o erro por janela. Os métodos de combinação disponibilizados por essa ação são a média, a mediana, a média aparada, a combinação ponderada, o DBA e a adoção de um único preditor nomeado; o subconjunto e, quando aplicável, os pesos, são informados como argumentos, referenciados por identificador.
 
-\begin{table}[H]
-\centering
-\caption{Ações de combinação de previsões.}
-\label{tab:acoes_combinacao}
-\begin{tabular}{@{}p{5cm}p{9cm}@{}}
-\toprule
-\textbf{Ação} & \textbf{Descrição} \\
-\midrule
-Combinação por média & Média simples entre os preditores do subconjunto. \\
-Combinação por mediana & Mediana entre os preditores do subconjunto, mais robusta a um preditor com previsão discrepante. \\
-Combinação por média aparada & Descarta uma proporção das previsões mais extremas em cada extremidade antes de calcular a média. \\
-Combinação ponderada & Média ponderada, a partir de um identificador de pesos já calculado por uma ação da categoria anterior. \\
-Combinação por DBA & Alinha temporalmente as previsões, por meio de \textit{Dynamic Time Warping Barycenter Averaging}, antes de combiná-las. \\
-Seleção de um único preditor & Adota um único preditor nomeado, sem qualquer combinação. \\
-\bottomrule
-\end{tabular}
-\end{table}
+Além dessas 12 ações, existe uma operação adicional, o aceite, que não integra o catálogo no mesmo sentido das demais: em vez de ser executada e devolver uma observação para uma nova iteração, ela encerra o ciclo de decisão da série, formalizando o critério de aceite descrito na Seção~\ref{sec:agente}. O aceite é acompanhado de uma confiança autodeclarada pelo agente e de uma justificativa para a estratégia escolhida, ambas registradas junto ao histórico da série para fins de análise posterior.
 
-\textbf{Ações de validação.} Não produzem uma nova previsão, mas avaliam e organizam o que já foi produzido pelas ações anteriores. A Tabela~\ref{tab:acoes_validacao} apresenta as ações utilizadas para avaliar estratégias, verificar a plausibilidade das previsões e consultar os resultados de tentativas anteriores.
-
-\begin{table}[H]
-\centering
-\caption{Ações de validação e acompanhamento das estratégias.}
-\label{tab:acoes_validacao}
-\begin{tabular}{@{}p{5cm}p{9cm}@{}}
-\toprule
-\textbf{Ação} & \textbf{Descrição} \\
-\midrule
-Avaliação da estratégia & Monta a estratégia especificada, executa o procedimento de \textit{backtest} descrito na Seção~\ref{subsec:pontuacao} e insere o resultado no histórico de tentativas da série; é a única ação por meio da qual uma estratégia passa a integrar esse histórico. \\
-Verificação de sanidade & Compara a previsão de teste de uma estratégia contra os limites históricos da série, emitindo um alerta sem impedir a continuidade do ciclo. \\
-Listagem do histórico & Retorna o histórico de tentativas já registradas para a série, ranqueado do melhor para o pior resultado. \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Além dessas 24 ações, existe uma operação adicional, o aceite, que não integra o catálogo no mesmo sentido das demais: em vez de ser executada e devolver uma observação para uma nova iteração, ela encerra o ciclo de decisão da série, formalizando o critério de aceite descrito na Seção~\ref{sec:agente}. O aceite é acompanhado de uma confiança autodeclarada pelo agente e de uma justificativa para a estratégia escolhida, ambas registradas junto ao histórico da série para fins de análise posterior.
 \subsection{Ciclo de raciocínio e ação}
 
 O agente é implementado sobre um modelo de linguagem de peso aberto, executado localmente, operando segundo o paradigma ReAct discutido na Seção~\ref{subsec:react}. A cada iteração, o agente recebe um conjunto de informações textuais sobre o estado atual da decisão e deve produzir, em resposta, exatamente três linhas: um \textit{Thought}, em que verbaliza seu raciocínio sobre o que fazer a seguir; uma \textit{Action}, que identifica qual ação do catálogo deseja invocar; e uma \textit{Action Input}, que especifica os argumentos dessa ação. Nenhum conteúdo além dessas três linhas é aceito como parte da decisão do agente.
 
-O texto fornecido ao agente a cada iteração combina uma parte fixa, que não se altera entre iterações da mesma série, e uma parte que se atualiza a cada novo turno. A parte fixa estabelece o papel do agente, o catálogo de ações disponível, o formato de saída exigido, e um conjunto de diretrizes práticas de raciocínio, entre as quais duas se destacam: a orientação de que pesos distribuídos de forma quase uniforme sobre o conjunto de preditores é um indício de que o problema não está na forma como os pesos são calculados, mas na composição do subconjunto de preditores escolhido, e a exigência de que qualquer estratégia aceita seja justificada em termos de características observáveis da série, e não apenas pelo valor numérico do erro obtido. A parte variável inclui o número de iterações restantes, o perfil e o diagnóstico da série descritos na Seção~\ref{sec:diagnostico}, o prior de estratégias do conjunto de dados descrito na Seção~\ref{sec:preparacao}, explicitamente apresentado como um indicativo e não como uma regra a seguir, e o histórico de tentativas já realizadas nessa série, ordenado da melhor para a pior, cada uma acompanhada da justificativa fornecida pelo agente no momento em que foi proposta.
+O texto fornecido ao agente a cada iteração combina uma parte fixa, que não se altera entre iterações da mesma série, e uma parte que se atualiza a cada novo turno. A parte fixa estabelece o papel do agente, o catálogo de ações disponível, o formato de saída exigido, e um conjunto de diretrizes práticas de raciocínio, entre as quais duas se destacam: a orientação de que pesos distribuídos de forma quase uniforme sobre o conjunto de preditores é um indício de que o problema não está na forma como os pesos são calculados, mas na composição do subconjunto de preditores escolhido, e a exigência de que qualquer estratégia aceita seja justificada em termos de características observáveis da série, e não apenas pelo valor numérico do erro obtido. Além dessas diretrizes, o texto entregue ao agente organiza o catálogo por etapa, apresenta um procedimento de quatro passos, dois exemplos de tipos distintos de estratégia e, a cada turno, um bloco de diagnóstico do líder da validação, com a margem de pontuação para o segundo colocado e um veredito de separabilidade estatística entre os dois. Esse bloco sustenta a regra de parada entregue ao agente: aceitar a semente quando o veredito for indistinguível, aceitar a própria proposta quando ela se separa da semente e, quando as tentativas retornam previsões idênticas ou pesos quase uniformes, alterar o subconjunto ou o tipo de combinação em vez de insistir no esquema de pesos. O agente é executado sobre um modelo de linguagem de peso aberto, local, com esforço de raciocínio médio.
+
+
+A parte variável inclui o número de iterações restantes, o perfil e o diagnóstico da série descritos na Seção~\ref{sec:diagnostico}, o prior de estratégias do conjunto de dados descrito na Seção~\ref{sec:preparacao}, explicitamente apresentado como um indicativo e não como uma regra a seguir, e o histórico de tentativas já realizadas nessa série, ordenado da melhor para a pior, cada uma acompanhada da justificativa fornecida pelo agente no momento em que foi proposta.
 
 A resposta do agente passa por uma etapa de validação antes de qualquer ação ser de fato executada. Caso o nome da ação solicitada não exista no catálogo, ou caso os argumentos fornecidos não sejam válidos para a ação solicitada, uma mensagem de erro estruturada é devolvida ao agente, que pode corrigir sua próxima resposta a partir dela. Duas categorias de falha na comunicação com o modelo, uma resposta vazia ou um erro de conexão, são tratadas separadamente: como não representam uma decisão do agente, são reexecutadas automaticamente, até um número limitado de tentativas, sem consumir uma iteração do orçamento de decisão. Já uma resposta que viola o formato de três linhas esperado é tratada como uma decisão mal formada do próprio agente, consumindo uma iteração e devolvendo um lembrete do formato exigido.
 
 \subsection{Critérios de encerramento}
 
-O ciclo de decisão de uma série é encerrado por uma de três condições. A primeira é o aceite explícito, quando o agente decide, entre as estratégias já testadas no histórico daquela série, qual delas deve ser adotada como final. A segunda é a estagnação, quando um número consecutivo de tentativas propostas pelo agente deixa de superar a melhor estratégia já registrada no histórico, levando o sistema a encerrar o ciclo mesmo sem um aceite explícito. A terceira é o esgotamento do orçamento de iterações, um limite máximo de tentativas por série, que atua como rede de segurança independentemente do comportamento do agente. Em qualquer um dos três casos, a estratégia levada adiante para a etapa seguinte, descrita na Seção~\ref{sec:aplicacao}, é sempre a de melhor pontuação entre todas as tentativas do histórico daquela série, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao}, incluindo as estratégias fixas testadas antes de o agente atuar.
+O ciclo de decisão de uma série é encerrado por uma de três condições. A primeira é o aceite explícito, quando o agente decide, entre as estratégias já testadas no histórico daquela série, qual delas deve ser adotada como final. A segunda é a estagnação, quando um número consecutivo de tentativas propostas pelo agente deixa de superar a melhor estratégia já registrada no histórico, levando o sistema a encerrar o ciclo mesmo sem um aceite explícito. A terceira é o esgotamento do orçamento de iterações, um limite máximo de tentativas por série, que atua como rede de segurança independentemente do comportamento do agente. Em qualquer um dos três casos, a estratégia levada adiante para a etapa seguinte, descrita na Seção~\ref{sec:aplicacao}, é sempre a de melhor pontuação entre todas as tentativas do histórico daquela série, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao}, incluindo as estratégias fixas testadas antes de o agente atuar. A estagnação é contabilizada apenas sobre propostas de avaliação de estratégia, de modo que turnos dedicados à seleção de subconjunto ou ao cálculo de pesos não consomem a paciência; além disso, tanto o aceite quanto a estagnação são verificados contra a melhor pontuação de todo o histórico, e não apenas contra a última proposta.
+
 
 
 
@@ -560,17 +482,16 @@ O ciclo de decisão de uma série é encerrado por uma de três condições. A p
 
 \subsection{Aplicação na janela de teste}
 
-Ao término do ciclo de decisão descrito na Seção~\ref{sec:agente}, por qualquer um dos três critérios de encerramento, a estratégia levada adiante é sempre aquela de melhor pontuação entre todas as tentativas registradas no histórico da série, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao}. O histórico é ordenado exclusivamente por essa pontuação, do menor para o maior valor, sem qualquer margem mínima de diferença entre a primeira e a segunda colocada: uma tentativa com pontuação menor assume a liderança do histórico independentemente de quão pequena seja essa diferença. Isso significa que, quando o agente aceita explicitamente uma estratégia, essa aceitação só é levada adiante se a estratégia aceita for, de fato, a de melhor pontuação do histórico; caso o agente aceite uma estratégia que não ocupa essa posição, é a estratégia de melhor pontuação, e não a aceita pelo agente, que é aplicada, e essa divergência é registrada para fins de rastreabilidade, discutidos na Seção~\ref{subsec:auditoria}.
+Ao término do ciclo de decisão descrito na Seção~\ref{sec:agente}, por qualquer um dos três critérios de encerramento, a estratégia levada adiante é sempre aquela de melhor pontuação entre todas as tentativas registradas no histórico da série, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao}. O histórico é ordenado exclusivamente por essa pontuação, do menor para o maior valor, sem qualquer margem mínima de diferença entre a primeira e a segunda colocada: uma tentativa com pontuação menor assume a liderança do histórico independentemente de quão pequena seja essa diferença. Isso significa que, quando o agente aceita explicitamente uma estratégia, essa aceitação só é levada adiante se a estratégia aceita for, de fato, a de melhor pontuação do histórico; caso o agente aceite uma estratégia que não ocupa essa posição, é a estratégia de melhor pontuação, e não a aceita pelo agente, que é aplicada, e essa divergência é registrada para fins de rastreabilidade, discutidos na Seção~\ref{subsec:auditoria}. Regras alternativas de decisão final foram implementadas e comparadas no Capítulo~\ref{chp:resultados}, entre elas a média das melhores tentativas do histórico, o retorno à melhor semente na ausência de separação estatística e a média de um conjunto de confiança construído por testes pareados entre as tentativas. A decisão adotada neste trabalho permanece a de melhor pontuação do histórico, por ser a de melhor desempenho médio e a de interpretação mais direta.
+
 
 A estratégia vencedora é então aplicada, pela primeira e única vez, às previsões de teste dos preditores de $\mathcal{M}$: o mesmo subconjunto $\mathcal{M}_s$ e o mesmo método de agregação, sejam eles a média, a mediana, a média aparada, o DBA ou a combinação ponderada por $w_s$, conforme definidos na Seção~\ref{subsec:pontuacao}, são recalculados agora sobre as previsões da janela de teste em vez das janelas de validação, produzindo a previsão final $\hat{y}_i^{(\text{combinada})}$. O cálculo das métricas de desempenho sobre essa previsão é deliberadamente distinto do mecanismo de pontuação empregado durante o ciclo de decisão: não há normalização contra a estratégia de referência $s_0$, nem ponderação entre métricas. São calculadas as quatro métricas descritas na Seção~\ref{sec:metricas}, MAPE, SMAPE, RMSE e POCID, diretamente entre a previsão combinada e os valores reais da janela de teste, sem qualquer transformação adicional. Essas quatro métricas, e não a pontuação interna que orientou a decisão, são o resultado reportado deste método.
 
-% \subsection{Procedência} \label{subsec:auditoria}
+\subsection{Registro e auditoria} \label{subsec:auditoria}
 
-% Além da aplicação da estratégia vencedora, um mecanismo de procedência avalia e registra a qualidade da decisão tomada, permitindo tanto a análise crítica dos resultados quanto a reprodução integral do processo por trás de cada previsão: ele verifica que toda previsão, peso ou métrica que compõe o resultado final de uma série de fato se origina da execução real de uma ação do catálogo, e não de algum outro caminho. Essa garantia decorre, em primeiro lugar, de uma restrição estrutural da implementação: uma tentativa só pode ser registrada por uma única rotina interna, por sua vez acionada exclusivamente por duas vias, a semeadura das estratégias fixas descrita na Seção~\ref{sec:preparacao} ou a ação de avaliação de estratégia descrita na Seção~\ref{sec:agente}. Como a saída do agente é sempre texto, o nome de uma ação e seus argumentos, e nunca um valor numérico diretamente, essa saída só pode disparar uma dessas duas vias, cada uma das quais recalcula toda a evidência a partir das previsões originais dos preditores de $\mathcal{M}$; não existe, portanto, um caminho pelo qual um valor pudesse ser inserido no resultado final sem ter sido de fato computado dessa forma.
+Além da aplicação da estratégia vencedora, o método registra a evidência que sustenta cada decisão, permitindo a análise crítica dos resultados e a verificação de que toda previsão, peso ou métrica que compõe o resultado final de uma série se origina da execução real de uma ação do catálogo. Essa garantia decorre de uma restrição estrutural: uma tentativa só pode ser registrada pelas estratégias fixas avaliadas antes da atuação do agente ou pela ação de avaliação de estratégia. Como a saída do agente é sempre texto, o nome de uma ação e seus argumentos, nunca um valor numérico, não existe caminho pelo qual um número possa ser inserido no resultado final sem ter sido calculado a partir das previsões originais dos preditores.
 
-% Para tornar essa garantia auditável, e não apenas presumida pelo desenho da implementação, dois registros são mantidos e verificados ao final do processamento de cada série. O primeiro é um registro de todas as chamadas de ação realizadas, bem-sucedidas ou não, a partir do qual se verifica que o número de chamadas de avaliação de estratégia bem-sucedidas é sempre maior ou igual ao número de tentativas de origem do agente presentes no histórico daquela série, sem exigir igualdade estrita, já que reenviar uma estratégia já testada anteriormente gera uma nova chamada registrada, mas não uma nova tentativa. O segundo é uma verificação de forma sobre a evidência associada a cada tentativa do histórico: o número de resíduos registrados deve corresponder ao produto entre o número de janelas de validação e o horizonte de previsão, e o número de pontuações por janela deve corresponder ao número de janelas, confirmando que essa evidência tem a forma esperada de um resultado de fato calculado sobre as três janelas, ainda que não confirme diretamente cada valor individual. Essa verificação é executada automaticamente ao final de cada série, e seu resultado é registrado permanentemente para fins de análise; caso ela indique alguma inconsistência, contudo, a série não deixa de ser processada, seguindo o mesmo princípio de degradação sem interrupção adotado em outras partes do método, como o retorno ao diagnóstico determinístico quando um modelo de linguagem configurado para essa etapa falha, discutido na Seção~\ref{sec:diagnostico}.
-
-
+Para tornar essa garantia auditável, dois tipos de registro são mantidos ao final do processamento de cada série. O primeiro é o registro dos turnos, que contém, para cada iteração, a ação solicitada, os argumentos, o resultado da execução, o líder do histórico antes e depois da chamada, os tempos de cada etapa e o motivo de encerramento do ciclo, acompanhado das métricas derivadas do processo de decisão. O segundo é a verificação de forma sobre a evidência associada a cada tentativa: o número de resíduos registrados deve corresponder ao produto entre o número de janelas de validação e o horizonte de previsão, e o número de pontuações por janela deve corresponder ao número de janelas, confirmando que essa evidência tem a forma esperada de um resultado calculado sobre as três janelas. Essa verificação é executada automaticamente e seu resultado é registrado; caso indique alguma inconsistência, a série não deixa de ser processada, seguindo o mesmo princípio de degradação sem interrupção adotado em outras partes do método.
 
 
 
@@ -580,6 +501,6 @@ Este capítulo apresentou o CREST, método desenvolvido para a combinação din�
 
 O método parte de duas restrições identificadas na formulação do problema: a ausência de uma estratégia de combinação universalmente superior entre séries e entre conjuntos de dados, e a escassez de evidência disponível, apenas três janelas de validação, para fundamentar diretamente a estimação de pesos ótimos. Em resposta a essas restrições, a decisão de combinação foi estruturada em duas macro-fases: uma preparação em nível de conjunto de dados, que constrói conhecimento entre séries por meio de um meta-modelo e de um prior de estratégias, sem envolvimento de nenhum modelo de linguagem; e uma decisão por série, na qual um agente itera sobre um catálogo fechado de ações determinísticas, validando cada proposta por meio de um mecanismo de pontuação comum antes de aceitá-la.
 
-A decisão de projeto central do método, a de que o agente nunca produz diretamente um valor numérico, orientou o desenho de cada componente descrito neste capítulo: o catálogo de ações restringe o espaço de decisão do agente a operações verificáveis; a estratégia final aplicada corresponde sempre à melhor pontuação de todo o histórico, e não necessariamente à escolha do agente; e o mecanismo de procedência torna essa decisão passível de verificação posterior, em vez de dependente unicamente do julgamento do próprio agente.
+A decisão de projeto central do método, a de que o agente nunca produz diretamente um valor numérico, orientou o desenho de cada componente descrito neste capítulo: o catálogo de ações restringe o espaço de decisão do agente a operações verificáveis; a estratégia final aplicada corresponde sempre à melhor pontuação de todo o histórico, e não necessariamente à escolha do agente; eo registro de auditoria torna essa decisão passível de verificação posterior, em vez de dependente unicamente do julgamento do próprio agente.
 
 O capítulo seguinte apresenta os resultados obtidos pela aplicação deste método aos conjuntos de dados descritos, comparando seu desempenho ao dos modelos individuais, das estratégias de combinação estática e dos métodos de combinação por meta-aprendizagem revisados no Capítulo~\ref{chp:revisao}.
