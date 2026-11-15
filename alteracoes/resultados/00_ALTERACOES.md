@@ -42,9 +42,9 @@ Este diretório reúne a reescrita do capítulo `Avaliação Experimental e Disc
 | `ETTh2` | 384–458 | [`08_etth2.md`](08_etth2.md) | pendente; atualizar para a média das 10 |
 | `ETTm1` | 459–533 | [`09_ettm1.md`](09_ettm1.md) | pendente; atualizar para a média das 10 |
 | `ETTm2` | 534–608 | [`10_ettm2.md`](10_ettm2.md) | pendente; atualizar para a média das 10 |
-| `Síntese entre conjuntos de dados` | 609–752 | pendente | — |
-| `Análise do comportamento do agente` | 753–947 | pendente | — |
-| `Estudo de ablação` | 948–1151 | pendente | decidir escopo |
+| `Síntese entre conjuntos de dados` | 683–826 | [`11_sintese_transformacoes.md`](11_sintese_transformacoes.md), [`12_sintese_ranking.md`](12_sintese_ranking.md), [`13_sintese_mcm_agregada.md`](13_sintese_mcm_agregada.md), [`14_sintese_vitorias.md`](14_sintese_vitorias.md), [`15_sintese_horizonte.md`](15_sintese_horizonte.md) | todas as subseções prontas |
+| `Análise do comportamento do agente` | 827–1021 | [`16_agente_frequencia.md`](16_agente_frequencia.md), [`17_agente_encerramento.md`](17_agente_encerramento.md), [`19_agente_trajetoria.md`](19_agente_trajetoria.md), [`20_agente_interpretabilidade.md`](20_agente_interpretabilidade.md), [`21_agente_melhoria.md`](21_agente_melhoria.md), [`22_agente_custo.md`](22_agente_custo.md), [`23_agente_rastreabilidade.md`](23_agente_rastreabilidade.md) | todas as subseções prontas; `Estudo de caso ilustrativo` removido por sobreposição |
+| `Estudo de ablação` | 948–1151 | `outputs/resultados/scripts/run_ablacao_carte.sh` | scripts prontos; aguardando execução no servidor |
 | `Considerações finais` | 1152–fim | pendente | — |
 
 ## Fontes de dados
@@ -54,10 +54,18 @@ Este diretório reúne a reescrita do capítulo `Avaliação Experimental e Disc
 - Modelos individuais: tabelas já existentes em `overleaf/resultados.tex`, que descrevem o mesmo pool de preditores.
 - MCMs do CARTE: geradas por `outputs/resultados/scripts/mcm_carte.py`; em `overleaf/resultados_final` ficam apenas os PNGs usados no capítulo. PDFs e CSVs auxiliares ficam em `outputs/resultados/mcm_carte`.
 - MCMs agregadas: `mcm_agregado_smape.png` e `mcm_agregado_pocid.png` usam as 680 séries; `mcm_media_datasets_smape.png` e `mcm_media_datasets_pocid.png` usam uma linha por conjunto de dados.
+- Contrafactual das transformações: `outputs/resultados/scripts/sintese_transformacoes.py` gera as tabelas e a figura `overleaf/resultados_final/sintese_transformacoes_delta.png`; os CSVs intermediários ficam em `outputs/resultados/sintese_transformacoes/`.
+- Ranking por conjunto de dados: consolidado a partir das tabelas de SMAPE dos arquivos `04_anp.md` a `10_ettm2.md`; a posição do CARTE usa a média das dez execuções.
+- Erro por passo do horizonte: `outputs/resultados/scripts/sintese_horizonte.py` gera as figuras `overleaf/resultados_final/erro_horizonte_smape.png` e `erro_horizonte_pocid.png` com média e intervalo de confiança de 95%; o resumo fica em `outputs/resultados/sintese_horizonte/horizonte_resumo.csv`.
+- Análise do comportamento do agente: a execução representativa é a pasta `orchestrator_react_consist_seed11`; a escolha usa a menor distância padronizada à média das dez no SMAPE e no POCID da média dos sete conjuntos. Os traces ficam em `orchestrator_react_consist_seed11/llm_artifacts/`.
+- Interpretabilidade das previsões: `outputs/resultados/scripts/interpretabilidade_carte.py` gera `overleaf/resultados_final/caso_sucesso.png` e `caso_fracasso.png` a partir da execução representativa; os JSONs ficam em `outputs/resultados/interpretabilidade_carte/`.
+- Rastreabilidade: a similaridade de Jaccard foi calculada sobre as 165 séries com escolha final a11/a12, usando palavras de conteúdo (stopwords removidas) do campo `justificativa_final`. A análise de n-gramas e de primeiras frases usa o mesmo campo.
+- Ablação, buscas sem LLM: `outputs/resultados/scripts/ablacao_search_carte.py` roda random (sementes 7, 8 e 9), gulosa e UCB com 12 avaliações por série, partindo de histórico vazio e aplicando a mesma regra final do CARTE. Os CSVs ficam em `timeseries/mestrado/resultados/orchestrator_search_carte/` e os artefatos com todas as tentativas em `outputs/resultados/ablacao_search_carte/artifacts/`.
+- Ablação, oráculos: `ablacao_oraculos_carte.py` calcula melhor tentativa, melhores dez primeiras tentativas, teto de validação, oráculo de teste sobre as tentativas e melhor modelo individual, sempre com a média das dez execuções. `ablacao_oraculo_u_carte.py` enumera o universo fixo de estratégias para o teto de validação e o oráculo de teste amplo. A consolidação fica em `ablacao_oraculos_resumo.py`.
 
 ## Pendências de decisão
 
 - Atualizar as tabelas e os textos por conjunto de dados para a média das dez execuções, substituindo os valores da execução canônica antiga.
 - Regerar as MCMs com as métricas médias por série das dez execuções.
-- Definir se o estudo de ablação será mantido ou substituído por uma análise das decisões finais do CARTE.
+- Rodar a ablação no servidor com `outputs/resultados/scripts/run_ablacao_carte.sh` e, com os resultados, substituir a seção antiga por buscas sem LLM e oráculos.
 - Atualizar as referências a `sec:preparacao` e `CREST` que ainda existem em `resultados.tex`.
