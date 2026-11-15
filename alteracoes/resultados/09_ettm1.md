@@ -64,7 +64,7 @@ DBA     & 200,00 & 47,20 \\
 \end{tabular}
 \end{table}
 
-O resultado em SMAPE é particularmente forte: o CARTE fica atrás apenas do Random Forest (DWT), com 40,52\%, e supera os outros dezoito modelos individuais. A vantagem sobre o segundo melhor modelo individual, o CatBoost (DWT), é de 9,10 pontos percentuais. Em POCID, o CARTE é segundo entre as combinações, atrás da mediana, mas no conjunto completo fica atrás de seis modelos individuais: Random Forest (Original + DWT) 58,39\%, CatBoost (Original + FT) 56,52\%, Random Forest (Original + FT) 55,90\%, CatBoost (Original + CWT) 54,66\%, Random Forest (CWT) 54,66\% e Random Forest (Original + CWT) 54,66\%. O valor de 41,03\% é a média de dez execuções, com desvio-padrão de 4,35 pontos percentuais; a variabilidade do ETTm1 é discutida na Seção~\ref{sec:execucoes-seeds}.
+O resultado em SMAPE é particularmente forte: o CARTE fica atrás apenas do Random Forest (DWT), com 40,52\%, e supera os outros dezoito modelos individuais. A vantagem sobre o segundo melhor modelo individual, o CatBoost (DWT), é de 9,10 pontos percentuais. Em POCID, o CARTE é segundo entre as combinações, atrás da mediana, mas no conjunto completo fica atrás de seis modelos individuais: Random Forest (Original + DWT) 58,39\%, CatBoost (Original + FT) 56,52\%, Random Forest (Original + FT) 55,90\%, CatBoost (Original + CWT) 54,66\%, Random Forest (CWT) 54,66\% e Random Forest (Original + CWT) 54,66\%. O valor de 41,03\% é a média de dez execuções, com desvio-padrão de 4,35 pontos percentuais; a variabilidade do ETTm1 é discutida na Seção~\ref{sec:execucoes}.
 
 \subsection{Comparação geral e discussão} \label{subsec:ettm1-discussao}
 

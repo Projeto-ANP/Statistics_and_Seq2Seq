@@ -1,6 +1,6 @@
 # Escolha do modelo de linguagem e seção de execuções
 
-Mantém a seção `Escolha do modelo de linguagem do agente` exatamente como está em `overleaf/resultados.tex` (linhas 48–110), sem a subseção `Modelo escolhido`, que foi removida na revisão. Acrescenta apenas a frase sobre a execução única por modelo e a nova seção `Execuções, sementes e agregação dos resultados`, que deve entrar entre a escolha do modelo e a seção da ANP.
+Mantém a seção `Escolha do modelo de linguagem do agente` exatamente como está em `overleaf/resultados.tex` (linhas 48–110), sem a subseção `Modelo escolhido`, que foi removida na revisão. Acrescenta apenas a frase sobre a execução única por modelo e a nova seção `Execuções e agregação dos resultados`, que deve entrar entre a escolha do modelo e a seção da ANP.
 
 ```latex
 \section{Escolha do modelo de linguagem do agente} \label{sec:escolha-llm}
@@ -67,31 +67,32 @@ Média por série (680 séries) & \textbf{25,20} & 565,46 & 479,69 \\
 
 Para a escolha do modelo de linguagem do agente, o custo computacional é um fator decisivo devido às diferenças significativas entre os modelos avaliados. O gpt-oss leva, em média, 25,20 segundos por série; o Qwen3.8 leva 565,46 segundos, cerca de 22,4 vezes mais, e o Gemma4 leva 479,69 segundos, cerca de 19,0 vezes mais. Em tempo serial, os 680 séries custariam aproximadamente 4,8 horas com o gpt-oss, 106,8 horas com o Qwen3.8 e 90,6 horas com o Gemma4. Desse modo, o gpt-oss foi selecionado, visto que os valores de SMAPE obtidos com Gemma4 e Qwen3.8 são inferiores a 1 ponto percentual e não justificam um custo computacional aproximadamente 20 vezes maior.
 
-\section{Execuções, sementes e agregação dos resultados} \label{sec:execucoes-seeds}
+\section{Execuções e agregação dos resultados} \label{sec:execucoes}
 
-Os resultados principais do CARTE vêm de dez execuções independentes do agente, com as sementes 11 a 20, realizadas depois da escolha do modelo. Todas usam o mesmo modelo, o mesmo protocolo de preparação, o mesmo conjunto de preditores e a mesma configuração de prompts. A semente altera a sequência de amostragem do modelo de linguagem e, com ela, as decisões do agente. As execuções foram realizadas no mesmo servidor e no mesmo período, o que mantém as mudanças de ambiente sob controle e permite atribuir a variação observada principalmente à semente. A execução usada na Seção~\ref{sec:escolha-llm} serviu apenas para escolher o modelo e não faz parte das dez execuções. Os resultados por conjunto de dados usam a média dessas dez execuções. Por isso, os valores da Tabela~\ref{tab:escolha-llm-desempenho} diferem ligeiramente dos agregados apresentados a seguir.
+Os resultados principais do CARTE vêm de dez execuções independentes do agente, numeradas de 1 a 10, realizadas depois da escolha do modelo. Todas usam o mesmo modelo, o mesmo protocolo de preparação, o mesmo conjunto de preditores e a mesma configuração de prompts. Cada execução usa uma sequência de amostragem diferente do modelo de linguagem, e essa diferença altera as decisões do agente. As execuções foram realizadas no mesmo servidor e no mesmo período, o que mantém as mudanças de ambiente sob controle e permite atribuir a variação observada principalmente à sequência de amostragem. A execução usada na Seção~\ref{sec:escolha-llm} serviu apenas para escolher o modelo e não faz parte das dez execuções. Os resultados por conjunto de dados usam a média dessas dez execuções. Por isso, os valores da Tabela~\ref{tab:escolha-llm-desempenho} diferem ligeiramente dos agregados apresentados a seguir.
 
-A Tabela~\ref{tab:execucoes-agregados} apresenta os agregados de cada execução. Para cada uma, o SMAPE e o POCID foram calculados por série e agregados da mesma forma que no restante do capítulo. A linha final mostra a média e o desvio-padrão entre as dez execuções.
+A Tabela~\ref{tab:execucoes-agregados} apresenta os agregados de cada execução. Para cada uma, o SMAPE e o POCID foram calculados por série e agregados da mesma forma que no restante do capítulo. A linha final mostra a média e o desvio-padrão entre as dez execuções. As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries.
 
 \begin{table}[H]
-\small
+\footnotesize
 \centering
-\caption{Agregados de SMAPE e POCID por execução do CARTE. Valores em percentual.}
+\setlength{\tabcolsep}{4pt}
+\caption{Agregados de SMAPE e POCID por execução do CARTE. Valores em percentual. As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries.}
 \label{tab:execucoes-agregados}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-\textbf{Execução} & \textbf{Média 7 SMAPE} & \textbf{Agregado 680 SMAPE} & \textbf{Média 7 POCID} & \textbf{Agregado 680 POCID} \\
+\textbf{Execução} & \textbf{SMAPE 7} & \textbf{SMAPE 680} & \textbf{POCID 7} & \textbf{POCID 680} \\
 \midrule
-11 & 20,33 & 13,87 & 53,99 & 57,22 \\
-12 & 19,47 & 13,69 & 54,30 & 57,07 \\
-13 & 20,94 & 13,79 & 52,95 & 56,86 \\
-14 & 20,48 & 13,72 & 53,03 & 57,01 \\
-15 & 20,23 & 13,82 & 54,28 & 57,42 \\
-16 & 20,28 & 13,58 & 54,62 & 57,67 \\
-17 & 20,20 & 13,88 & 55,05 & 57,48 \\
-18 & 19,36 & 13,63 & 53,54 & 56,85 \\
-19 & 21,59 & 13,85 & 54,43 & 57,11 \\
-20 & 19,84 & 13,94 & 54,34 & 57,16 \\
+1 & 20,33 & 13,87 & 53,99 & 57,22 \\
+2 & 19,47 & 13,69 & 54,30 & 57,07 \\
+3 & 20,94 & 13,79 & 52,95 & 56,86 \\
+4 & 20,48 & 13,72 & 53,03 & 57,01 \\
+5 & 20,23 & 13,82 & 54,28 & 57,42 \\
+6 & 20,28 & 13,58 & 54,62 & 57,67 \\
+7 & 20,20 & 13,88 & 55,05 & 57,48 \\
+8 & 19,36 & 13,63 & 53,54 & 56,85 \\
+9 & 21,59 & 13,85 & 54,43 & 57,11 \\
+10 & 19,84 & 13,94 & 54,34 & 57,16 \\
 \midrule
 \textbf{Média} & \textbf{20,27 $\pm$ 0,66} & \textbf{13,78 $\pm$ 0,12} & \textbf{54,05 $\pm$ 0,68} & \textbf{57,19 $\pm$ 0,27} \\
 \bottomrule
@@ -102,5 +103,5 @@ Na média dos sete conjuntos, o SMAPE médio das dez execuções é 20,27\%, com
 
 A dispersão entre execuções é desigual entre os conjuntos. Nos seis conjuntos que não o ETTm1, o desvio-padrão do SMAPE fica entre 0,09 e 0,63 ponto percentual. No ETTm1, sobe para 4,35 pontos, com valores entre 33,81\% e 48,91\%. A variação do ETTm1 se concentra em poucas séries de erro alto, que dominam a média do conjunto. Como o ETTm1 tem apenas sete das 680 séries, seu efeito no agregado é pequeno. O efeito na média dos sete é maior, porque o conjunto recebe o mesmo peso que os demais.
 
-A análise do comportamento do agente, apresentada na Seção~\ref{sec:resultados-agente}, usa a execução com semente 11 dessa série. Essa execução foi escolhida por estar próxima da média das dez nas quatro agregações. Ela apresenta 20,33\% na média dos sete, 13,87\% no agregado, 53,99\% na média dos sete em POCID e 57,22\% no agregado em POCID, valores próximos das médias de 20,27\%, 13,78\%, 54,05\% e 57,19\%. A execução foi escolhida por proximidade com a média das dez, não por ser a melhor. Os traces, as previsões e os estudos de caso dessa seção vêm dessa execução e ilustram uma trajetória representativa. Eles não correspondem à execução média.
+A análise do comportamento do agente, apresentada na Seção~\ref{sec:resultados-agente}, usa a execução 1 dessa série. Essa execução foi escolhida por estar próxima da média das dez nas quatro agregações. Ela apresenta 20,33\% na média dos sete, 13,87\% no agregado, 53,99\% na média dos sete em POCID e 57,22\% no agregado em POCID, valores próximos das médias de 20,27\%, 13,78\%, 54,05\% e 57,19\%. A execução foi escolhida por proximidade com a média das dez, não por ser a melhor. Os traces, as previsões e os estudos de caso dessa seção vêm dessa execução e ilustram uma trajetória representativa. Eles não correspondem à execução média.
 ```

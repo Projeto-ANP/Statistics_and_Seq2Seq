@@ -1,6 +1,6 @@
 # Análise do comportamento do agente - Passo a passo de uma decisão
 
-Atualiza a subseção `Passo a passo de uma decisão` de `overleaf/resultados.tex` (linhas 884–927) com um caso da execução representativa. O caso antigo, da série 206 do M4, era de outra execução. O novo caso usa a série 87 do M4 e não pressupõe sementes, porque a execução representativa é agent-only.
+Atualiza a subseção `Passo a passo de uma decisão` de `overleaf/resultados.tex` (linhas 884–927) com um caso da execução representativa. O caso antigo, da série 206 do M4, era de outra execução. O novo caso usa a série 87 do M4 e parte de um histórico vazio, porque a execução representativa é agent-only.
 
 ```latex
 \subsection{Passo a passo de uma decisão} \label{subsec:transcricao-decisao}

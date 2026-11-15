@@ -17,7 +17,7 @@ Este guia vale para o texto novo e para as análises que forem reescritas. Nas s
 - Evitar travessões longos e o uso excessivo de dois-pontos e ponto e vírgula.
 - Não usar negrito no corpo do texto, listas com marcadores no texto final, emojis, aspas curvas ou títulos em Title Case.
 - Evitar `robusto`, `abrangente`, `cenário`, `panorama`, `mergulhar`, `alavancar`, `destacar`, `ressaltar`, `evidenciar`, `garantir`, `permitir` e `possibilitar` quando a frase funciona sem eles.
-- Usar `sementes` no texto em português.
+- Usar `execuções` no texto em português.
 - Usar `CARTE`, nunca `CREST`.
 
 ## Convenções do capítulo
@@ -25,8 +25,8 @@ Este guia vale para o texto novo e para as análises que forem reescritas. Nas s
 - O SMAPE ordena as estratégias. O POCID é reportado em separado e não participa do ranking.
 - A média dos sete conjuntos é a agregação principal. O agregado das 680 séries é complemento.
 - A comparação entre modelos de linguagem usa uma execução de cada modelo e serve apenas para a escolha.
-- Os resultados do CARTE usam a média de dez execuções independentes, com sementes 11 a 20.
-- A análise do comportamento do agente usa a execução com semente 11 dessa série.
+- Os resultados do CARTE usam a média de dez execuções independentes, numeradas de 1 a 10.
+- A análise do comportamento do agente usa a execução 1 dessa série.
 - A definição de SMAPE e POCID fica no design experimental. Não repetir nas seções por conjunto de dados.
 - A indicação de que as tabelas estão ordenadas por SMAPE aparece uma única vez, na primeira tabela da ANP.
 

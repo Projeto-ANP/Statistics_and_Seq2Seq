@@ -1,6 +1,6 @@
 # Análise do comportamento do agente - Distribuição da melhoria relativa
 
-Atualiza a subseção `Distribuição da melhoria relativa` de `overleaf/resultados.tex` (linhas 964–985) com a execução representativa. Como a execução é agent-only, a referência não é a melhor semente. A comparação é com a melhor das primeiras dez tentativas do próprio agente.
+Atualiza a subseção `Distribuição da melhoria relativa` de `overleaf/resultados.tex` (linhas 964–985) com a execução representativa. A comparação é com a melhor das primeiras dez tentativas do próprio agente.
 
 ```latex
 \subsection{Distribuição da melhoria relativa}
