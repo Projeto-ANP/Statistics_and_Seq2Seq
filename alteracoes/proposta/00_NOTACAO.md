@@ -31,7 +31,8 @@ em `proposta.tex`, `resultados.tex` e nos demais capítulos.
 | $\mathbf{z}_i$ | perfil da série $i$ | features de forma/estatística |
 | $\mathcal{E}_i$ | avaliação do pool na série $i$ | erros, ranking, correlação |
 | $\mathcal{C}_i$ | diagnóstico interpretativo | regime, previsibilidade, indicação |
-| $\mathcal{F}_i$ | representação da forma das previsões | validação + previsões de teste, sem o real |
+| $\mathcal{F}_i$ | representação da forma das previsões entregue ao agente | validação + previsões de teste em escore $z$, sem o real |
+| $\mathcal{G}_i$ | representação da forma usada na decisão final | escala comum, referência sazonal e características dos candidatos |
 | $\mathcal{H}_i$ | histórico de tentativas | pares $(s,\mathrm{score}_i(s))$ |
 | $\ell_i$ | líder de validação | menor score |
 | $\mathcal{K}_i$ | shortlist por família | candidatos da condição sazonal |

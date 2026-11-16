@@ -1,8 +1,8 @@
 # Alterações da proposta — CARTE
 
 Este diretório reúne as substituições da proposta em formato de seções LaTeX prontas
-para integração em `overleaf/proposta.tex`. O arquivo `.tex` ainda **não** foi
-alterado.
+para integração em `overleaf/proposta.tex`. As seções 01–09 já foram integradas ao
+`.tex`; os arquivos permanecem como fonte de consulta e de conferência.
 
 ## Regras editoriais
 
@@ -16,10 +16,9 @@ alterado.
 - Todos os elementos de configuração usados na execução são tratados como
   **decisões fixas de projeto**. Não mencionar nomes de flags, valores de seed,
   temperatura, número de iterações, limites de turnos ou orçamentos numéricos.
+- O contexto é específico da série e o histórico começa vazio. O texto não menciona cartão do conjunto, prior entre séries nem estratégias semeadas.
 - Remover da arquitetura:
-  - meta-modelo entre séries;
-  - prior de estratégias do conjunto de dados;
-  - estratégias fixas semeadas;
+  - estratégias fixas semeadas no histórico;
   - aceite explícito, estagnação e paciência;
   - catálogo com contagem fixa de ações;
   - qualquer noção de “semente” ou “ativador”.
@@ -38,16 +37,16 @@ alterado.
 
 | Seção em `proposta.tex` | Linhas atuais (aprox.) | Arquivo de alteração | Status |
 |---|---:|---|---|
-| `Considerações iniciais` | 3–8 | [`01_consideracoes_iniciais.md`](01_consideracoes_iniciais.md) | pronto para integrar |
-| `Formulação do problema` | 20–102 | [`02_formulacao_problema.md`](02_formulacao_problema.md) | pronto para integrar |
-| `Visão geral do CARTE` | 104–125 | [`03_visao_geral_carte.md`](03_visao_geral_carte.md) | pronto para integrar |
-| `Pseudocódigo` | 127–289 | [`04_pseudocodigo_carte.md`](04_pseudocodigo_carte.md) | pronto para integrar |
+| `Considerações iniciais` | 3–8 | [`01_consideracoes_iniciais.md`](01_consideracoes_iniciais.md) | integrado |
+| `Formulação do problema` | 20–102 | [`02_formulacao_problema.md`](02_formulacao_problema.md) | integrado |
+| `Visão geral do CARTE` | 104–125 | [`03_visao_geral_carte.md`](03_visao_geral_carte.md) | integrado |
+| `Pseudocódigo` | 127–289 | [`04_pseudocodigo_carte.md`](04_pseudocodigo_carte.md) | integrado |
 | Notação de todo o documento | todos os `.tex` | [`00_NOTACAO.md`](00_NOTACAO.md) | referência ativa |
-| `Preparação em nível de conjunto de dados` | 290–365 | [`05_mecanismo_pontuacao.md`](05_mecanismo_pontuacao.md) | pronto para integrar; meta-modelo e prior removidos |
-| `Caracterização e diagnóstico por série` | 367–408 | [`06_contexto_por_serie.md`](06_contexto_por_serie.md) | pronto para integrar; inclui a forma das previsões |
-| `Agente combinador` | 409–480 | [`07_agente_combinador.md`](07_agente_combinador.md) | pronto para integrar; sem sementes, aceite ou estagnação |
-| `Aplicação da estratégia e rastreabilidade` | 481–497 | [`08_aplicacao_rastreabilidade.md`](08_aplicacao_rastreabilidade.md) | pronto para integrar; decisão final + aplicação + auditoria |
-| `Considerações finais` | 498–506 | [`09_consideracoes_finais.md`](09_consideracoes_finais.md) | pronto para integrar; síntese alinhada ao CARTE |
+| `Preparação em nível de conjunto de dados` | 290–365 | [`05_mecanismo_pontuacao.md`](05_mecanismo_pontuacao.md) | integrado; meta-modelo e prior removidos do contexto |
+| `Caracterização e diagnóstico por série` | 367–408 | [`06_contexto_por_serie.md`](06_contexto_por_serie.md) | integrado; inclui a forma das previsões |
+| `Agente combinador` | 409–480 | [`07_agente_combinador.md`](07_agente_combinador.md) | integrado; sem sementes, aceite ou estagnação |
+| `Aplicação da estratégia e rastreabilidade` | 481–497 | [`08_aplicacao_rastreabilidade.md`](08_aplicacao_rastreabilidade.md) | integrado; decisão final + aplicação + auditoria |
+| `Considerações finais` | 498–506 | [`09_consideracoes_finais.md`](09_consideracoes_finais.md) | integrado; síntese alinhada ao CARTE |
 
 ## Renomeação global
 
@@ -76,16 +75,16 @@ capítulo; a substituição ainda precisa ser aplicada ao arquivo `.tex`.
 - A decisão final, a aplicação e a auditoria foram reescritas no arquivo 08. A
   seção `Aplicação` antiga, que descrevia o argmin simples, foi substituída por
   líder + shortlist por família + condição sazonal.
-- A Tabela `tab:blocos_contexto`, no arquivo 07, é a referência única para os
-  nomes dos blocos do prompt; 06 e 08 usam os mesmos rótulos em versalete.
-- A Tabela `tab:acoes_carte`, também no arquivo 07, lista as ações efetivas do
-  CARTE sem usar uma contagem fixa de entradas, com a correspondência entre o
-  nome conceitual e o identificador de código. A Tabela `tab:metodos_pesos`
+- A Tabela `tab:blocos_contexto`, no arquivo 07, é a referência única para as
+  tags XML dos blocos do prompt; 06 e 08 usam a mesma notação.
+- A Tabela `tab:acoes_carte`, também no arquivo 07, lista as ações oferecidas na
+  configuração avaliada, sem usar uma contagem fixa de entradas, com a
+  correspondência entre o nome conceitual e o identificador de código. A Tabela `tab:metodos_pesos`
   faz o mesmo para os métodos de pesos.
 - A seção `Considerações finais` foi reescrita no arquivo 09 e agora sintetiza a
   arquitetura descrita nos arquivos 03–08. Todos os trechos do capítulo possuem
-  arquivo de alteração; resta integrar os arquivos no `.tex` e atualizar
-  `resultados.tex`.
+  arquivo de alteração; a integração no `.tex` e a atualização de `resultados.tex`
+  já foram feitas. A auditoria do capítulo está em [`00_AUDITORIA.md`](00_AUDITORIA.md).
 - A Equação `eq:score` já foi substituída em `05_mecanismo_pontuacao.md` pela
   razão de SMAPE agregada com pesos fixos; o POCID não entra no ranking.
 - `resultados.tex` ainda referencia `sec:preparacao`, que deixou de existir. Ao

@@ -90,5 +90,5 @@ A MCM de POCID usa o Random Forest (Original + DWT) como melhor individual e a m
 
 O ETTm1 reforça dois pontos positivos do CARTE: a melhor combinação em SMAPE, com vantagem de 2,93 pontos percentuais sobre o FFORMA, e a posição de segundo melhor em POCID entre as combinações, atrás apenas da mediana. O CARTE fica a 0,51 ponto percentual do melhor modelo individual em SMAPE, mas supera todos os outros dezoito preditores e todas as demais combinações. A mediana, que lidera o POCID, tem SMAPE 13,40 pontos percentuais pior, o que evidencia o trade-off entre as duas métricas e a posição equilibrada do CARTE.
 
-Ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 3,0 das 7 séries, em média; a média aparada em cerca de 1,7, a mediana em cerca de 1,5, o DBA em cerca de 0,5 e a média em cerca de 0,3. O pool completo não foi usado em nenhuma execução; o tamanho mediano do pool final ficou entre 7 e 14 modelos, com mediana de 8,0.
+Ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 3,0 das 7 séries, em média; a média aparada em cerca de 1,7, a mediana em cerca de 1,5, o DBA em cerca de 0,5 e a média em cerca de 0,3. O pool completo foi usado em cerca de 3,4 das 7 séries, em média; o tamanho do pool final variou entre 3 e 14 modelos, com mediana de 8,0.
 ```

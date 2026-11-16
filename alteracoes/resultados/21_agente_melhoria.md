@@ -5,11 +5,11 @@ Atualiza a subseção `Distribuição da melhoria relativa` de `overleaf/resulta
 ```latex
 \subsection{Distribuição da melhoria relativa}
 
-Para cada uma das 680 séries, comparou-se a pontuação de validação da estratégia final com a menor pontuação entre as primeiras dez tentativas, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao} do Capítulo~\ref{chp:proposta}. A estratégia final é, por construção, a melhor tentativa do histórico. Como as primeiras dez tentativas fazem parte desse histórico, ela nunca é pior que a melhor delas. Em nenhuma das 680 séries a estratégia final apresentou pontuação pior que a melhor das primeiras dez tentativas (0\%). Em 509 séries (74,9\%), a estratégia final iguala essa melhor tentativa, dentro da precisão de registro dos escores. Nas 171 restantes (25,1\%), a estratégia final apresenta pontuação estritamente melhor. A maior melhoria observada ocorre na série 9 do M4, na qual a pontuação final é 0,232 menor que a da melhor das primeiras dez tentativas.
+Para cada uma das 680 séries, comparou-se a pontuação de validação do líder com a menor pontuação entre as primeiras dez tentativas, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao} do Capítulo~\ref{chp:proposta}. O líder é, por construção, a melhor tentativa do histórico. Como as primeiras dez tentativas fazem parte desse histórico, ele nunca é pior que a melhor delas. Em nenhuma das 680 séries o líder apresentou pontuação pior que a melhor das primeiras dez tentativas (0\%). Em 509 séries (74,9\%), o líder iguala essa melhor tentativa, dentro da precisão de registro dos escores. Nas 171 restantes (25,1\%), o líder apresenta pontuação estritamente melhor. A maior melhoria observada ocorre na série 9 do M4, na qual a pontuação do líder é 0,232 menor que a da melhor das primeiras dez tentativas. A análise usa o líder, não a estratégia final: a decisão final pode trocar o líder quando a condição sazonal é ativada.
 
 \begin{table}[H]
 \centering
-\caption{Distribuição das 171 séries com melhoria estrita, por faixa de ganho na pontuação.}
+\caption{Distribuição das 171 séries com melhoria estrita do líder, por faixa de ganho na pontuação.}
 \label{tab:melhoria-faixas}
 \begin{tabular}{@{}lrr@{}}
 \toprule

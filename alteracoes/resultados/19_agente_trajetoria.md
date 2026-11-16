@@ -5,7 +5,7 @@ Atualiza a subseção `Passo a passo de uma decisão` de `overleaf/resultados.te
 ```latex
 \subsection{Passo a passo de uma decisão} \label{subsec:transcricao-decisao}
 
-Esta subseção acompanha a decisão do agente para a série 87 do M4, escolhida por ilustrar um caso em que o agente muda o pool e reencontra uma combinação que havia falhado no pool completo. Os pensamentos são apresentados em tradução livre na Tabela~\ref{tab:transcricao-decisao}, e os trechos decisivos são citados literalmente no texto. Todos os escores e posições citados são de validação, calculados sobre as três janelas usadas na decisão. As métricas de teste aparecem apenas no fecho desta subseção. Os identificadores são os registrados pelo próprio método. Pools são denotados por pool$N$, vetores de pesos por w$N$ e tentativas por a$N$. A escolha final é a de melhor pontuação entre as tentativas.
+Esta subseção acompanha a decisão do agente para a série 87 do M4, escolhida por ilustrar um caso em que o agente muda o pool e reencontra uma combinação que havia falhado no pool completo. Os pensamentos são apresentados em tradução livre na Tabela~\ref{tab:transcricao-decisao}, e os trechos decisivos são citados literalmente no texto. A tabela apresenta os passos mais informativos; avaliações intermediárias foram omitidas para manter a leitura direta. Todos os escores e posições citados são de validação, calculados sobre as três janelas usadas na decisão. As métricas de teste aparecem apenas no fecho desta subseção. Os identificadores são os registrados pelo próprio método. Pools são denotados por pool$N$, vetores de pesos por w$N$ e tentativas por a$N$. Nesta série, a condição sazonal está inativa, e a escolha final mantém o líder, que é a melhor pontuação entre as tentativas.
 
 \begin{table}[H]
 \centering
@@ -30,7 +30,7 @@ Esta subseção acompanha a decisão do agente para a série 87 do M4, escolhida
 
 A primeira avaliação é uma média aparada no pool completo, com pontuação 0,4131. O primeiro pensamento é \textit{"The series is trend dominated with moderate ranking stability; a selective trimming of extreme forecasts should help reduce outliers from correlated groups."} A ponderação pelo erro inverso melhora para 0,3105, e a mediana para 0,1294. O DBA no pool completo é o pior resultado, 1,0140. O agente então seleciona os sete melhores modelos por RMSE, formando o pool4. A ponderação pelo erro inverso no pool4 cai para 0,1268, a média para 0,1254, e o DBA no pool4 para 0,1126, o melhor resultado. O mesmo DBA que era o pior no pool completo se torna o melhor no pool reduzido.
 
-A decisão que muda o resultado vem no passo 16. O pensamento registrado é \textit{"The series is trend-dominated and the diagnostic suggests a selective combination; a DBA on the selective pool may reduce variance further."} A escolha final é o DBA no pool4, com pontuação de validação 0,1126.
+A decisão que muda o resultado vem no passo 16. O pensamento registrado é \textit{"The series is trend-dominated and the diagnostic suggests a selective combination; a DBA on the selective pool may reduce variance further."} A escolha final mantém o líder, o DBA no pool4, com pontuação de validação 0,1126.
 
 A Tabela~\ref{tab:transcricao-validacao-teste} compara a primeira avaliação e a estratégia final nas duas janelas.
 
@@ -50,5 +50,5 @@ Estratégia final (a12, 0,1126) & \textbf{0,52} & \textbf{75,00} \\
 \end{tabular}
 \end{table}
 
-A melhora de 0,3005 na validação se confirmou no teste. O SMAPE cai de 7,97\% para 0,52\%, e o POCID sobe de 33,33\% para 75,00\%. A trajetória ilustra o padrão descrito nas subseções anteriores. O agente testa alternativas, reduz o pool e escolhe a melhor tentativa do histórico quando o orçamento de avaliação se esgota.
+A melhora de 0,3005 na validação se confirmou no teste. O SMAPE cai de 7,97\% para 0,52\%, e o POCID sobe de 33,33\% para 75,00\%. A trajetória ilustra o padrão descrito nas subseções anteriores. O agente testa alternativas, reduz o pool e define o líder do histórico quando o orçamento de avaliação se esgota; nesta série, a condição sazonal não se aplica e o líder é mantido.
 ```

@@ -988,6 +988,12 @@ def _seasonal_guard_core(
         debug["chosen_id"] = getattr(leader, "attempt_id", None)
         return leader, debug, ctx, shortlist, leader, best_entry
 
+    if leader_seasonal is None or not np.isfinite(float(leader_seasonal)):
+        debug["decision"] = "keep"
+        debug["reason"] = "leader_seasonal_distance_unavailable"
+        debug["chosen_id"] = getattr(leader, "attempt_id", None)
+        return leader, debug, ctx, shortlist, leader, best_entry
+
     min_gap = float(getattr(config, "seasonal_guard_min_gap", 0.0) or 0.0)
     gap = debug.get("seasonal_gap")
     if (

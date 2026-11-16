@@ -6,7 +6,7 @@ Substitui a subseção `Pseudocódigo` de `overleaf/proposta.tex`
 ```latex
 \subsection{Pseudocódigo}
 
-A seguir, o Algoritmo~\ref{alg:carte} apresenta a visão geral do método proposto. O mecanismo de pontuação é detalhado no Algoritmo~\ref{alg:pontuar}, e o diagnóstico interpretativo, no Algoritmo~\ref{alg:diagnostico}. A notação empregada é a da formulação da Seção~\ref{sec:formulacao}, complementada por: $\mathbf{z}_i$, o perfil da série $\mathcal{S}_i$; $\mathcal{E}_i$, a avaliação do pool de preditores nas janelas de validação; $\mathcal{C}_i$, o diagnóstico interpretativo; $\mathcal{F}_i$, a representação da forma das previsões, que reúne o último trecho real de validação e as previsões dos modelos para a janela de teste, sem os valores reais de teste; $\mathcal{H}_i$, o histórico de tentativas da série $i$, formado por pares $(s, \text{score}_i(s))$; $\mathcal{M}_{i,s}^{(w)}$ e $\mathbf{p}_{i,s}^{(w)}$, o subconjunto de preditores e os pesos usados por $s$ na janela $w$; $\ell_i$, o líder de validação; $\mathcal{K}_i$, a shortlist de famílias de estratégias; $d_i(s)$, a distância entre a previsão de teste de $s$ e a referência sazonal ingênua; $s_i^{\star}$, o candidato da shortlist com menor distância sazonal; $c_i$, a estratégia final escolhida; $\text{margem}$, a margem fixa para troca do líder; $\mathcal{A}$, o conjunto de ações disponíveis; e $\hat{\mathbf{Y}}_i^{(\mathrm{teste})}$, a coleção das previsões de teste dos $M$ preditores. Em cada iteração, o agente responde exclusivamente com um \textit{Thought}, uma \textit{Action} e uma \textit{Action Input}. O ciclo usa um orçamento fixo de avaliações e de turnos e termina quando esse orçamento se esgota.
+A seguir, o Algoritmo~\ref{alg:carte} apresenta a visão geral do método proposto. O mecanismo de pontuação é detalhado no Algoritmo~\ref{alg:pontuar}, e o diagnóstico interpretativo, no Algoritmo~\ref{alg:diagnostico}. A notação empregada é a da formulação da Seção~\ref{sec:formulacao}, complementada por: $\mathbf{z}_i$, o perfil da série $\mathcal{S}_i$; $\mathcal{E}_i$, a avaliação do pool de preditores nas janelas de validação; $\mathcal{C}_i$, o diagnóstico interpretativo; $\mathcal{F}_i$, a representação da forma das previsões entregue ao agente, com o último trecho real de validação e as previsões de teste normalizadas por vetor; $\mathcal{G}_i$, a representação da forma usada na decisão final, com escala comum, referência sazonal e características dos candidatos; $\mathcal{H}_i$, o histórico de tentativas da série $i$, formado por pares $(s, \text{score}_i(s))$; $\mathcal{M}_{i,s}^{(w)}$ e $\mathbf{p}_{i,s}^{(w)}$, o subconjunto de preditores e os pesos usados por $s$ na janela $w$; $\ell_i$, o líder de validação; $\mathcal{K}_i$, a shortlist de famílias de estratégias; $d_i(s)$, a distância entre a previsão de teste de $s$ e a referência sazonal ingênua; $s_i^{\star}$, o candidato da shortlist com menor distância sazonal; $c_i$, a estratégia final escolhida; $\text{margem}$, a margem fixa para troca do líder; $\mathcal{A}$, o conjunto de ações disponíveis; e $\hat{\mathbf{Y}}_i^{(\mathrm{teste})}$, a coleção das previsões de teste dos $M$ preditores. Em cada iteração, o agente responde exclusivamente com um \textit{Thought}, uma \textit{Action} e uma \textit{Action Input}. O ciclo usa um orçamento fixo de avaliações e de turnos e termina quando esse orçamento se esgota.
 
 \begin{algorithm}[H]
 \footnotesize
@@ -25,7 +25,7 @@ A seguir, o Algoritmo~\ref{alg:carte} apresenta a visão geral do método propos
   $\mathbf{z}_i \gets \Act{Perfil}(\mathcal{S}_i)$
   $\mathcal{E}_i \gets \Act{AvaliarConjunto}(i)$
   $\mathcal{C}_i \gets \Act{Diagnosticar}(\mathbf{z}_i, \mathcal{E}_i)$
-  $\mathcal{F}_i \gets \Act{FormaPrevisao}(i)$
+  $\mathcal{F}_i \gets \Act{FormaPrevisaoAgente}(i)$
   $\mathcal{H}_i \gets \emptyset$
   $\ell_i \gets \text{nulo}$
   \While{\text{orçamento de turnos e avaliações não esgotado}}{
@@ -38,7 +38,7 @@ A seguir, o Algoritmo~\ref{alg:carte} apresenta a visão geral do método propos
     }{
       \eIf{$\text{ação}$ é de preparação}{
         $o \gets \Act{Executar}(\text{ação}, \text{argumentos})$
-        registrar handle de pool ou de pesos; consumir um turno; não pontuar
+        registrar identificador de pool ou de pesos; consumir um turno; não pontuar
       }{
         $s \gets \Act{ConstruirEstrategia}(\text{ação}, \text{argumentos})$
         $sc \gets \Act{Pontuar}(i, s)$
@@ -55,18 +55,23 @@ A seguir, o Algoritmo~\ref{alg:carte} apresenta a visão geral do método propos
       }
     }
   }
-  $\mathcal{K}_i \gets \Act{ShortlistFamilias}(\mathcal{H}_i, \mathcal{F}_i)$
+  \If{$\mathcal{H}_i = \emptyset$}{
+    registrar falha da série; \textbf{continuar}
+  }
+  $\mathcal{G}_i \gets \Act{FormaPrevisaoDecisao}(i)$
+  $\mathcal{K}_i \gets \Act{ShortlistFamilias}(\mathcal{H}_i)$
   \eIf{$\mathcal{K}_i = \emptyset$}{
     $c_i \gets \ell_i$
   }{
     \If{$\ell_i \notin \mathcal{K}_i$}{
-      $\ell_i \gets$ primeiro candidato plausível de $\mathcal{K}_i$
+      $\ell_i \gets$ primeiro candidato admissível de $\mathcal{K}_i$
     }
     $c_i \gets \ell_i$
     \If{$\Act{CondicaoSazonal}(\mathbf{z}_i)$ \textbf{e}
         $|\mathcal{K}_i| \geq 2$}{
-      $s_i^{\star} \gets \arg\min_{s \in \mathcal{K}_i} d_i(s)$
-      \If{$d_i(\ell_i) - d_i(s_i^{\star}) > \text{margem}$}{
+      $s_i^{\star} \gets \arg\min_{s \in \mathcal{K}_i:\, d_i(s)\ \text{definida}} d_i(s)$
+      \If{$d_i(\ell_i)$ \textbf{e} $d_i(s_i^{\star})$ definidos \textbf{e}
+          $d_i(\ell_i) - d_i(s_i^{\star}) > \text{margem}$}{
         $c_i \gets s_i^{\star}$
       }
     }
@@ -131,35 +136,35 @@ Os pesos $\alpha_w$ são fixos e priorizam a janela mais recente. O POCID é rep
 \Entrada{Perfil $\mathbf{z}_i$; avaliação do conjunto de preditores $\mathcal{E}_i$}
 \Saida{Diagnóstico $\mathcal{C}_i$}
 
-\eIf{força de tendência alta \textbf{e} força sazonal alta}{
+\eIf{força de tendência $\geq 0{,}6$ \textbf{e} força sazonal $\geq 0{,}6$}{
   $\text{regime} \gets \text{misto}$
 }{
-  \eIf{força sazonal alta}{
+  \eIf{força sazonal $\geq 0{,}6$}{
     $\text{regime} \gets \text{dominado por sazonalidade}$
   }{
-    \eIf{força de tendência alta}{
+    \eIf{força de tendência $\geq 0{,}6$}{
       $\text{regime} \gets \text{dominado por tendência}$
     }{
       $\text{regime} \gets \text{ruidoso}$
     }
   }
 }
-\eIf{entropia espectral alta}{
+\eIf{entropia espectral $\geq 0{,}85$}{
   $\text{previsibilidade} \gets \text{baixa}$
 }{
-  \eIf{entropia espectral baixa}{
+  \eIf{entropia espectral $\leq 0{,}5$}{
     $\text{previsibilidade} \gets \text{alta}$
   }{
     $\text{previsibilidade} \gets \text{média}$
   }
 }
-\eIf{$\tau$ baixo}{
+\eIf{$\tau < 0{,}3$}{
   $\text{indicação} \gets \text{combinação robusta}$
 }{
-  \eIf{dispersão de erro alta \textbf{e} $\tau$ razoavelmente estável}{
+  \eIf{dispersão de erro $\geq 0{,}5$ \textbf{e} $\tau \geq 0{,}5$}{
     $\text{indicação} \gets \text{combinação seletiva}$
   }{
-    \eIf{dispersão de erro alta}{
+    \eIf{dispersão de erro $\geq 0{,}3$}{
       $\text{indicação} \gets \text{combinação ponderada}$
     }{
       $\text{indicação} \gets \text{conjunto completo}$
@@ -167,13 +172,14 @@ Os pesos $\alpha_w$ são fixos e priorizam a janela mais recente. O POCID é rep
   }
 }
 $\text{riscos} \gets \emptyset$
-\If{$\tau$ baixo}{$\text{riscos} \gets \text{riscos} \cup
+\If{$\tau < 0{,}3$}{$\text{riscos} \gets \text{riscos} \cup
     \{\text{instabilidade do ranking}\}$}
 \If{há grupo de erro correlacionado}{$\text{riscos} \gets \text{riscos} \cup
     \{\text{redundância}\}$}
 \If{previsibilidade baixa}{$\text{riscos} \gets \text{riscos} \cup
     \{\text{sobreajuste}\}$}
 $\text{riscos} \gets \text{riscos} \cup \{\text{apenas três janelas}\}$
+$\text{riscos} \gets$ primeiros três riscos da lista
 $\text{narrativa} \gets$ síntese textual das categorias
 $\mathcal{C}_i \gets (\text{regime}, \text{previsibilidade},
     \text{indicação}, \text{riscos}, \text{narrativa})$

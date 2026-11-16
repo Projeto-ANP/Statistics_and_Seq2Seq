@@ -9,7 +9,7 @@ A Tabela~\ref{tab:sintese-vitorias} apresenta o número de séries, entre as 680
 
 \begin{table}[H]
 \centering
-\caption{Contagem de vitórias por método, entre as 680 séries dos sete conjuntos de dados.}
+\caption{Contagem de vitórias por método, entre as 680 séries dos sete conjuntos de dados. Empates entre CARTE e mediana são atribuídos à mediana.}
 \label{tab:sintese-vitorias}
 \begin{tabular}{@{}lrr@{}}
 \toprule
@@ -23,6 +23,8 @@ Mediana             & 92  & 13,53 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Nos quatro empates entre CARTE e mediana, a contagem atribui a vitória à mediana; por isso as vitórias somam 680.
 
 O Random Forest (DWT), apesar de ser um único modelo fixo aplicado indistintamente às 680 séries de domínios tão distintos quanto demanda de combustíveis, séries semanais do M4 e temperatura de transformadores elétricos, vence em 205 delas, a maior contagem entre os cinco métodos. Isso não contradiz o resultado da MCM agregada da Seção anterior, em que o CARTE obtém o menor SMAPE médio: um único modelo pode vencer com mais frequência, série a série, sem que isso implique o menor erro médio, caso suas derrotas sejam, em média, maiores em magnitude do que suas vitórias. A ordem obtida pela contagem de vitórias também não coincide inteiramente com a ordem do rank médio da Tabela~\ref{tab:sintese-ranking}: o ADE vence em mais séries que o FFORMA (127 contra 114), mesmo tendo o pior rank médio entre os quatro métodos comparáveis (3,86 contra 3,00) e o pior SMAPE médio agregado da Seção anterior. Esse padrão, já observado repetidamente ao longo deste capítulo em conjuntos de dados individuais, volta a se confirmar na agregação: o desempenho médio do ADE é penalizado por perdas de grande magnitude, ainda que vença com mais frequência do que o FFORMA em termos absolutos.
 ```

@@ -7,9 +7,9 @@ Continua a seção `Estudo de ablação: a seleção pelo agente` com a subseç�
 
 O CARTE-oráculo é o melhor cenário possível para o agente com acesso à janela de teste. Ele não é um método, porque usa informação que o CARTE não tem no momento da escolha. Para separar o que o agente poderia alcançar sem novas propostas do que o catálogo oferece, a análise distingue três versões. O CARTE-oráculo restrito escolhe a melhor entre as tentativas do agente em cada execução. O CARTE-oráculo escolhe a melhor entre as estratégias de $U$. O CARTE-oráculo de validação escolhe a melhor pela pontuação de validação e não usa a janela de teste. O melhor individual é o menor SMAPE entre os dezenove preditores em cada série. Todos, exceto o de validação, usam a janela de teste.
 
-O CARTE-oráculo restrito é calculado execução a execução, e o valor reportado é a média das dez execuções. As melhores 10 restringem o conjunto às tentativas a1 a a10. O CARTE-oráculo e o CARTE-oráculo de validação são calculados sobre $U$. O melhor individual é escolhido em cada série.
+O CARTE-oráculo restrito é calculado execução a execução, e o valor reportado é a média das dez execuções. A coluna 10 primeiras restringe o conjunto às tentativas a1 a a10 e reporta o melhor resultado entre elas. O CARTE-oráculo e o CARTE-oráculo de validação são calculados sobre $U$. O melhor individual é escolhido em cada série.
 
-$U$ é uma grade fixa de estratégias. Ela contém o pool completo, as seleções por estabilidade, as seleções pelos melhores, a seleção forward, a média, a mediana, a média aparada, o DBA e as médias ponderadas, com as grades de \textit{trim} e \textit{shrinkage}. No agregado, $U$ tem em média 226 estratégias por série. Na média dos sete, são 215. Em ANP, NN5 e M4, chega a 228. Nos ETT, fica em 216 ou menos porque o meta-modelo entre séries não é treinado com sete séries. O CARTE-oráculo é um limite dentro de $U$. Como a grade não esgota todos os parâmetros, o limite verdadeiro pode ser menor.
+$U$ é uma grade fixa de estratégias. Ela contém o pool completo, as seleções por estabilidade, as seleções pelos melhores, a seleção forward, a média, a mediana, a média aparada, o DBA e as médias ponderadas, com as grades de \textit{trim} e \textit{shrinkage}. No agregado, $U$ tem em média 226 estratégias por série. Na média dos sete, são 215. Em ANP, NN5 e M4, chega a 228. Nos ETT, fica em 216 ou menos porque a ação de peso pelo meta-modelo não é treinada com sete séries. O CARTE-oráculo é um limite dentro de $U$. Como a grade não esgota todos os parâmetros, o limite verdadeiro pode ser menor.
 
 A Tabela~\ref{tab:ablacao-carte-oraculo-smape} apresenta o SMAPE médio do CARTE e dos oráculos. Em negrito, o menor valor da linha.
 
@@ -17,7 +17,7 @@ A Tabela~\ref{tab:ablacao-carte-oraculo-smape} apresenta o SMAPE médio do CARTE
 \centering
 \footnotesize
 \setlength{\tabcolsep}{3pt}
-\caption{SMAPE médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o menor valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhores 10, CARTE-oráculo de validação, CARTE-oráculo e melhor individual.}
+\caption{SMAPE médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o menor valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhor das 10 primeiras, CARTE-oráculo de validação, CARTE-oráculo e melhor individual.}
 \label{tab:ablacao-carte-oraculo-smape}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
@@ -37,9 +37,9 @@ Agregado (680 séries) & 13,78 & 11,61 & 11,74 & 14,11 & 10,55 & \textbf{10,04} 
 \end{tabular}
 \end{table}
 
-O CARTE-oráculo restrito fica em 18,64\% na média dos sete e 11,61\% no agregado. As melhores 10 ficam em 18,87\% e 11,74\%. O CARTE-oráculo fica em 17,39\% e 10,55\%. O melhor individual fica em 17,55\% e 10,04\%. O CARTE fica 1,63 e 2,17 pontos percentuais acima do CARTE-oráculo restrito, 1,40 e 2,04 acima das melhores 10, 2,88 e 3,23 acima do CARTE-oráculo, e 2,72 e 3,74 acima do melhor individual. A distância para o CARTE-oráculo restrito e para as melhores 10 é menor que a distância para o CARTE-oráculo e para o melhor individual. A seleção do agente é eficiente porque aproveita bem o histórico que ele próprio construiu.
+O CARTE-oráculo restrito fica em 18,64\% na média dos sete e 11,61\% no agregado. O melhor das 10 primeiras fica em 18,87\% e 11,74\%. O CARTE-oráculo fica em 17,39\% e 10,55\%. O melhor individual fica em 17,55\% e 10,04\%. O CARTE fica 1,63 e 2,17 pontos percentuais acima do CARTE-oráculo restrito, 1,40 e 2,04 acima do melhor das 10 primeiras, 2,88 e 3,23 acima do CARTE-oráculo, e 2,72 e 3,74 acima do melhor individual. A distância para o CARTE-oráculo restrito e para o melhor das 10 primeiras é menor que a distância para o CARTE-oráculo e para o melhor individual. A seleção do agente é eficiente porque aproveita bem o histórico que ele próprio construiu.
 
-A diferença entre o CARTE-oráculo restrito e as melhores 10 é de 0,23 e 0,13 ponto percentual. Ela é menor que a distância entre o CARTE e as melhores 10, de 1,40 e 2,04. O gargalo está na seleção, não na quantidade de propostas.
+A diferença entre o CARTE-oráculo restrito e o melhor das 10 primeiras é de 0,23 e 0,13 ponto percentual. Ela é menor que a distância entre o CARTE e o melhor das 10 primeiras, de 1,40 e 2,04. O gargalo está na seleção, não na quantidade de propostas.
 
 O CARTE-oráculo de validação fica em 21,91\% e 14,11\%, pior que o CARTE em 1,64 e 0,33 ponto percentual. Em ETTh1 e ETTm1, a deterioração é grande, de 22,72\% para 25,06\% e de 41,03\% para 49,47\%. Com cerca de 226 estratégias e três janelas, o máximo da validação é uma estatística extrema. Parte do ganho é ruído das janelas e não se repete no teste. Esse é o \textit{winner's curse}. O agente avalia até doze propostas, enquanto o CARTE-oráculo de validação escolhe entre 226. A seleção do agente é mais conservadora, e é mais eficiente que a maximização da validação em $U$.
 
@@ -51,7 +51,7 @@ A Tabela~\ref{tab:ablacao-carte-oraculo-pocid} repete a estrutura para o POCID. 
 \centering
 \footnotesize
 \setlength{\tabcolsep}{3pt}
-\caption{POCID médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o maior valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhores 10, CARTE-oráculo de validação, CARTE-oráculo e melhor individual. O melhor individual é o modelo de maior POCID entre os dezenove preditores em cada série.}
+\caption{POCID médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o maior valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhor das 10 primeiras, CARTE-oráculo de validação, CARTE-oráculo e melhor individual. O melhor individual é o modelo de maior POCID entre os dezenove preditores em cada série.}
 \label{tab:ablacao-carte-oraculo-pocid}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
@@ -71,7 +71,7 @@ Agregado (680 séries) & 57,18 & 71,71 & 70,87 & 56,56 & \textbf{79,25} & 78,32 
 \end{tabular}
 \end{table}
 
-No POCID, o CARTE-oráculo fica em 72,78\% e 79,25\%, o CARTE-oráculo restrito em 66,45\% e 71,71\%, e as melhores 10 em 65,81\% e 70,87\%. O melhor individual por POCID máximo fica em 71,05\% e 78,32\%. O CARTE-oráculo de validação fica em 54,52\% e 56,56\%, praticamente o CARTE, que fica em 54,05\% e 57,18\%. O CARTE está 18,72 e 22,06 pontos percentuais abaixo do CARTE-oráculo, 12,40 e 14,53 abaixo do CARTE-oráculo restrito, e 11,76 e 13,68 abaixo das melhores 10. No POCID, o CARTE-oráculo de validação não agrega. Ele fica 0,46 ponto acima do CARTE na média dos sete e 0,63 abaixo no agregado.
+No POCID, o CARTE-oráculo fica em 72,78\% e 79,25\%, o CARTE-oráculo restrito em 66,45\% e 71,71\%, e o melhor das 10 primeiras em 65,81\% e 70,87\%. O melhor individual por POCID máximo fica em 71,05\% e 78,32\%. O CARTE-oráculo de validação fica em 54,52\% e 56,56\%, praticamente o CARTE, que fica em 54,05\% e 57,18\%. O CARTE está 18,72 e 22,06 pontos percentuais abaixo do CARTE-oráculo, 12,40 e 14,53 abaixo do CARTE-oráculo restrito, e 11,76 e 13,68 abaixo do melhor das 10 primeiras. No POCID, o CARTE-oráculo de validação não agrega. Ele fica 0,46 ponto acima do CARTE na média dos sete e 0,63 abaixo no agregado.
 
 No POCID, o CARTE-oráculo supera o melhor individual em seis dos sete conjuntos e empata no ETTm2. O POCID tem muitos empates e não participa da seleção. A leitura principal é o SMAPE. O POCID confirma que o espaço para melhorar é grande, mas não indica um caminho de seleção.
 
@@ -115,7 +115,7 @@ Individual    & +16,99 & +21,14 & 653/22/5 \\
 \end{tabular}
 \end{table}
 
-O CARTE-oráculo supera o CARTE em 679 das 680 séries no SMAPE e em 662 no POCID. O CARTE-oráculo restrito supera em 672 e 648. As melhores 10 superam em 666 e 639. O melhor individual supera em 659 e 653. O CARTE-oráculo de validação supera o CARTE em 308 séries no SMAPE e 281 no POCID, empata em 27 e 106, e perde em 345 e 293. A contagem confirma que o CARTE-oráculo de validação não é uma alternativa. Ele vence menos da metade das séries e perde mais do que vence.
+O CARTE-oráculo supera o CARTE em 679 das 680 séries no SMAPE e em 662 no POCID. O CARTE-oráculo restrito supera em 672 e 648. O melhor das 10 primeiras supera em 666 e 639. O melhor individual supera em 659 e 653. O CARTE-oráculo de validação supera o CARTE em 308 séries no SMAPE e 281 no POCID, empata em 27 e 106, e perde em 345 e 293. A contagem confirma que o CARTE-oráculo de validação não é uma alternativa. Ele vence menos da metade das séries e perde mais do que vence.
 
-Os oráculos mostram que o CARTE não é o ótimo global. O espaço restante até as melhores 10 é de 1,40 e 2,04 pontos percentuais, na média dos sete e no agregado. Até o CARTE-oráculo restrito, é de 1,63 e 2,17. Até o CARTE-oráculo, é de 2,88 e 3,23. A maior parte do espaço perdido está na seleção, não na geração. As melhores 10 já são 1,40 e 2,04 melhores que o CARTE, e as duas últimas tentativas acrescentam 0,23 e 0,13 ponto percentual ao valor das melhores 10. O CARTE-oráculo de validação em $U$ é pior que o CARTE, o que mostra que a seleção do agente é mais eficiente do que maximizar a validação em um conjunto grande. O que o CARTE oferece é uma escolha conservadora, auditável e próxima do melhor que ele próprio gerou, não o ótimo global.
+Os oráculos mostram que o CARTE não é o ótimo global. O espaço restante até o melhor das 10 primeiras é de 1,40 e 2,04 pontos percentuais, na média dos sete e no agregado. Até o CARTE-oráculo restrito, é de 1,63 e 2,17. Até o CARTE-oráculo, é de 2,88 e 3,23. A maior parte do espaço perdido está na seleção, não na geração. O melhor das 10 primeiras já é melhor que o CARTE em 1,40 e 2,04 pontos percentuais, e as duas últimas tentativas acrescentam 0,23 e 0,13 ponto percentual ao valor do melhor das 10 primeiras. O CARTE-oráculo de validação em $U$ é pior que o CARTE, o que mostra que a seleção do agente é mais eficiente do que maximizar a validação em um conjunto grande. O que o CARTE oferece é uma escolha conservadora, auditável e próxima do melhor que ele próprio gerou, não o ótimo global.
 ```

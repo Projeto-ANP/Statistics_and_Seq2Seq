@@ -5,26 +5,26 @@ Substitui a seção `Agente combinador` de `overleaf/proposta.tex` (linhas 409�
 ```latex
 \section{Agente combinador} \label{sec:agente}
 
-Com o contexto da série já construído, o agente entra em ação para decidir a estratégia de combinação a ser empregada. O histórico de tentativas $\mathcal{H}_i$ começa vazio: não há estratégias previamente avaliadas nem piso determinístico inicial. A primeira avaliação realizada pelo agente é a primeira tentativa da série e, portanto, o primeiro líder. Essa escolha impede que o agente ancore em um conjunto fixo de combinações e desloca o ponto de partida para as evidências da própria série.
+Com o contexto da série já construído, o agente inicia a busca por uma estratégia de combinação. O histórico de tentativas $\mathcal{H}_i$ começa vazio, sem estratégias previamente avaliadas. A primeira estratégia avaliada torna-se o primeiro líder de validação.
 
 \subsection{Ações de preparação e de avaliação}
 
 O agente opera sobre um conjunto fechado de ações determinísticas, implementadas como funções convencionais, sem participação de modelo de linguagem em sua execução. O agente interage com elas exclusivamente pelo nome da ação e pelos argumentos fornecidos em sua \textit{Action Input}. Ele nunca escreve valores numéricos de previsão, pesos ou métricas: as ações calculam esses valores, e o agente recebe identificadores e resumos.
 
-As ações de preparação dividem-se em dois grupos. As ações de seleção de pool produzem um subconjunto de $\mathcal{M}$, referenciado por um identificador que pode ser usado como argumento de ações posteriores. As ações de seleção são a seleção dos $k$ preditores de menor erro segundo uma métrica e um conjunto de janelas indicados pelo agente; a seleção dos $k$ preditores mais estáveis, que combina a posição média no \textit{ranking} com sua variação entre janelas; a poda de redundância, que remove preditores com erro fortemente correlacionado e mantém o de menor erro em cada grupo; e a seleção gulosa, que adiciona iterativamente o preditor que mais reduz o erro da média corrente. O valor de $k$, a métrica e as janelas são escolhas do agente, não constantes do método.
+As ações de preparação dividem-se em dois grupos. As ações de seleção de pool produzem um subconjunto de $\mathcal{M}$, referenciado por um identificador que pode ser usado como argumento de ações posteriores. As ações de seleção oferecidas são a seleção dos $k$ preditores de menor erro segundo uma métrica e um conjunto de janelas indicados pelo agente; a seleção dos $k$ preditores mais estáveis, que combina a posição média no \textit{ranking} com sua variação entre janelas; e a seleção gulosa, que adiciona iterativamente o preditor que mais reduz o erro da média corrente. O valor de $k$ e a métrica são escolhas do agente; a seleção por erro também aceita um conjunto de janelas.
 
-As ações de cálculo de pesos produzem um vetor de pesos sobre um pool, também referenciado por um identificador. As ações de pesos são o peso pelo erro inverso, o peso pela tendência do erro ao longo das janelas, o peso pelo melhor preditor em cada passo do horizonte, o peso pela média dos melhores preditores em cada passo e o peso pela contagem de seleções da busca gulosa. A ação de peso por top-k em cada passo do horizonte atribui peso igual aos $k$ preditores de menor erro naquele passo e zero aos demais, produzindo uma matriz de pesos de ordem $|\mathcal{M}_s| \times h$. O agente escolhe $k$ e a métrica. Essa ação permite que preditores diferentes sejam usados em passos diferentes do horizonte, quando o melhor preditor muda ao longo dele.
+As ações de cálculo de pesos produzem um vetor de pesos sobre um pool, também referenciado por um identificador. As ações de pesos oferecidas são o peso pelo erro inverso, o peso pela tendência do erro ao longo das janelas, o peso pelo melhor preditor em cada passo do horizonte, o peso pela média dos melhores preditores em cada passo, o peso pela contagem de seleções da busca gulosa e o peso pelo meta-modelo. A ação de peso por top-k em cada passo do horizonte atribui peso igual aos $k$ preditores de menor erro naquele passo e zero aos demais, produzindo uma matriz de pesos de ordem $|\mathcal{M}_{i,s}^{(w)}| \times h$. O agente escolhe $k$ e a métrica. Essa ação permite que preditores diferentes sejam usados em passos diferentes do horizonte, quando o melhor preditor muda ao longo dele.
 
 Uma rota possível, e não obrigatória, combina a seleção dos $k$ melhores preditores, a ponderação pela média dos $k$ melhores em cada passo do horizonte e a avaliação da combinação ponderada. A rota é apresentada ao agente como exemplo de composição de ações, não como receita a ser seguida. O agente pode avaliar diretamente uma média, uma mediana, uma média aparada, uma combinação ponderada por um método de pesos ou um DBA sobre um pool fixo, sem passar por ações de preparação.
 
-A ação de avaliação é a única por meio da qual uma estratégia passa a integrar o histórico $\mathcal{H}_i$. Ela monta a estratégia especificada, executa o procedimento de \textit{backtest} descrito na Seção~\ref{sec:pontuacao} e devolve ao agente a posição da tentativa no histórico, a pontuação obtida e o erro por janela. Os métodos de combinação disponibilizados por essa ação são a média, a mediana, a média aparada, a combinação ponderada e o DBA; toda combinação usa pelo menos dois preditores. O subconjunto e, quando aplicável, os pesos, são informados como argumentos, referenciados por identificador. Se a estratégia já tiver sido avaliada, a ação devolve a tentativa existente e sinaliza que não houve nova tentativa, evitando duplicatas no histórico.
+A ação de avaliação é a única por meio da qual uma estratégia passa a integrar o histórico $\mathcal{H}_i$. Ela monta a estratégia especificada, executa o procedimento de \textit{backtest} descrito na Seção~\ref{sec:pontuacao} e devolve ao agente a posição da tentativa no histórico, a pontuação obtida e o RMSE por janela. Os métodos de combinação disponibilizados por essa ação são a média, a mediana, a média aparada, a combinação ponderada e o DBA; toda combinação usa pelo menos dois preditores. O subconjunto e, quando aplicável, os pesos, são informados como argumentos, por identificador de pool ou por lista de modelos; os pesos podem ser um identificador ou o nome de um método. Se a estratégia já tiver sido avaliada, a ação devolve a tentativa existente e sinaliza que não houve nova tentativa, evitando duplicatas no histórico.
 
-A Tabela~\ref{tab:acoes_carte} reúne as ações efetivas do CARTE, o identificador correspondente na implementação e uma descrição. O conjunto é fechado, mas não é definido por um número fixo de entradas: a Tabela organiza as ações pela função que desempenham.
+A Tabela~\ref{tab:acoes_carte} reúne as ações determinísticas do CARTE, o identificador correspondente na implementação e uma descrição. As ações são agrupadas pela função que desempenham.
 
 \begin{table}[H]
 \small
 \centering
-\caption{Ações determinísticas disponíveis no CARTE.}
+\caption{Ações determinísticas do CARTE.}
 \label{tab:acoes_carte}
 \begin{tabular}{@{}p{3.8cm}p{5.6cm}p{4.6cm}@{}}
 \toprule
@@ -32,24 +32,26 @@ A Tabela~\ref{tab:acoes_carte} reúne as ações efetivas do CARTE, o identifica
 \midrule
 Seleção dos $k$ preditores de menor erro & \texttt{select\_top\_k} & Menor erro segundo a métrica e as janelas indicadas. \\
 Seleção dos preditores mais estáveis & \texttt{select\_stable} & Melhor posição média no \textit{ranking}, penalizada pela variação. \\
-Poda de redundância & \texttt{prune\_redundant} & Remove preditores de erro correlacionado. \\
 Seleção gulosa & \texttt{select\_forward} & Adiciona o preditor que mais reduz o erro da média corrente. \\
 Peso pelo erro inverso & \texttt{weights\_inverse\_error} & Pesos proporcionais ao inverso do erro. \\
 Peso pela tendência do erro & \texttt{weights\_error\_trend} & Pesos pela direção do erro entre janelas. \\
 Peso pelo melhor preditor por passo & \texttt{weights\_best\_per\_horizon} & Peso unitário ao melhor preditor de cada passo. \\
 Peso pela média dos $k$ melhores por passo & \texttt{weights\_topk\_per\_horizon} & Peso igual aos $k$ melhores de cada passo. \\
 Peso pela busca gulosa & \texttt{weights\_forward} & Pesos pela frequência de seleção na busca gulosa. \\
+Peso pelo meta-modelo & \texttt{weights\_meta\_model} & Pesos por meta-modelo de série ou entre séries; o escopo entre séries exige um conjunto com séries suficientes. \\
 Avaliação de estratégia & \texttt{evaluate\_strategy} & Monta, executa o \textit{backtest} e registra a tentativa. \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Além das ações, a avaliação aceita métodos de pesos nomeados. A Tabela~\ref{tab:metodos_pesos} registra a correspondência entre o nome usado no texto e o identificador empregado na implementação. As ações de seleção usam RMSE por padrão e aceitam SMAPE como alternativa. As ações de pesos recebem uma métrica de erro; quando o agente especifica SMAPE, esse valor é usado no ajuste dos pesos. Ações que exigem mais janelas de validação do que as três disponíveis não integram o conjunto oferecido ao agente.
+A ação de peso pelo meta-modelo cria um identificador de pesos sobre o pool indicado. No escopo de série, ajusta o modelo às janelas da própria série, com fallback para softmax quando a amostra é insuficiente; no escopo de conjunto, usa um modelo treinado nas demais séries e só fica disponível quando o conjunto tem séries suficientes.
+
+Além das ações, o agente pode nomear métodos de pesos na avaliação. A Tabela~\ref{tab:metodos_pesos} registra a correspondência entre o nome usado no texto e o identificador empregado na implementação. A ação \texttt{weights\_meta\_model} permite escolher o escopo de série ou de conjunto; os nomes \texttt{feature\_based} e \texttt{pooled\_meta\_model} correspondem aos dois escopos e também são aceitos pela avaliação. As ações de seleção usam RMSE por padrão e aceitam SMAPE como alternativa. As ações de pesos que ajustam a partir das janelas recebem uma métrica de erro; quando o agente especifica SMAPE, esse valor é usado no ajuste.
 
 \begin{table}[H]
 \small
 \centering
-\caption{Métodos de pesos aceitos pela avaliação de estratégia.}
+\caption{Métodos de pesos oferecidos ao agente.}
 \label{tab:metodos_pesos}
 \begin{tabular}{@{}p{7.0cm}p{7.0cm}@{}}
 \toprule
@@ -61,40 +63,44 @@ Tendência do erro & \texttt{error\_trend} \\
 Melhor preditor por passo & \texttt{best\_per\_horizon} \\
 Média dos $k$ melhores por passo & \texttt{topk\_per\_horizon} \\
 Busca gulosa & \texttt{forward} \\
+Meta-modelo ajustado à série & \texttt{feature\_based} \\
+Meta-modelo entre séries & \texttt{pooled\_meta\_model} \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+O método \texttt{pooled\_meta\_model} só está disponível quando o conjunto tem séries suficientes para treinar o meta-modelo entre séries. O nome \texttt{feature\_based} corresponde ao escopo de série do mesmo meta-modelo, e \texttt{meta\_model} é um atalho para \texttt{pooled\_meta\_model}.
 
 \subsection{Ciclo de raciocínio e ação}
 
 O agente é implementado sobre um modelo de linguagem de peso aberto, executado localmente, operando segundo o paradigma ReAct discutido na Seção~\ref{subsec:react}. A cada iteração, ele recebe um conjunto de informações textuais sobre o estado atual da decisão e deve produzir, em resposta, exatamente três linhas: um \textit{Thought}, em que verbaliza seu raciocínio sobre o que fazer a seguir; uma \textit{Action}, que identifica qual ação deseja invocar; e uma \textit{Action Input}, que especifica os argumentos dessa ação. Nenhum conteúdo além dessas três linhas é aceito como parte da decisão do agente.
 
-O texto fornecido ao agente combina uma parte fixa e uma parte que se atualiza a cada turno. A parte fixa estabelece o papel do agente, o conjunto de ações disponível, o formato de saída exigido, um procedimento de raciocínio em quatro passos, exemplos de tipos distintos de estratégia e diretrizes práticas. Entre as diretrizes estão a orientação de que pesos quase uniformes sobre o pool podem indicar que o problema está na composição do subconjunto, e não no cálculo dos pesos, e a exigência de que cada hipótese seja motivada por uma característica observável da série, como tendência, sazonalidade, estacionariedade, dispersão ou estabilidade do \textit{ranking}.
+O texto fornecido ao agente combina uma parte fixa e uma parte que se atualiza a cada turno. A parte fixa estabelece o papel do agente, o conjunto de ações disponível, o formato de saída exigido, um procedimento de raciocínio em quatro passos, pontos de partida clássicos e diretrizes práticas. Entre as diretrizes estão a exigência de que cada hipótese seja motivada por uma característica observável da série, como tendência, sazonalidade, estacionariedade, dispersão ou estabilidade do \textit{ranking}; o uso da forma das previsões como evidência para a escolha de modelos e pools; e a recomendação de testar um tipo diferente de estratégia quando duas tentativas diferem pouco.
 
-O prompt organiza o contexto em blocos. A Tabela~\ref{tab:blocos_contexto} registra o nome usado no texto, o rótulo literal do prompt e o conteúdo de cada bloco, indicando também se ele é fixo para a série ou atualizado a cada turno. O bloco de diagnóstico do líder informa a pontuação do líder, a distância para o vice-líder e um veredito de separabilidade estatística entre os dois. O veredito é calculado a partir das pontuações por janela e dos resíduos de validação e é apresentado apenas como informação; ele é evidência para o agente, não uma regra de parada e não participa da decisão final.
+O prompt organiza o contexto em blocos. A Tabela~\ref{tab:blocos_contexto} registra o nome usado no texto, a tag XML correspondente e o conteúdo de cada bloco, indicando também se ele é fixo para a série ou atualizado a cada turno. O bloco de diagnóstico do líder informa a pontuação do líder, a distância para o vice-líder e um veredito de separabilidade estatística entre os dois. O veredito é calculado a partir das pontuações por janela e dos resíduos de validação e é apresentado apenas como informação; ele é evidência para o agente, não uma regra de parada e não participa da decisão final.
 
 \begin{table}[H]
 \small
 \centering
-\caption{Blocos do contexto entregue ao agente a cada turno.}
+\caption{Blocos do contexto entregue ao agente.}
 \label{tab:blocos_contexto}
 \begin{tabular}{@{}p{3.4cm}p{3.8cm}p{6.8cm}@{}}
 \toprule
-\textbf{Bloco} & \textbf{Rótulo no prompt} & \textbf{Conteúdo e atualização} \\
+\textbf{Bloco} & \textbf{Tag no prompt} & \textbf{Conteúdo e atualização} \\
 \midrule
-Perfil da série & \textsc{Series Profile} & Escala, período, forças de tendência e sazonalidade, estacionariedade, outliers, autocorrelações e entropia. Fixa. \\
-Pool de modelos & \textsc{Model Pool} & Tabela de erro, melhor preditor por janela, estabilidade do \textit{ranking} e grupos de erro correlacionado. Fixa. \\
-Diagnóstico & \textsc{Diagnosis} & Regime, previsibilidade, indicação de combinação, riscos e narrativa. Fixa. \\
-Forma das previsões & \textsc{Forecast Shape} & Forma das previsões de validação e de teste, sem o valor real de teste. Fixa. \\
-Histórico de tentativas & \textsc{Attempt History} & Tentativas avaliadas, ordenadas por pontuação, com a justificativa registrada. Variável. \\
-Diagnóstico do líder & \textsc{Leader Diagnostics} & Líder, margem para o vice-líder e veredito de separabilidade estatística. Variável. \\
-Identificadores & \textsc{Handles} & Pools e pesos criados durante a execução. Variável. \\
-Métodos de pesos & \textsc{Weight Methods} & Métodos de pesos disponíveis para a avaliação. Fixa. \\
-Combinações não tentadas & \textsc{Next Untried} & Combinações ainda não avaliadas e eventual rota de preparação. Variável. \\
-Resumo das ações & \textsc{Scratchpad} & Resumo das últimas ações e observações. Variável. \\
-Última observação & \textsc{Last Observation} & Última observação completa devolvida por uma ação. Variável. \\
-Cartão de decisão & \textsc{Series Decision Card} & Características da série que devem motivar o próximo teste. Fixa. \\
-Orçamento & \textsc{Budget} & Avaliações e turnos restantes. Variável. \\
+Perfil da série & \texttt{series\_profile} & Resumo do perfil: escala, período, forças de tendência e sazonalidade, método de decomposição, campeões, estacionariedade, outliers, autocorrelações e entropia. Fixo. \\
+Pool de modelos & \texttt{model\_pool} & Tabela de erro, melhor preditor por janela, estabilidade do \textit{ranking} e grupos de erro correlacionado. Fixo. \\
+Diagnóstico & \texttt{diagnosis} & Regime, previsibilidade, indicação de combinação, riscos e narrativa. Fixo. \\
+Forma das previsões & \texttt{forecast\_shape} & Último real de validação e previsões de teste em escore $z$ por vetor; SMAPE por janela, inclinação, volatilidade, grupos de correlação, vetores detalhados, correlações par a par e dispersão. Fixo. \\
+Histórico de tentativas & \texttt{attempt\_history} & Até as dez melhores tentativas, ordenadas por pontuação, com a justificativa registrada. Variável. \\
+Diagnóstico do líder & \texttt{leader\_diagnostics} & Líder, margem para o vice-líder e veredito de separabilidade estatística. Variável. \\
+Identificadores & \texttt{handles} & Pools e pesos criados durante a execução, com concentração. Variável. \\
+Métodos de pesos & \texttt{weight\_methods} & Métodos aceitos em \texttt{evaluate\_strategy} e identificadores existentes. Fixo. \\
+Combinações não tentadas & \texttt{untried} & Combinações ainda não avaliadas e eventual rota de preparação. Variável. \\
+Resumo das ações & \texttt{scratchpad} & Resumo das últimas quatro ações e observações. Variável. \\
+Última observação & \texttt{last\_observation} & Última observação completa devolvida por uma ação. Variável. \\
+Cartão de decisão & \texttt{decision\_card} & Características da série que devem motivar o próximo teste. Fixo. \\
+Orçamento & \texttt{budget} & Avaliações e turnos restantes; avisos de identificadores não pontuados. Variável. \\
 \bottomrule
 \end{tabular}
 \end{table}

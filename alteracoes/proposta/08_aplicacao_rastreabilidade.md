@@ -15,7 +15,7 @@ A shortlist $\mathcal{K}_i$ é construída a partir do histórico $\mathcal{H}_i
 
 Para cada família, seleciona-se a melhor tentativa que satisfaça três condições de plausibilidade. A primeira é que a previsão de teste seja finita e não vazia. A segunda é que sua magnitude não ultrapasse um limite fixo, calculado a partir do último valor observado e da escala recente da série, o que descarta previsões degeneradas ou explosivas. A terceira é que a trajetória não seja duplicata de outra já aceita na shortlist: duas previsões são consideradas a mesma quando são quase idênticas ou quando têm correlação muito alta e a mesma forma padronizada. A shortlist é limitada a um número fixo de famílias.
 
-O líder global é normalmente o melhor membro de sua própria família e, portanto, integra a shortlist. Se o líder for degenerado e ficar de fora, ele é substituído pelo primeiro candidato plausível da shortlist, e a substituição é registrada. As previsões usadas para construir a shortlist são as previsões de teste produzidas pela aplicação de cada tentativa às previsões dos preditores; nenhum valor real de teste é lido nessa etapa.
+O líder global é normalmente o melhor membro de sua própria família e, portanto, integra a shortlist. Se o líder for degenerado e ficar de fora, ele é substituído pelo primeiro candidato admissível da shortlist, e a substituição é registrada. As previsões usadas para construir a shortlist são as previsões de teste produzidas pela aplicação de cada tentativa às previsões dos preditores; nenhum valor real de teste é lido nessa etapa.
 
 \subsubsection{Condição sazonal}
 
@@ -42,7 +42,7 @@ Para cada candidato $s \in \mathcal{K}_i$, a distância à referência sazonal �
         \sigma_i
     },
 \]
-em que $\hat{\mathbf{y}}_{i,s}^{(\mathrm{teste})}$ é a previsão de teste produzida pela estratégia $s$. Essa é a mesma distância resumida para cada candidato na representação $\mathcal{F}_i$, agora formalizada para a decisão final. A distância é uma medida L1 normalizada pela escala recente; valores menores indicam maior proximidade da referência sazonal. Ela utiliza apenas o histórico e as previsões de teste dos candidatos, nunca o valor real de teste.
+em que $\hat{\mathbf{y}}_{i,s}^{(\mathrm{teste})}$ é a previsão de teste produzida pela estratégia $s$. Essa é a mesma distância resumida para cada candidato na representação $\mathcal{G}_i$, agora formalizada para a decisão final. A distância é uma medida L1 normalizada pela escala recente; valores menores indicam maior proximidade da referência sazonal. Ela utiliza apenas o histórico e as previsões de teste dos candidatos, nunca o valor real de teste.
 
 \subsubsection{Regra de decisão}
 

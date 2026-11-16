@@ -164,17 +164,17 @@ As Tabelas `tab:sintese-transformacoes-remocao-smape` e `tab:sintese-transformac
 | NN5 | 12,04 | 13,46 | +1,42 | 46,04 | 42,41 | −3,63 |
 | M4 | 9,28 | 23,70 | +14,42 | 57,72 | 50,46 | −7,26 |
 | ETTh1 | 14,97 | 35,04 | +20,07 | 55,65 | 50,08 | −5,57 |
-| ETTh2 | 17,67 | 50,68 | +33,01 | 54,22 | 50,42 | −3,80 |
+| ETTh2 | 17,67 | 50,68 | +33,00 | 54,22 | 50,42 | −3,80 |
 | ETTm1 | 41,03 | 48,12 | +7,09 | 54,47 | 46,86 | −7,61 |
-| ETTm2 | 17,02 | 25,75 | +8,73 | 40,37 | 46,69 | +6,32 |
-| Total 670 | 13,78 | 22,42 | +8,64 | 57,18 | 53,06 | −4,12 |
+| ETTm2 | 17,02 | 25,75 | +8,73 | 40,37 | 46,69 | +6,31 |
+| Total 670 | 13,78 | 22,42 | +8,64 | 57,03 | 53,06 | −3,97 |
 
 Consequências no texto:
 
 - Linha 845: "sobe de 13,73% para 22,42%, um aumento de 8,69 pontos" → "sobe de 13,78% para 22,42%, um aumento de 8,64 pontos".
-- Linha 845: os ganhos por conjunto passam a ser +33,01 (ETTh2), +20,07 (ETTh1) e +14,42 (M4).
-- Linha 871: "57,01% contra 53,06%, uma diferença de 3,95 pontos" → "57,18% contra 53,06%, uma diferença de 4,12 pontos".
-- Linha 871: a ANP passa a +1,96 e o ETTm2 a +6,32.
+- Linha 845: os ganhos por conjunto passam a ser +33,00 (ETTh2), +20,07 (ETTh1) e +14,42 (M4).
+- Linha 871: "57,01% contra 53,06%, uma diferença de 3,95 pontos" → "57,03% contra 53,06%, uma diferença de 3,97 pontos".
+- Linha 871: a ANP passa a +1,96 e o ETTm2 a +6,31.
 - Linhas 882 e 1418: repetir os valores corrigidos.
 
 A conclusão qualitativa não muda: as transformações pioram o SMAPE nos sete conjuntos e só perdem no POCID na ANP e no ETTm2.
@@ -379,3 +379,27 @@ O `.tex` aponta para `images/resultados_final/...`; no repositório local, as fi
 6. Alinhar o meta-modelo entre o Capítulo 4 e o Capítulo 5.
 7. Acrescentar as referências das figuras de POCID.
 8. Corrigir o roadmap, o custo e os problemas menores de texto.
+
+## Segunda passada — revisão completa após as correções
+
+Depois de reler o arquivo inteiro, foram encontrados e corrigidos mais cinco pontos:
+
+- ETTm1: o texto dizia que o pool completo não foi usado em nenhuma execução. Na verdade, ele foi usado em cerca de 3,4 das 7 séries por execução; o tamanho do pool variou entre 3 e 14 modelos, com mediana 8,0.
+- ETTm2: o texto dizia que o pool completo não foi usado em nenhuma execução. Na verdade, ele foi usado em cerca de 1,4 das 7 séries por execução.
+- A frase sobre a janela de teste dizia que ela "não é observada em nenhuma etapa de decisão". O correto é que os valores reais não são observados; as previsões de teste podem ser usadas como evidência de forma. A frase foi ajustada.
+- A justificativa da escolha do gpt-oss dizia que as diferenças de SMAPE eram inferiores a 1 ponto percentual sem qualificar. Isso vale na média dos sete conjuntos, não em todos os conjuntos. A frase foi qualificada.
+- A tabela de vitórias atribui os quatro empates entre CARTE e mediana à mediana; isso agora está explícito na legenda e no texto.
+
+Também foram ajustados:
+
+- "tetos de seleção" → "os oráculos";
+- "CARTE-oráculo amplo" → "CARTE-oráculo";
+- "removi/recalculei" → "foram removidas/recalculou-se";
+- "Nos seis conjuntos que não o ETTm1" → "Nos seis conjuntos diferentes do ETTm1";
+- "a direção é consistente" → "a direção é predominantemente consistente";
+- a frase ambígua do NN5 sobre superar o melhor individual em SMAPE.
+
+Permanecem fora do `resultados.tex`:
+
+- o catálogo de ações do Capítulo 4 não lista `weights_meta_model`, embora a tabela de frequência registre uma chamada bem-sucedida a essa ação;
+- a subseção `Uso do contexto na escolha das ações` (`18_agente_contexto.md`) não está integrada.
