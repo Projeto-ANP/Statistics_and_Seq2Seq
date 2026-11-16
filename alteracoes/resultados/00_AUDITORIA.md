@@ -282,7 +282,7 @@ Linhas 1173–1414.
 
 ### 14.1 Buscas sem LLM
 
-As tabelas `tab:ablacao-buscas-smape`, `tab:ablacao-buscas-pocid`, `tab:ablacao-buscas-vantagem` e `tab:ablacao-buscas-vitorias` conferem com `outputs/resultados/ablacao_search_carte_resumo/`. As diferenças 0,81 / 0,66 / 2,06, os p-valores de Holm (0,0003 para a gulosa), as contagens C/E/B e as vitórias 150/119/196/158/57 estão corretos. O texto de POCID e a leitura do melhor braço também estão corretos.
+As tabelas `tab:ablacao-buscas-smape`, `tab:ablacao-buscas-pocid`, `tab:ablacao-buscas-vantagem` e `tab:ablacao-buscas-vitorias` conferem com `outputs/resultados/ablacao_search_carte_resumo/`. As diferenças 0,81 / 0,66 / 2,06, os p-valores de Holm (0,0003 para a gulosa), as contagens C/E/P e as vitórias 150/119/196/158/57 estão corretos. O texto de POCID e a leitura da política escolhida também estão corretos.
 
 Observação: "a direção é consistente" (linha 1284) é forte, porque há duas exceções de POCID na média dos sete. Talvez "a direção é predominantemente consistente".
 

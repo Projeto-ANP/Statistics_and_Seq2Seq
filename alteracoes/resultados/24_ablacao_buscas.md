@@ -9,18 +9,18 @@ Esta seção isola o mecanismo de seleção do CARTE. A comparação é feita em
 
 \subsection{Buscas sem LLM} \label{subsec:buscas-sem-llm}
 
-Para isolar o efeito do modelo de linguagem, o agente foi substituído por três políticas que não usam LLM. A busca aleatória foi repetida três vezes, e o valor reportado é a média. A busca gulosa e a seleção por bandit (UCB) são determinísticas. As três partem de um histórico vazio, usam as mesmas ferramentas e receitas do agente, com uma grade fixa de parâmetros, e aplicam a mesma regra final. O espaço das buscas é um subconjunto do espaço do agente, que pode propor estratégias fora da grade. Entre os braços, muda apenas o mecanismo que propõe novas estratégias.
+Para isolar o efeito do modelo de linguagem, o agente foi substituído por três políticas que não usam LLM. A busca aleatória foi repetida três vezes, e o valor reportado é a média. A busca gulosa e a seleção por bandit (UCB) são determinísticas. As três partem de um histórico vazio, usam as mesmas ferramentas e receitas do agente, com uma grade fixa de parâmetros, e aplicam a mesma regra final. O espaço das buscas é um subconjunto do espaço do agente, que pode propor estratégias fora da grade. Entre as políticas de busca, muda apenas o mecanismo que propõe novas estratégias.
 
-A Tabela~\ref{tab:ablacao-buscas-smape} apresenta o SMAPE médio por conjunto de dados. A coluna \textit{melhor braço} indica, em cada série, o braço de menor pontuação de validação, e reporta o teste desse braço. As duas últimas linhas trazem a média dos sete conjuntos e o agregado das 680 séries.
+A Tabela~\ref{tab:ablacao-buscas-smape} apresenta o SMAPE médio por conjunto de dados. A coluna \textit{política escolhida} indica, em cada série, a política de busca de menor pontuação de validação, e reporta o teste dessa política. As duas últimas linhas trazem a média dos sete conjuntos e o agregado das 680 séries.
 
 \begin{table}[H]
 \centering
 \small
-\caption{SMAPE médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o menor valor da linha. A coluna \textit{melhor braço} indica o braço escolhido por série pela menor pontuação de validação, não um método fixo.}
+\caption{SMAPE médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o menor valor da linha. A coluna \textit{política escolhida} reporta o teste da política de busca de menor pontuação de validação em cada série, não um método fixo.}
 \label{tab:ablacao-buscas-smape}
 \begin{tabular}{@{}lrrrrr@{}}
 \toprule
-\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} \\
+\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Política escolhida} \\
 \midrule
 ANP    & 22,24 & \textbf{22,05} & 22,30 & 22,24 & 22,18 \\
 NN5    & 12,04 & 12,04 & 12,29 & \textbf{11,89} & 12,12 \\
@@ -45,11 +45,11 @@ A Tabela~\ref{tab:ablacao-buscas-pocid} repete a estrutura para o POCID. O POCID
 \begin{table}[H]
 \centering
 \small
-\caption{POCID médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o maior valor da linha. A coluna \textit{melhor braço} indica o braço escolhido por série pela menor pontuação de validação, não um método fixo.}
+\caption{POCID médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o maior valor da linha. A coluna \textit{política escolhida} reporta o teste da política de busca de menor pontuação de validação em cada série, não um método fixo.}
 \label{tab:ablacao-buscas-pocid}
 \begin{tabular}{@{}lrrrrr@{}}
 \toprule
-\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} \\
+\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Política escolhida} \\
 \midrule
 ANP    & 63,28 & 63,34 & \textbf{64,14} & 62,14 & 63,00 \\
 NN5    & \textbf{46,04} & 43,63 & 40,28 & 41,96 & 43,03 \\
@@ -65,31 +65,31 @@ Agregado (680 séries) & \textbf{57,18} & 56,25 & 55,62 & 55,66 & 56,17 \\
 \end{tabular}
 \end{table}
 
-No POCID, o CARTE é o melhor no agregado das 680 séries, com 57,18\%, à frente da aleatória (56,25\%), da gulosa (55,62\%) e da UCB (55,66\%). Na média dos sete, o maior valor é o do melhor braço (54,68\%), seguido da gulosa (54,25\%) e do CARTE (54,05\%). A aleatória fica em 53,89\% e a UCB em 53,77\%. O CARTE fica em terceiro quando o melhor braço entra na comparação e em segundo entre os métodos fixos. Nenhuma diferença de POCID é significativa após a correção de Holm, e há muitos empates.
+No POCID, o CARTE é o melhor no agregado das 680 séries, com 57,18\%, à frente da aleatória (56,25\%), da gulosa (55,62\%) e da UCB (55,66\%). Na média dos sete, o maior valor é o da política escolhida (54,68\%), seguido da gulosa (54,25\%) e do CARTE (54,05\%). A aleatória fica em 53,89\% e a UCB em 53,77\%. O CARTE fica em terceiro quando a política escolhida entra na comparação e em segundo entre os métodos fixos. Nenhuma diferença de POCID é significativa após a correção de Holm, e há muitos empates.
 
-O CARTE é melhor no M4 e no NN5. A gulosa vence na ANP e no ETTm2, a UCB vence no ETTm1, e o melhor braço vence no ETTh2. No ETTh1, o CARTE empata com a gulosa e o melhor braço em 62,11\%. No ETTh2, a diferença para o melhor valor da linha é de 5,41 pontos percentuais, e no ETTm2, de 6,21. Como o POCID não participa da seleção, ele é uma leitura complementar. A ausência de significância não deve ser lida como equivalência, porque o teste tem pouca potência com tantos empates.
+O CARTE é melhor no M4 e no NN5. A gulosa vence na ANP e no ETTm2, a UCB vence no ETTm1, e a política escolhida vence no ETTh2. No ETTh1, o CARTE empata com a gulosa e com a política escolhida em 62,11\%. No ETTh2, a diferença para o melhor valor da linha é de 5,41 pontos percentuais, e no ETTm2, de 6,21. Como o POCID não participa da seleção, ele é uma leitura complementar. A ausência de significância não deve ser lida como equivalência, porque o teste tem pouca potência com tantos empates.
 
-A Tabela~\ref{tab:ablacao-buscas-vantagem} resume a vantagem do CARTE e as contagens pareadas. Valores positivos indicam vantagem do CARTE, e negativos, vantagem do braço.
+A Tabela~\ref{tab:ablacao-buscas-vantagem} resume a vantagem do CARTE e as contagens pareadas. Valores positivos indicam vantagem do CARTE, e negativos, vantagem da política.
 
 \begin{table}[H]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
-\caption{Vantagem média do CARTE sobre as buscas sem LLM, em pontos percentuais, e número de séries em que o CARTE vence, empata ou perde (C/E/B). As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries. Valores positivos indicam vantagem do CARTE.}
+\caption{Vantagem média do CARTE sobre as buscas sem LLM, em pontos percentuais, e número de séries em que o CARTE vence, empata ou perde (C/E/P). As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries. Valores positivos indicam vantagem do CARTE.}
 \label{tab:ablacao-buscas-vantagem}
 \begin{tabular}{@{}lrrrrcc@{}}
 \toprule
-\textbf{Braço} & \textbf{SMAPE 7} & \textbf{SMAPE 680} & \textbf{POCID 7} & \textbf{POCID 680} & \textbf{C/E/B SMAPE} & \textbf{C/E/B POCID} \\
+\textbf{Política} & \textbf{SMAPE 7} & \textbf{SMAPE 680} & \textbf{POCID 7} & \textbf{POCID 680} & \textbf{C/E/P SMAPE} & \textbf{C/E/P POCID} \\
 \midrule
 Aleatória    & +0,81 & +0,08 & +0,17 & +0,93 & 358/0/322 & 335/44/301 \\
 Gulosa       & +2,06 & +0,89 & $-$0,20 & +1,57 & 373/0/307 & 312/61/307 \\
 UCB          & +0,66 & +0,13 & +0,29 & +1,52 & 320/52/308 & 276/127/277 \\
-Melhor braço & +1,90 & +0,29 & $-$0,63 & +1,01 & 329/46/305 & 290/116/274 \\
+Política escolhida & +1,90 & +0,29 & $-$0,63 & +1,01 & 329/46/305 & 290/116/274 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A vantagem do CARTE aparece em 14 das 16 células da tabela. As exceções são o POCID na média dos sete contra a gulosa e contra o melhor braço. O CARTE vence a aleatória em 358 séries e perde em 322 no SMAPE. Contra a UCB, vence em 320 e perde em 308. Contra a gulosa, vence em 373 e perde em 307. As contagens não são unânimes, mas as vitórias do CARTE contra a gulosa são, em média, maiores que as derrotas.
+A vantagem do CARTE aparece em 14 das 16 células da tabela. As exceções são o POCID na média dos sete contra a gulosa e contra a política escolhida. O CARTE vence a aleatória em 358 séries e perde em 322 no SMAPE. Contra a UCB, vence em 320 e perde em 308. Contra a gulosa, vence em 373 e perde em 307. As contagens não são unânimes, mas as vitórias do CARTE contra a gulosa são, em média, maiores que as derrotas.
 
 A Tabela~\ref{tab:ablacao-buscas-vitorias} complementa a leitura com a contagem exclusiva do melhor método em cada série.
 
@@ -110,7 +110,7 @@ POCID & 124 & 95 & 145 & 107 & 209 \\
 
 A gulosa é o melhor SMAPE em 196 séries, contra 150 do CARTE. A diferença entre as duas contagens não se traduz em melhor média para a gulosa porque suas perdas são maiores.
 
-O melhor braço, escolhido por série na validação, tem 22,17\% de SMAPE na média dos sete, atrás do CARTE, da aleatória e da UCB, e à frente apenas da gulosa. No POCID, tem o maior valor na média dos sete, 54,68\%, mas fica em 56,17\% no agregado, abaixo do CARTE. A escolha do braço na validação não reproduz a vantagem do agente. O p bruto dessa comparação no SMAPE é 0,042, mas o valor corrigido é 0,127. A diferença entre o CARTE e o melhor braço é compatível com o uso do diagnóstico da série e do histórico de tentativas na escolha das estratégias, e não somente da pontuação de validação. A seleção do agente é, portanto, mais eficiente que a escolha do braço por validação no SMAPE e competitiva no POCID.
+A política escolhida por série na validação tem 22,17\% de SMAPE na média dos sete, atrás do CARTE, da aleatória e da UCB, e à frente apenas da gulosa. No POCID, tem o maior valor na média dos sete, 54,68\%, mas fica em 56,17\% no agregado, abaixo do CARTE. A escolha da política na validação não reproduz a vantagem do agente. O p bruto dessa comparação no SMAPE é 0,042, mas o valor corrigido é 0,127. A diferença entre o CARTE e a política escolhida é compatível com o uso do diagnóstico da série e do histórico de tentativas na escolha das estratégias, e não somente da pontuação de validação. A seleção do agente é, portanto, mais eficiente que a escolha da política por validação no SMAPE e competitiva no POCID.
 
 As buscas custam entre 0,13 e 5,76 s por série, contra 17,63 a 22,95 s do CARTE na execução representativa. A diferença é o custo das chamadas ao LLM. As buscas são mais baratas, mas não superam o CARTE de forma consistente. O custo adicional do CARTE corresponde à seleção feita pelo agente.
 
