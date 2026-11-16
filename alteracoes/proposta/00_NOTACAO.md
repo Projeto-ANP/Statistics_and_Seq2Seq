@@ -73,8 +73,8 @@ em `proposta.tex`, `resultados.tex` e nos demais capítulos.
 - `revisao.tex`: usa $Y_t$ (série), $L_t$ (componente linear), $R_t$ (resíduo) e
   $A_l$ (modelo). O método usa $\ell_i$ para líder e $\mathcal{A}$ para ações;
   não reutilizar $L_t$ nem $A_l$ no método.
-- `resultados.tex`: usa $\mathcal{M}$ para o pool; manter. Ainda usa `CREST`;
-  a renomeação global para `CARTE` está no índice.
+- `resultados.tex`: usa $\mathcal{M}$ para o pool; manter. Não há mais `CREST`
+  visível; restam apenas rótulos internos, como `sec:crest` e `fig:crest_arquitetura`.
 - `proposta.tex`: as seções antigas ainda usam $X_i$, $T_i$ e $S_i$ com outros
   sentidos; elas serão substituídas pelos arquivos 01–09 e deverão seguir esta
   tabela.

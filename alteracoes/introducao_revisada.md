@@ -1,0 +1,65 @@
+# Introdução — revisão completa
+
+Revisão do texto enviado. O foco foi corrigir erros de gramática e de concordância, alinhar a hipótese e as contribuições ao método e aos resultados atuais, e completar a seção de organização com os conteúdos que os capítulos realmente cobrem.
+
+```latex
+\chapter{Introdução}\label{chp:introducao}
+
+Grande parte dos fenômenos da natureza pode ser medida de maneira contínua ao longo do tempo a partir de observações, resultando em dados sequenciais conhecidos como séries temporais. Uma série temporal pode ser definida como uma sequência cronologicamente ordenada de observações coletadas em intervalos igualmente espaçados ao longo de um período finito de tempo~\citep{kirchgassner2007}. Por exemplo, os valores diários de fechamento de uma determinada ação ao longo de um ano ou os índices de radiação solar ao longo do dia em uma determinada região são apenas alguns casos de observações sequenciais que formam séries temporais.
+
+Séries temporais são uma rica fonte de dados para alimentar algoritmos de aprendizagem de máquina, especialmente os baseados na descoberta de padrões sequenciais. Entre as diferentes tarefas realizadas com esses dados, a previsão de valores futuros, também conhecida como \textit{forecasting}, é uma das mais investigadas na literatura~\citep{parmezan2019evaluation} e é o foco deste trabalho. A previsão de valores é uma tarefa fundamental para a tomada de decisão em diversos domínios. Por exemplo, decisões econômicas de um país podem ser orientadas com base em previsões mensais de índices de inflação. De maneira similar, uma empresa pode tomar decisões estratégicas com base nas previsões de vendas semanais de seus produtos. Assim, modelos preditivos podem ter impactos econômicos, políticos e sociais.
+
+Para a previsão de valores futuros, os métodos exploram características intrínsecas presentes nos dados históricos do fenômeno investigado, como padrões recorrentes, variações cíclicas ou correlações entre valores subsequentes. Esses padrões permitem que os modelos preditivos identifiquem relações temporais nos dados, auxiliando na antecipação de eventos futuros. No entanto, a identificação desses padrões pode ser um desafio, uma vez que nenhum fenômeno é totalmente determinístico, sendo influenciado por fatores externos que podem ser difíceis de mapear durante a coleta dos dados~\citep{box1976}. Por exemplo, o preço de fechamento de uma ação pode ser influenciado pela divulgação do desempenho financeiro da empresa, pelo lançamento de novos produtos, por decisões de processos judiciais e por eventos inesperados, como crises sanitárias ou crises políticas, entre outros fatores.
+
+A previsão de séries temporais pode ser realizada por métodos estatísticos e de aprendizagem de máquina, que diferem quanto às hipóteses adotadas e às relações que conseguem representar. Métodos como ARIMA e SARIMA descrevem a dependência temporal por meio de estruturas autorregressivas e de médias móveis. Outras abordagens, como florestas aleatórias e redes neurais, permitem representar relações não lineares entre as entradas e os valores previstos.
+
+A adequação de cada método depende das características da série, da quantidade de dados disponíveis, do horizonte de previsão e dos recursos computacionais. Essas diferenças motivam a construção de conjuntos diversos de preditores, cujas previsões podem ser combinadas para explorar capacidades complementares.
+
+Em um conjunto de dados composto por múltiplas séries temporais distintas em que se busca realizar a previsão dos valores futuros de cada série, a escolha de um único modelo que seja adequado para todas as séries pode ser um desafio. Um exemplo é o problema de previsão de demanda de combustíveis e derivados de petróleo abordado neste trabalho. Neste problema, a previsão de demanda é realizada por estado e por tipo de combustível ou derivado. Como as características dos dados variam entre as combinações de estado e combustível, há um modelo com maior capacidade preditiva em cada caso. Desse modo, este trabalho explora combinações híbridas que integram modelos paramétricos e não paramétricos, com o objetivo de obter resultados preditivos competitivos ou superiores aos de métodos de uma única abordagem, apoiando-se na diversidade de modelos e representações dos dados e na orquestração das previsões guiada por um agente baseado em modelo de linguagem.
+
+\section{Motivação}
+
+Este trabalho está inserido em um projeto de pesquisa e desenvolvimento de maior porte que reúne pesquisadores do Centro Integrado de Soluções em Inteligência Artificial (CISIA) e da Pontifícia Universidade Católica do Paraná (PUCPR), a \textit{spin-off} 4KST, a ExxonMobil Brasil e a Agência Nacional do Petróleo, Gás Natural e Biocombustíveis (ANP). Neste projeto, o objetivo principal é a construção de modelos de aprendizagem de máquina computacionalmente eficientes e precisos para a previsão de demanda de combustíveis e derivados de petróleo a partir de dados históricos de vendas disponibilizados publicamente pela ANP~\citep{krauseicmla, krause2026foundation}, obtidos e organizados por meio da biblioteca StreamFuels, desenvolvida no âmbito desta dissertação~\citep{streamfuels}. A previsão deve considerar os diferentes estados do Brasil e abranger diferentes combustíveis e derivados de petróleo, como etanol hidratado, gasolina comum, óleo combustível, óleo diesel e gás liquefeito de petróleo (GLP).
+
+Os combustíveis desempenham um papel fundamental no desenvolvimento e na economia de qualquer país, impactando diferentes setores da indústria, dos transportes e da energia~\citep{bilgen2014structure}. Os combustíveis mais populares no setor de transporte, como a gasolina e o óleo diesel, são derivados do petróleo refinado. O etanol é um biocombustível produzido a partir do processamento de matérias-primas vegetais, como a cana-de-açúcar e o milho. Além de ser menos poluente que os combustíveis fósseis, o etanol estimula a produção rural e reduz a dependência de petróleo importado~\citep{la2011biofuels}. O Brasil é um dos principais produtores e consumidores de etanol do mundo e possui a maior frota de veículos capazes de utilizar qualquer proporção de gasolina e etanol~\citep{frutuoso2023assessing}. Assim, pesquisas sobre a previsão de demanda desses produtos são contribuições importantes para o desenvolvimento econômico do país.
+
+Além desta aplicação no setor petrolífero, os métodos desenvolvidos neste trabalho foram avaliados em conjuntos de \textit{benchmarking} de outros domínios de aplicação, como os do repositório \textit{Monash Time Series Forecasting}~\citep{godahewa2021monash} e os da coleção \textit{Electricity Transformer Temperature} (ETT). O repositório Monash reúne múltiplas séries temporais para cada problema, e os conjuntos ETT trazem séries de temperatura e carga elétrica de transformadores, o que permite avaliar o método em domínios, frequências e horizontes distintos.
+
+O trabalho considera dezenove preditores, incluindo modelos estatísticos, de aprendizagem de máquina e variantes treinadas sobre representações alternativas dos dados, obtidas por transformações \textit{wavelet} e de Fourier. A diversidade dos preditores também introduz um problema de escolha: quais modelos combinar e qual regra de agregação utilizar em cada série. Os métodos de combinação existentes, no entanto, definem uma regra fixa, aprendida uma única vez e aplicada a todas as séries, o que não explora a possibilidade de a estratégia mais adequada variar entre elas. Neste trabalho, investiga-se o uso de um agente baseado em modelo de linguagem para orientar a busca por estratégias de combinação a partir das características do histórico e dos resultados de validação.
+
+\section{Objetivos e hipóteses}
+
+O objetivo geral deste trabalho foi desenvolver e avaliar um método de combinação de previsões de séries temporais orientado por um agente baseado em modelo de linguagem. O método utiliza características da série e resultados de validação para explorar estratégias de combinação específicas para cada série, a partir de um conjunto de dezenove preditores estatísticos e de aprendizagem de máquina treinados com diferentes representações dos dados.
+
+Este trabalho também contou com os seguintes objetivos específicos:
+
+\begin{itemize}
+    \item Implementar estratégias de combinação estática, em que as previsões de um conjunto de modelos predefinidos são combinadas a partir de operações simples como média, mediana e \textit{Dynamic Time Warping Barycenter Averaging} (DBA);
+
+    \item Desenvolver um agente baseado em modelo de linguagem para propor estratégias de seleção de preditores, agregação e ponderação, utilizando características da série e resultados de validação para orientar a busca;
+
+    \item Explorar transformações de dados que proporcionem representações enriquecidas e aumentem a diversidade dos modelos a serem combinados;
+
+    \item Avaliar e comparar o desempenho preditivo das diferentes estratégias de combinação de modelos em domínios de aplicação variados;
+
+    \item Divulgar os resultados obtidos ao longo do desenvolvimento deste trabalho e disponibilizar publicamente as implementações desenvolvidas.
+\end{itemize}
+
+Tendo em vista o objetivo principal deste trabalho, formula-se a seguinte hipótese de pesquisa:
+
+\begin{quote}
+\textit{A busca de estratégias de combinação orientada por um agente baseado em modelo de linguagem, utilizando características da série e resultados de validação, tende a reduzir o SMAPE médio em comparação com as combinações estáticas construídas a partir do mesmo conjunto de preditores, mantendo desempenho competitivo frente aos modelos individuais.}
+\end{quote}
+
+\section{Contribuições}
+
+A principal contribuição desta dissertação é o CARTE (\textit{Context-Aware Reasoning for Time-series Ensembles}), um método de combinação de previsões que utiliza um agente baseado em modelo de linguagem para explorar estratégias específicas para cada série temporal. O método integra características da série, desempenho dos preditores em janelas de validação e o histórico das tentativas já avaliadas para orientar a seleção de preditores e a definição de sua forma de combinação, em um ciclo iterativo de proposição e avaliação de estratégias. A decisão final parte do líder de validação e pode ser ajustada por uma condição sazonal determinística, sem acessar os valores reais da janela de teste. O histórico registra as alternativas avaliadas e as justificativas produzidas pelo agente. A avaliação em 680 séries de sete conjuntos de dados mostrou que o CARTE é competitivo frente às estratégias de combinação e aos modelos individuais, alcançando o menor SMAPE médio, tanto na média dos sete conjuntos quanto no agregado das 680 séries, embora, no SMAPE agregado, não se separe estatisticamente da mediana e do FFORMA~\citep{fforma2019}.
+
+Também vale destacar o desenvolvimento da biblioteca StreamFuels~\citep{streamfuels} para a recuperação automática de dados públicos atualizados de acordo com o momento da chamada, limpeza e padronização dos dados e estruturação no formato de séries temporais compatível com bibliotecas como \textit{aeon}~\citep{middlehurst2024aeon} e \textit{sktime}~\citep{sktime}. A biblioteca fornece mais de 40 mil séries organizadas em cinco conjuntos de dados que podem ser empregadas no \textit{benchmarking} de modelos em tarefas como previsão, classificação e descoberta de padrões no domínio de combustíveis.
+
+Como produção científica complementar, o autor contribuiu para um estudo que comparou experimentalmente modelos de fundação (\textit{foundation models}) em regime \textit{zero-shot} para a previsão da demanda de combustíveis~\citep{krause2026foundation}. Embora seus resultados não sejam apresentados nesta dissertação, o estudo insere-se no escopo mais amplo do projeto de pesquisa.
+
+\section{Organização}
+
+O restante deste documento está organizado da seguinte maneira. O Capítulo~\ref{chp:background} apresenta a fundamentação teórica sobre séries temporais, incluindo transformações de dados, modelos preditivos, modelos de linguagem, agentes baseados em modelos de linguagem e os procedimentos e métricas de avaliação experimental. O Capítulo~\ref{chp:revisao} apresenta a revisão de literatura que fundamenta o trabalho proposto, abrangendo modelos lineares e não lineares, combinações de modelos e trabalhos que empregam modelos de linguagem e agentes na etapa de combinação. O Capítulo~\ref{chp:proposta} detalha o CARTE, incluindo a formulação do problema de combinação, a construção do contexto por série, o catálogo de ações do agente, o mecanismo de pontuação, a decisão final e os mecanismos de rastreabilidade. O Capítulo~\ref{chp:resultados} apresenta e discute os resultados experimentais, com as comparações entre modelos individuais e estratégias de combinação, a análise do comportamento do agente, as ablações e as considerações finais sobre o método. Por fim, o Capítulo~\ref{chp:conclusoes} sintetiza as conclusões, retoma as contribuições e apresenta possibilidades de investigação futura.
+```

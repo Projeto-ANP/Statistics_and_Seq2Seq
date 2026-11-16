@@ -12,7 +12,7 @@ Inicialmente, são apresentados a configuração experimental e os critérios de
 
 \section{Design experimental} \label{sec:design-experimental}
 
-O conjunto de preditores individuais utilizado em todos os experimentos é composto por dezenove modelos, sendo três estatísticos (ARIMA, ETS e Theta), dois regressores de aprendizagem de máquina treinados sobre a representação original dos dados (Random Forest e CatBoost), doze variantes desses regressores treinadas sobre representações obtidas por transformação \textit{wavelet} contínua, \textit{wavelet} discreta e de Fourier, tanto de forma concatenada à representação original quanto isoladamente, e dois métodos ingênuos (Naive Seasonal e Naive Moving Average). Cada um desses métodos foi apresentado individualmente no Capítulo~\ref{chp:background}, e sua combinação no conjunto $\mathcal{M}$ foi formalizada na Seção~\ref{sec:formulacao} do capítulo de método.
+O conjunto de preditores individuais utilizado em todos os experimentos é composto por dezenove modelos, sendo três estatísticos (ARIMA, ETS e Theta), dois regressores de aprendizagem de máquina treinados sobre a representação original dos dados (Random Forest e CatBoost), doze variantes desses mesmos dois regressores treinadas sobre representações obtidas por transformação \textit{wavelet} contínua, \textit{wavelet} discreta e de Fourier, tanto de forma concatenada à representação original quanto isoladamente, e dois métodos ingênuos (Naive Seasonal e Naive Moving Average). Cada um desses métodos foi apresentado individualmente no Capítulo~\ref{chp:background}, e sua combinação no conjunto $\mathcal{M}$ foi formalizada na Seção~\ref{sec:formulacao} do capítulo de método.
 
 Os experimentos foram conduzidos sobre sete conjuntos de dados de domínios e frequências de amostragem distintos, resumidos na Tabela~\ref{tab:resultados-datasets}. O conjunto de dados ANP reúne séries históricas de demanda de combustíveis no Brasil, obtidas por meio da biblioteca StreamFuels~\citep{streamfuels}, desenvolvida no âmbito desta dissertação. Também são utilizados os conjuntos NN5 e M4, disponibilizados pelo repositório \textit{Monash Time Series Forecasting}, em suas versões com frequência semanal. O NN5 contém séries de valores de saques em caixas eletrônicos no Reino Unido, enquanto o M4 reúne séries de diferentes domínios, provenientes da competição M4. Por fim, são considerados quatro subconjuntos do \textit{Electricity Transformer Temperature} (ETT), que contêm registros de temperatura do óleo e de carga elétrica de dois transformadores. Os subconjuntos ETTh1 e ETTh2 apresentam observações horárias, enquanto ETTm1 e ETTm2 apresentam observações em intervalos de 15 minutos.
 
@@ -38,16 +38,14 @@ Total & & 680 & \\
 \end{tabular}
 \end{table}
 
-Em todos os casos, o protocolo de avaliação segue o descrito na Seção~\ref{sec:formulacao}, em que cada série é dividida em um conjunto de treino, três janelas de validação e uma janela de teste posterior. As três janelas de validação são usadas tanto para a escolha de hiperparâmetros dos modelos individuais quanto para a decisão de combinação do CARTE. A janela de teste é reservada exclusivamente para a avaliação final e não é observada em nenhuma etapa de decisão. %Os valores reais de teste só são lidos depois que a previsão combinada já foi produzida.
+Em todos os casos, o protocolo de avaliação segue o descrito na Seção~\ref{sec:formulacao}, em que cada série é dividida em um conjunto de treino, três janelas de validação e uma janela de teste posterior. As três janelas de validação são usadas tanto para a escolha de hiperparâmetros dos modelos individuais quanto para a decisão de combinação do CARTE. A janela de teste é reservada exclusivamente para a avaliação final e não é observada em nenhuma etapa de decisão.
 
 As métricas reportadas são o SMAPE e o POCID, definidos na Seção~\ref{sec:metricas}. O SMAPE é calculado entre a previsão combinada e os valores reais da janela de teste; o POCID é calculado dentro dessa mesma janela, comparando a direção das variações previstas e observadas. O SMAPE é a métrica de erro usada para ordenar as estratégias na validação e para comparar os métodos neste capítulo; o POCID é analisado em separado e não participa desse ranking. As comparações entre métodos são feitas por série, com testes pareados quando indicado. Além das comparações por série, os resultados são agregados de duas formas: a média dos sete conjuntos de dados, que atribui o mesmo peso a cada conjunto e é a referência principal deste capítulo, e o agregado das 680 séries, que atribui o mesmo peso a cada série e é reportado como complemento. O agregado é influenciado pelo tamanho dos conjuntos, especialmente por M4 e ANP, e por isso não substitui a média dos sete.
 
 Os experimentos foram realizados em uma máquina equipada com duas GPUs NVIDIA GeForce RTX 5090, com 32 GB de memória VRAM cada, e um processador AMD Ryzen 9 7950X, com 16 núcleos e 32 threads. Os tempos de decisão do agente incluem as chamadas ao modelo de linguagem e a execução das ações determinísticas, e são reportados apenas como medida de custo computacional.
-
-
 \section{Escolha do modelo de linguagem do agente} \label{sec:escolha-llm}
 
-Antes de apresentar os resultados por conjunto de dados, é necessário justificar a escolha do modelo de linguagem empregado no papel de agente combinador ao longo do restante deste capítulo. Três modelos de linguagem de peso aberto foram comparados, sendo avaliado tanto o desempenho preditivo quanto o custo computacional. Todos foram executados no mesmo protocolo experimental, com as configurações de raciocínio adotadas para cada modelo.
+Antes de apresentar os resultados por conjunto de dados, é necessário justificar a escolha do modelo de linguagem empregado no papel de agente combinador ao longo do restante deste capítulo. Três modelos de linguagem de peso aberto foram comparados, sendo avaliado tanto o desempenho preditivo quanto o custo computacional. Todos foram executados no mesmo protocolo experimental, com as configurações de raciocínio adotadas para cada modelo. A comparação usa uma execução de cada modelo.
 
 \subsection{Desempenho preditivo}
 
@@ -109,10 +107,43 @@ Média por série (680 séries) & \textbf{25,20} & 565,46 & 479,69 \\
 
 Para a escolha do modelo de linguagem do agente, o custo computacional é um fator decisivo devido às diferenças significativas entre os modelos avaliados. O gpt-oss leva, em média, 25,20 segundos por série; o Qwen3.8 leva 565,46 segundos, cerca de 22,4 vezes mais, e o Gemma4 leva 479,69 segundos, cerca de 19,0 vezes mais. Em tempo serial, os 680 séries custariam aproximadamente 4,8 horas com o gpt-oss, 106,8 horas com o Qwen3.8 e 90,6 horas com o Gemma4. Desse modo, o gpt-oss foi selecionado, visto que os valores de SMAPE obtidos com Gemma4 e Qwen3.8 são inferiores a 1 ponto percentual e não justificam um custo computacional aproximadamente 20 vezes maior.
 
-%\subsection{Modelo escolhido}
+\section{Execuções e agregação dos resultados} \label{sec:execucoes}
 
-%O \texttt{gpt-oss:20b} é adotado como modelo de linguagem do agente em todos os resultados deste capítulo. A escolha não se apoia na superioridade absoluta em todos os conjuntos: o Qwen3.8 e o Gemma4 são melhores em alguns datasets e chegam a liderar a média dos sete em SMAPE. A escolha se apoia no conjunto de critérios que importa para o restante do capítulo: o gpt-oss tem o melhor agregado das 680 séries em SMAPE e POCID, a melhor média dos sete em POCID, a maior consistência entre as duas agregações e um custo cerca de 19 a 22 vezes menor. Para uma grade com 680 séries, essa diferença de tempo inviabiliza os modelos maiores como configuração principal; eles permanecem como comparação de sensibilidade.
+Os resultados principais do CARTE vêm de dez execuções independentes do agente, numeradas de 1 a 10, realizadas depois da escolha do modelo. Todas usam o mesmo modelo, o mesmo protocolo de preparação, o mesmo conjunto de preditores e a mesma configuração de prompts. Cada execução usa uma sequência de amostragem diferente do modelo de linguagem, e essa diferença altera as decisões do agente. As execuções foram realizadas no mesmo servidor e no mesmo período, o que mantém as mudanças de ambiente sob controle e permite atribuir a variação observada principalmente à sequência de amostragem. A execução usada na Seção~\ref{sec:escolha-llm} serviu apenas para escolher o modelo e não faz parte das dez execuções. Os resultados por conjunto de dados usam a média dessas dez execuções. Por isso, os valores da Tabela~\ref{tab:escolha-llm-desempenho} diferem ligeiramente dos agregados apresentados a seguir.
 
+A Tabela~\ref{tab:execucoes-agregados} apresenta os agregados de cada execução. Para cada uma, o SMAPE e o POCID foram calculados por série e agregados da mesma forma que no restante do capítulo. A linha final mostra a média e o desvio-padrão entre as dez execuções. As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries.
+
+\begin{table}[H]
+\footnotesize
+\centering
+\setlength{\tabcolsep}{4pt}
+\caption{Agregados de SMAPE e POCID por execução do CARTE. Valores em percentual. As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries.}
+\label{tab:execucoes-agregados}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Execução} & \textbf{SMAPE 7} & \textbf{SMAPE 680} & \textbf{POCID 7} & \textbf{POCID 680} \\
+\midrule
+1 & 20,33 & 13,87 & 53,99 & 57,22 \\
+2 & 19,47 & 13,69 & 54,30 & 57,07 \\
+3 & 20,94 & 13,79 & 52,95 & 56,86 \\
+4 & 20,48 & 13,72 & 53,03 & 57,01 \\
+5 & 20,23 & 13,82 & 54,28 & 57,42 \\
+6 & 20,28 & 13,58 & 54,62 & 57,67 \\
+7 & 20,20 & 13,88 & 55,05 & 57,48 \\
+8 & 19,36 & 13,63 & 53,54 & 56,85 \\
+9 & 21,59 & 13,85 & 54,43 & 57,11 \\
+10 & 19,84 & 13,94 & 54,34 & 57,16 \\
+\midrule
+\textbf{Média} & \textbf{20,27 $\pm$ 0,66} & \textbf{13,78 $\pm$ 0,12} & \textbf{54,05 $\pm$ 0,68} & \textbf{57,19 $\pm$ 0,27} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Na média dos sete conjuntos, o SMAPE médio das dez execuções é 20,27\%, com desvio-padrão de 0,66 ponto percentual. O agregado das 680 séries é 13,78\%, com desvio-padrão de 0,12 ponto. Em POCID, a média dos sete é 54,05\%, com desvio-padrão de 0,68 ponto, e o agregado é 57,19\%, com desvio-padrão de 0,27 ponto. As execuções individuais variam entre 19,36\% e 21,59\% na média dos sete em SMAPE e entre 13,58\% e 13,94\% no agregado. Em POCID, a média dos sete varia entre 52,95\% e 55,05\%, e o agregado entre 56,85\% e 57,67\%. O agregado é mais estável que a média dos sete porque é dominado pelos conjuntos com muitas séries, enquanto a média dos sete dá o mesmo peso a cada conjunto.
+
+A dispersão entre execuções é desigual entre os conjuntos. Nos seis conjuntos que não o ETTm1, o desvio-padrão do SMAPE fica entre 0,09 e 0,63 ponto percentual. No ETTm1, sobe para 4,35 pontos, com valores entre 33,81\% e 48,91\%. A variação do ETTm1 se concentra em poucas séries de erro alto, que dominam a média do conjunto. Como o ETTm1 tem apenas sete das 680 séries, seu efeito no agregado é pequeno. O efeito na média dos sete é maior, porque o conjunto recebe o mesmo peso que os demais.
+
+A análise do comportamento do agente, apresentada na Seção~\ref{sec:resultados-agente}, usa a execução 1 dessa série. Essa execução foi escolhida por estar próxima da média das dez nas quatro agregações. Ela apresenta 20,33\% na média dos sete, 13,87\% no agregado, 53,99\% na média dos sete em POCID e 57,22\% no agregado em POCID, valores próximos das médias de 20,27\%, 13,78\%, 54,05\% e 57,19\%. A execução foi escolhida por proximidade com a média das dez, não por ser a melhor. Os traces, as previsões e os estudos de caso dessa seção vêm dessa execução e ilustram uma trajetória representativa. Eles não correspondem à execução média.
 \section{ANP} \label{sec:resultados-anp}
 
 \subsection{Desempenho dos modelos individuais}
@@ -120,7 +151,6 @@ Para a escolha do modelo de linguagem do agente, o custo computacional é um fat
 A Tabela~\ref{tab:anp-individual} apresenta o desempenho médio, entre as 182 séries do conjunto de dados de demanda de combustíveis da ANP, de cada um dos dezenove preditores individuais que compõem $\mathcal{M}$. Em todas as tabelas apresentadas a seguir com o desempenho médio, os modelos estão ordenados por SMAPE de maneira crescente.
 
 \begin{table}[H]
-\small
 \centering
 \caption{Desempenho médio dos modelos individuais na ANP.}
 \label{tab:anp-individual}
@@ -155,10 +185,7 @@ Os modelos estatísticos Theta e ETS ocupam as duas primeiras posições por SMA
 
 \subsection{Desempenho entre estratégias de combinação}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:anp-estaticas}, o FFORMA obtém o melhor resultado em ambas as métricas, com SMAPE de 21,66\% e POCID de 65,13\%, à frente do ADE (21,77\% e 62,39\%), do CARTE (21,93\% e 63,44\%), da mediana (21,94\% e 61,94\%), da média (22,06\% e 61,89\%) e do DBA (22,52\% e 60,54\%). Nenhuma das seis supera o melhor modelo individual do conjunto em SMAPE, o Theta, cujo valor é 21,54\% (Tabela~\ref{tab:anp-individual}): combinar os dezenove preditores, por qualquer uma das seis estratégias aqui comparadas, não é, neste conjunto de dados específico, melhor do que simplesmente escolher o modelo estatístico mais forte do conjunto. Em POCID, o quadro se altera parcialmente: o FFORMA supera o melhor modelo individual nessa métrica, o ETS (64,69\%), e o CARTE fica próximo, mas abaixo dele (63,44\%), enquanto a mediana, a média, o DBA e o ADE ficam atrás do ETS. Esse descolamento entre o desempenho em SMAPE e em POCID já havia sido observado por \citet{krause2026foundation} no mesmo domínio de aplicação, e reforça que a acurácia de magnitude e a acurácia de direção capturam aspectos distintos do problema, conforme discutido na Seção~\ref{sec:metricas}.
-
 \begin{table}[H]
-\small
 \centering
 \caption{Desempenho médio das estratégias de combinação na ANP.}
 \label{tab:anp-estaticas}
@@ -168,33 +195,43 @@ Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:anp-est
 \midrule
 FFORMA & \textbf{21,66} & \textbf{65,13} \\
 ADE    & 21,77 & 62,39 \\
-CARTE  & 21,93 & 63,44 \\
 Mediana & 21,94 & 61,94 \\
 Média   & 22,06 & 61,89 \\
+CARTE  & 22,24 & 63,28 \\
 DBA     & 22,52 & 60,54 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:anp-estaticas}, o FFORMA obtém o melhor resultado em ambas as métricas, com SMAPE de 21,66\% e POCID de 65,13\%, à frente do ADE (21,77\% e 62,39\%), da mediana (21,94\% e 61,94\%), da média (22,06\% e 61,89\%), do CARTE (22,24\% e 63,28\%) e do DBA (22,52\% e 60,54\%). Apesar da quinta posição em SMAPE, o CARTE tem o segundo maior POCID entre as seis combinações. Nenhuma das seis supera o melhor modelo individual do conjunto em SMAPE, o Theta, cujo valor é 21,54\% (Tabela~\ref{tab:anp-individual}): combinar os dezenove preditores, por qualquer uma das seis estratégias aqui comparadas, não é, neste conjunto de dados específico, melhor do que simplesmente escolher o modelo estatístico mais forte do conjunto. Em POCID, o quadro se altera parcialmente: o FFORMA supera o melhor modelo individual nessa métrica, o ETS (64,69\%), e o CARTE fica próximo, mas abaixo dele (63,28\%), enquanto a mediana, a média, o DBA e o ADE ficam atrás do ETS. O CARTE supera o Theta em POCID (63,28\% contra 63,14\%), mas não o ETS. Esse descolamento entre o desempenho em SMAPE e em POCID já havia sido observado por \citet{krause2026foundation} no mesmo domínio de aplicação, e reforça que a acurácia de magnitude e a acurácia de direção capturam aspectos distintos do problema, conforme discutido na Seção~\ref{sec:metricas}.
+
 \subsection{Comparação geral e discussão} \label{subsec:anp-discussao}
 
-A Figura~\ref{fig:mcm-anp} apresenta a Matriz de Comparação Múltipla entre o melhor modelo individual (Theta), a melhor combinação estática (mediana), o FFORMA, o ADE e o CARTE, ordenados por SMAPE médio. A matriz mostra, para cada par, a diferença média, a contagem de vitórias, empates e derrotas e o valor $p$ do teste de Wilcoxon; ela concentra as comparações pareadas.
+A Figura~\ref{fig:mcm-anp} apresenta a Matriz de Comparação Múltipla entre o melhor modelo individual (Theta), o FFORMA, o ADE, a mediana e o CARTE. A MCM de SMAPE usa a melhor combinação estática por SMAPE, que na ANP é a mediana; o DBA aparece apenas na Tabela~\ref{tab:anp-estaticas}. A matriz mostra, para cada par, a diferença média, a contagem de vitórias, empates e derrotas e o valor $p$ do teste de Wilcoxon. Ela concentra as comparações pareadas.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_ANP_MONTHLY.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos na ANP, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos na ANP.}
     \label{fig:mcm-anp}
 \end{figure}
 
-O SMAPE médio dos métodos fica em um intervalo estreito, entre 21,54\% (Theta) e 22,52\% (DBA). A MCM mostra que o CARTE não se separa do Theta ($p = 0{,}9334$), do ADE ($p = 0{,}5832$) nem da mediana ($p = 0{,}8466$); o FFORMA é o único método que se separa do CARTE em SMAPE, com vantagem ($p = 0{,}0375$). Em POCID, o FFORMA lidera entre as combinações (65,13\%), seguido do CARTE (63,44\%); o CARTE supera o ADE (62,39\%), a mediana (61,94\%), a média (61,89\%) e o DBA (60,54\%), mas fica abaixo do ETS individual (64,69\%).
+O SMAPE médio dos cinco métodos da MCM fica em um intervalo estreito, entre 21,54\% (Theta) e 22,24\% (CARTE). A MCM mostra que o CARTE não se separa do Theta ($p = 0{,}3556$) nem da mediana ($p = 0{,}1033$); separa-se do ADE ($p = 0{,}0116$) e do FFORMA ($p \leq 0{,}0001$), ambos com SMAPE menor.
 
-A comparação com o FFORMA é a mais desfavorável ao CARTE e a única, entre as comparações com estratégias de combinação, que se aproxima de uma separação consistente: o FFORMA tem SMAPE médio menor (21,66\% contra 21,93\%) e POCID maior (65,13\% contra 63,44\%), com diferença significativa em SMAPE na MCM ($p = 0{,}0375$). Na contagem por série, o FFORMA vence 107 das 182 séries em SMAPE, contra 75 vitórias do CARTE. A vantagem é pequena em magnitude, mas se sustenta na maioria das séries.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ANP_MONTHLY_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos na ANP, para o POCID.}
+    \label{fig:mcm-anp-pocid}
+\end{figure}
 
-O CARTE supera o DBA nas duas métricas: SMAPE de 21,93\% contra 22,52\% e POCID de 63,44\% contra 60,54\%. Contra a mediana, a média e o ADE, as diferenças são pequenas. O CARTE fica praticamente empatado com a mediana em SMAPE (21,93\% contra 21,94\%) e a supera em POCID (63,44\% contra 61,94\%); contra a média, a diferença em SMAPE também é desprezível (21,93\% contra 22,06\%). Contra o ADE, o CARTE tem SMAPE ligeiramente pior (21,93\% contra 21,77\%) e POCID melhor (63,44\% contra 62,39\%).
+A MCM de POCID usa o ETS como melhor modelo individual e a mediana como melhor combinação estática. O FFORMA lidera entre os cinco métodos (65,13\%), seguido do ETS (64,69\%), do CARTE (63,28\%), do ADE (62,39\%) e da mediana (61,94\%). O CARTE é o segundo entre as seis combinações e o terceiro no conjunto completo, atrás do FFORMA e do ETS. A diferença para o ETS é significativa ($p = 0{,}0025$), com o ETS à frente; as diferenças para ADE e mediana não são significativas ($p = 0{,}2827$ e $p = 0{,}1397$); o FFORMA se separa no topo ($p = 0{,}0014$).
 
-Na ANP, a estratégia final escolhida pelo CARTE foi uma combinação ponderada em 79 das 182 séries, média em 34, mediana em 34, DBA em 23 e média aparada em 12. O pool completo foi usado em 104 séries, e o tamanho mediano do pool final foi de 19 modelos. A variedade de estratégias não se traduziu, porém, em uma vantagem agregada sobre as combinações estáticas: o desempenho do CARTE fica próximo da mediana e do ADE em SMAPE e abaixo do FFORMA nas duas métricas. A ANP é, portanto, um caso em que a combinação não supera o melhor modelo individual em SMAPE e em que o ganho do agente sobre as combinações simples é limitado, o que ajuda a delimitar em que condições o CARTE agrega valor. Entre as combinações, o CARTE ocupa a terceira posição em SMAPE e a segunda em POCID; a ANP é a única exceção à constância top-2 em SMAPE observada nos demais conjuntos, enquanto no POCID o padrão top-2 se mantém.
+A comparação com o FFORMA é a mais desfavorável ao CARTE: o FFORMA tem SMAPE médio menor (21,66\% contra 22,24\%) e POCID maior (65,13\% contra 63,28\%), com diferença significativa nas duas métricas ($p \leq 0{,}0001$ em SMAPE e $p = 0{,}0014$ em POCID). Na contagem por série, o FFORMA vence 117 das 182 séries em SMAPE, contra 65 vitórias do CARTE. A vantagem é de 0,58 ponto percentual em SMAPE e 1,85 ponto em POCID, e se sustenta na maioria das séries.
 
+O CARTE supera o DBA nas duas métricas: SMAPE de 22,24\% contra 22,52\% e POCID de 63,28\% contra 60,54\%. Contra a mediana, o CARTE fica 0,30 ponto percentual atrás em SMAPE (22,24\% contra 21,94\%), diferença que não atinge significância ($p = 0{,}1033$), e à frente em POCID (63,28\% contra 61,94\%), também sem significância ($p = 0{,}1397$). Contra a média, o CARTE tem SMAPE ligeiramente maior (22,24\% contra 22,06\%) e POCID maior (63,28\% contra 61,89\%). Contra o ADE, o CARTE tem SMAPE pior (22,24\% contra 21,77\%), diferença significativa ($p = 0{,}0116$), e POCID melhor (63,28\% contra 62,39\%), sem significância ($p = 0{,}2827$).
+
+Na ANP, ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 82 das 182 séries, em média; a mediana em cerca de 31, a média em cerca de 28, o DBA em cerca de 27 e a média aparada em cerca de 14. O pool completo foi usado em cerca de 99 séries, e o tamanho mediano do pool final foi de 19 modelos. A variedade de estratégias não se traduziu em vantagem agregada sobre as combinações estáticas: em SMAPE, o CARTE fica atrás da mediana, da média e do ADE; em POCID, é o segundo entre as combinações, à frente de ADE, mediana, média e DBA. A ANP é, portanto, um caso em que a combinação não supera o melhor modelo individual em SMAPE e em que o ganho do agente sobre as combinações simples depende da métrica. Entre as combinações, o CARTE ocupa a quinta posição em SMAPE e a segunda em POCID. O padrão top2 não se mantém em SMAPE, mas se mantém em POCID.
 \section{NN5} \label{sec:resultados-nn5}
 
 \subsection{Desempenho dos modelos individuais}
@@ -202,7 +239,6 @@ Na ANP, a estratégia final escolhida pelo CARTE foi uma combinação ponderada 
 A Tabela~\ref{tab:nn5-individual} apresenta o desempenho médio, entre as 111 séries do NN5, de cada um dos dezenove preditores individuais.
 
 \begin{table}[H]
-\small
 \centering
 \caption{Desempenho médio dos modelos individuais no NN5.}
 \label{tab:nn5-individual}
@@ -237,10 +273,7 @@ O padrão observado no NN5 é distinto do observado na ANP: aqui, o CatBoost sob
 
 \subsection{Desempenho entre estratégias de combinação}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:nn5-estaticas}, o ADE obtém o menor SMAPE (11,78\%), seguido do CARTE (11,96\%), do FFORMA (11,97\%), da média (11,99\%), da mediana (12,01\%) e do DBA (12,26\%). Todas as seis superam o melhor modelo individual do conjunto em SMAPE, o CatBoost (Original + FT), cujo valor é 12,30\% (Tabela~\ref{tab:nn5-individual}). O quadro se altera em POCID: entre as combinações, o CARTE obtém o maior valor (47,36\%), seguido do DBA (46,46\%) e da mediana (46,20\%); o melhor modelo individual nessa métrica, o Random Forest (Original + DWT), alcança 49,16\%, acima de todas as combinações. Assim como observado na ANP, a acurácia de magnitude e a acurácia de direção não evoluem necessariamente juntas: o CARTE tem o melhor POCID entre as combinações, mas não o melhor SMAPE.
-
 \begin{table}[H]
-\small
 \centering
 \caption{Desempenho médio das estratégias de combinação no NN5.}
 \label{tab:nn5-estaticas}
@@ -249,31 +282,44 @@ Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:nn5-est
 \textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
 \midrule
 ADE     & \textbf{11,78} & 45,05 \\
-CARTE   & 11,96 & \textbf{47,36} \\
 FFORMA  & 11,97 & 44,66 \\
 Média   & 11,99 & 44,53 \\
 Mediana & 12,01 & 46,20 \\
-DBA     & 12,26 & 46,46 \\
+CARTE   & 12,04 & 46,04 \\
+DBA     & 12,26 & \textbf{46,46} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:nn5-estaticas}, o ADE obtém o menor SMAPE (11,78\%), seguido do FFORMA (11,97\%), da média (11,99\%), da mediana (12,01\%), do CARTE (12,04\%) e do DBA (12,26\%). Todas as seis superam o melhor modelo individual do conjunto em SMAPE, o CatBoost (Original + FT), cujo valor é 12,30\% (Tabela~\ref{tab:nn5-individual}). Em POCID, o DBA obtém o maior valor entre as seis (46,46\%), seguido da mediana (46,20\%) e do CARTE (46,04\%); o melhor modelo individual nessa métrica, o Random Forest (FT), empatado com o Random Forest (Original + DWT), alcança 49,16\%, acima de todas as combinações.
+
+Na tabela completa, o CARTE não aparece no topo, mas as diferenças em SMAPE são pequenas: 12,04\%, apenas 0,07 ponto atrás do FFORMA, 0,05 atrás da média e 0,03 atrás da mediana; a diferença para o ADE, líder, é de 0,26 ponto. Em POCID, é o terceiro entre as seis combinações, 0,16 ponto atrás da mediana e 0,42 atrás do DBA. Ainda assim, supera o CatBoost (Original + FT), o melhor individual em SMAPE, nas duas métricas: 12,04\% contra 12,30\% em SMAPE e 46,04\% contra 44,02\% em POCID. A acurácia de magnitude e a acurácia de direção não evoluem necessariamente juntas, como já observado na ANP.
+
 \subsection{Comparação geral e discussão} \label{subsec:nn5-discussao}
 
-A Figura~\ref{fig:mcm-nn5} apresenta a Matriz de Comparação Múltipla entre o ADE, o CARTE, o FFORMA, a média e o CatBoost (Original + FT), ordenados por SMAPE médio.
+A Figura~\ref{fig:mcm-nn5} apresenta a Matriz de Comparação Múltipla entre o ADE, o FFORMA, a média, o CARTE e o CatBoost (Original + FT). A MCM de SMAPE usa a melhor combinação estática por SMAPE, que no NN5 é a média; a mediana e o DBA aparecem apenas na Tabela~\ref{tab:nn5-estaticas}.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_NN5_WEEKLY_DATASET.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos no NN5, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no NN5.}
     \label{fig:mcm-nn5}
 \end{figure}
 
-A MCM mostra que o CARTE é segundo em SMAPE, atrás apenas do ADE, e primeiro em POCID entre as combinações. As diferenças em SMAPE entre o CARTE e o ADE (11,96\% contra 11,78\%, $p = 0{,}5923$), o FFORMA (11,96\% contra 11,97\%, $p = 0{,}9156$) e a média (11,96\% contra 11,99\%, $p = 0{,}7096$) não são estatisticamente significativas. O CARTE supera o DBA (12,26\%) e a mediana (12,01\%) em SMAPE, mas as diferenças são pequenas.
+A MCM mostra que o CARTE não se separa do FFORMA ($p = 0{,}5444$), da média ($p = 0{,}7285$) nem do CatBoost (Original + FT) ($p = 0{,}6912$) em SMAPE. A comparação com o ADE fica no limite ($p = 0{,}0521$), com o ADE à frente. A MCM de POCID usa o Random Forest (FT) como melhor modelo individual e o DBA como melhor combinação estática. O Random Forest (FT) lidera (49,16\%), seguido do DBA (46,46\%), do CARTE (46,04\%), do ADE (45,05\%) e do FFORMA (44,66\%). O CARTE é o terceiro entre os cinco métodos e o terceiro entre as seis combinações. As diferenças para o Random Forest (FT) e o DBA não são significativas ($p = 0{,}2288$ e $p = 0{,}6749$); as diferenças para ADE e FFORMA também não são ($p = 0{,}3699$ e $p = 0{,}3881$).
 
-A comparação com o melhor modelo individual também não se separa: o CARTE tem SMAPE menor que o CatBoost (Original + FT) (11,96\% contra 12,30\%, $p = 0{,}2048$) e POCID maior (47,36\% contra 44,02\%). Em POCID, o melhor modelo individual do conjunto é o Random Forest (Original + DWT), com 49,16\%, acima do CARTE e de todas as demais combinações. O NN5 é, portanto, um caso em que a combinação melhora o SMAPE em relação ao melhor modelo individual, mas não o POCID, e em que o CARTE é competitivo com as melhores combinações sem se separar delas.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_NN5_WEEKLY_DATASET_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no NN5, para o POCID.}
+    \label{fig:mcm-nn5-pocid}
+\end{figure}
 
-Considerando também os modelos individuais, o CARTE é segundo em POCID, atrás apenas do Random Forest (Original + DWT). O NN5 confirma a constância top-2 que será observada nos demais conjuntos. A estratégia final escolhida pelo CARTE foi uma combinação ponderada em 43 das 111 séries, média em 25, mediana em 23, média aparada em 11 e DBA em 9. O pool completo foi usado em 63 séries, e o tamanho mediano do pool final foi de 19 modelos.
+Na tabela completa das seis combinações, o DBA (46,46\%) e a mediana (46,20\%) ficam à frente do CARTE em POCID; o DBA também aparece na MCM de POCID, mas a mediana não. O CARTE supera o CatBoost (Original + FT), o melhor individual em SMAPE, também em POCID (46,04\% contra 44,02\%), mas fica abaixo do Random Forest (FT), com 49,16\%, o melhor POCID individual. O NN5 é, portanto, um caso em que o CARTE não fica no top2 em nenhuma das duas métricas na tabela completa, mas fica a poucos décimos do grupo da frente em SMAPE, é o terceiro em POCID na MCM e supera o melhor modelo individual em SMAPE nas duas métricas.
+
+Na NN5, ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 44 das 111 séries, em média; a mediana em cerca de 23, a média em cerca de 19, a média aparada em cerca de 13 e o DBA em cerca de 11. O pool completo foi usado em cerca de 59 séries, e o tamanho mediano do pool final foi de 19 modelos.
+
+
 
 \section{M4} \label{sec:resultados-m4}
 
@@ -317,7 +363,7 @@ No M4, os catorze modelos de aprendizagem de máquina, CatBoost e Random Forest 
 
 \subsection{Desempenho entre estratégias de combinação}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:m4-estaticas}, a mediana obtém o menor SMAPE (8,97\%), seguida do CARTE (9,16\%) e do FFORMA (9,96\%); o ADE fica um pouco mais distante (10,69\%), e a média e o DBA seguem com valores bem mais altos (15,60\% e 15,94\%, respectivamente). A mediana e o CARTE são as únicas duas estratégias que superam o melhor modelo individual do conjunto em SMAPE, o Random Forest (CWT), cujo valor é 9,35\% (Tabela~\ref{tab:m4-individual}); o FFORMA e o ADE ficam, por uma margem pequena, atrás dele. Em POCID, o FFORMA obtém o maior valor entre as seis estratégias (59,45\%), à frente da mediana (58,45\%) e do CARTE (57,73\%), mas nenhuma das seis alcança o melhor POCID entre os modelos individuais, o CatBoost (Original + DWT), com 59,84\%.
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:m4-estaticas}, a mediana obtém o menor SMAPE (8,97\%), seguida do CARTE (9,18\%) e do FFORMA (9,96\%); o ADE fica um pouco mais distante (10,69\%), e a média e o DBA seguem com valores bem mais altos (15,60\% e 15,94\%, respectivamente). A mediana e o CARTE são as únicas duas estratégias que superam o melhor modelo individual do conjunto em SMAPE, o Random Forest (CWT), cujo valor é 9,35\% (Tabela~\ref{tab:m4-individual}); o FFORMA e o ADE ficam, por uma margem pequena, atrás dele. Em POCID, o FFORMA obtém o maior valor entre as seis estratégias (59,45\%), à frente da mediana (58,45\%) e do CARTE (57,88\%), mas nenhuma das seis alcança o melhor POCID entre os modelos individuais, o CatBoost (Original + DWT), com 59,84\%.
 
 \begin{table}[H]
 \small
@@ -329,7 +375,7 @@ Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:m4-esta
 \textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
 \midrule
 Mediana & \textbf{8,97} & 58,45 \\
-CARTE   & 9,16 & 57,73 \\
+CARTE   & 9,18 & 57,88 \\
 FFORMA  & 9,96 & \textbf{59,45} \\
 ADE     & 10,69 & 57,29 \\
 Média   & 15,60 & 53,20 \\
@@ -340,24 +386,31 @@ DBA     & 15,94 & 51,74 \\
 
 \subsection{Comparação geral e discussão} \label{subsec:m4-discussao}
 
-A Figura~\ref{fig:mcm-m4} apresenta a Matriz de Comparação Múltipla entre a mediana, o CARTE, o Random Forest (CWT), o FFORMA e o ADE, ordenados por SMAPE médio.
+A Figura~\ref{fig:mcm-m4} apresenta a Matriz de Comparação Múltipla entre a mediana, o CARTE, o Random Forest (CWT), o FFORMA e o ADE. A MCM de SMAPE usa o melhor individual e a melhor estática por SMAPE.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_M4_WEEKLY_DATASET.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos no M4, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no M4.}
     \label{fig:mcm-m4}
 \end{figure}
 
-A MCM mostra que a mediana tem o menor SMAPE médio (8,97\%), seguida do CARTE (9,16\%), do Random Forest (CWT) (9,35\%), do FFORMA (9,96\%) e do ADE (10,69\%). O CARTE não se separa estatisticamente da mediana em SMAPE ($p = 0{,}5624$), do Random Forest (CWT) ($p = 0{,}3598$) nem do FFORMA ($p = 0{,}3857$). A única separação significativa do CARTE na MCM é contra o ADE, com vantagem do CARTE ($p = 0{,}0007$). Em POCID, o CARTE também não se separa da mediana ($p = 0{,}6223$), do Random Forest (CWT) ($p = 0{,}4096$) nem do ADE ($p = 0{,}5304$); contra o FFORMA, a diferença é de 57,73\% contra 59,45\%, com $p = 0{,}0885$, também não significativa ao nível de 5\%.
+A MCM de SMAPE mostra que a mediana tem o menor SMAPE médio (8,97\%), seguida do CARTE (9,18\%), do Random Forest (CWT) (9,35\%), do FFORMA (9,96\%) e do ADE (10,69\%). O CARTE não se separa estatisticamente da mediana em SMAPE ($p = 0{,}6031$), do Random Forest (CWT) ($p = 0{,}9021$) nem do FFORMA ($p = 0{,}4032$). A única separação significativa do CARTE na MCM de SMAPE é contra o ADE, com vantagem do CARTE ($p = 0{,}0045$).
 
-O CARTE supera com folga a média e o DBA em SMAPE (9,16\% contra 15,60\% e 15,94\%) e em POCID (57,73\% contra 53,20\% e 51,74\%). Essas duas combinações, porém, são as mais frágeis do conjunto, e a comparação com elas não é o centro da análise. O ponto relevante é que o CARTE fica muito próximo da mediana e à frente do FFORMA e do ADE em SMAPE, embora o FFORMA recupere a liderança em POCID.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_M4_WEEKLY_DATASET_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no M4, para o POCID.}
+    \label{fig:mcm-m4-pocid}
+\end{figure}
 
-No M4, o CARTE é segundo em SMAPE e terceiro em POCID entre as combinações. É a exceção mais clara à constância top-2 no POCID: a mediana e o FFORMA ficam à frente, embora a diferença para a mediana seja pequena (57,73\% contra 58,45\%). Em SMAPE, o padrão top-2 se mantém, com o CARTE atrás apenas da mediana.
+A MCM de POCID usa o CatBoost (Original + DWT) como melhor individual e a mediana como melhor estática. O CatBoost lidera (59,84\%), seguido do FFORMA (59,45\%), da mediana (58,45\%), do CARTE (57,88\%) e do ADE (57,29\%). O CARTE não se separa da mediana ($p = 0{,}1730$) nem do ADE ($p = 0{,}4284$); fica atrás do CatBoost (Original + DWT) ($p = 0{,}0224$) e do FFORMA ($p = 0{,}0216$), diferenças significativas.
 
-A estratégia final escolhida pelo CARTE foi a mediana em 112 das 359 séries, uma combinação ponderada em 110, a média em 54, a média aparada em 50 e o DBA em 33. O pool completo foi usado em 198 séries, e o tamanho mediano do pool final foi de 19 modelos. A frequência da mediana é coerente com o bom desempenho dessa combinação no conjunto e com o fato de o CARTE recorrer a ela quando a evidência de validação não favorece uma ponderação mais agressiva.
+O CARTE supera com folga a média e o DBA em SMAPE (9,18\% contra 15,60\% e 15,94\%) e em POCID (57,88\% contra 53,20\% e 51,74\%). Essas duas combinações, porém, são as mais frágeis do conjunto, e a comparação com elas não é o centro da análise. O ponto relevante é que o CARTE fica a 0,21 ponto da mediana em SMAPE e à frente do FFORMA e do ADE; em POCID, o FFORMA lidera entre as combinações, a mediana fica em segundo e o CARTE em terceiro, com o CatBoost (Original + DWT) à frente no conjunto completo.
 
+No M4, o CARTE é segundo em SMAPE e terceiro em POCID entre as combinações. No conjunto completo, o CatBoost (Original + DWT) também fica à frente em POCID, deixando o CARTE em quarto. Em SMAPE, o padrão top-2 se mantém, com o CARTE atrás apenas da mediana.
 
+Ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 115 das 359 séries, em média; a mediana em cerca de 107, a média em cerca de 55, a média aparada em cerca de 42 e o DBA em cerca de 41. O pool completo foi usado em cerca de 183 séries, e o tamanho mediano do pool final foi de 19 modelos. A frequência da mediana e da combinação ponderada é coerente com o bom desempenho dessas duas abordagens no conjunto.
 \section{ETTh1} \label{sec:resultados-etth1}
 
 \subsection{Desempenho dos modelos individuais}
@@ -400,7 +453,7 @@ No ETTh1, os dez modelos de aprendizagem de máquina com transformação de dado
 
 \subsection{Desempenho entre estratégias de combinação}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth1-estaticas}, o CARTE obtém o menor SMAPE (22,36\%), à frente da mediana (26,02\%), do FFORMA (30,01\%) e do ADE (39,51\%). A média e o DBA atingem o valor máximo possível de SMAPE (200,00\%). Em POCID, o FFORMA obtém o maior valor entre as seis (65,22\%), seguido do CARTE e do ADE, empatados em 62,73\%, e da mediana (62,11\%); a média e o DBA ficam nas duas últimas posições. O CARTE é, portanto, a melhor combinação em SMAPE e a segunda melhor em POCID.
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth1-estaticas}, o CARTE obtém o menor SMAPE (22,72\%), à frente da mediana (26,02\%), do FFORMA (30,01\%) e do ADE (39,51\%). A média e o DBA atingem o valor máximo possível de SMAPE (200,00\%). Em POCID, o FFORMA obtém o maior valor entre as seis (65,22\%), seguido do ADE (62,73\%), do CARTE (62,11\%) e da mediana (62,11\%); a média e o DBA ficam nas duas últimas posições. O CARTE é a melhor combinação em SMAPE e a terceira em POCID, empatada com a mediana.
 
 \begin{table}[H]
 \small
@@ -411,7 +464,7 @@ Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth1-e
 \toprule
 \textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
 \midrule
-CARTE   & \textbf{22,36} & 62,73 \\
+CARTE   & \textbf{22,72} & 62,11 \\
 Mediana & 26,02 & 62,11 \\
 FFORMA  & 30,01 & \textbf{65,22} \\
 ADE     & 39,51 & 62,73 \\
@@ -421,25 +474,33 @@ DBA     & 200,00 & 54,66 \\
 \end{tabular}
 \end{table}
 
-O resultado do CARTE no ETTh1 é particularmente forte quando comparado aos modelos individuais: seu SMAPE de 22,36\% fica atrás apenas do Random Forest (CWT), com 20,96\%, e supera o segundo melhor modelo individual, o Random Forest (Original + CWT), com 22,44\%. Ou seja, o CARTE supera dezoito dos dezenove preditores individuais em SMAPE e fica a 1,40 ponto percentual do melhor deles. Em POCID, o CARTE empata com o ADE e fica atrás apenas do Random Forest (CWT), com 65,84\%, e do FFORMA, com 65,22\%.
+O resultado do CARTE no ETTh1 é particularmente forte em SMAPE: 22,72\% ficam atrás apenas do Random Forest (CWT), com 20,96\%, e do Random Forest (Original + CWT), com 22,44\%, e à frente do terceiro melhor individual, o Random Forest (Original + DWT), com 23,22\%. O CARTE supera dezessete dos dezenove preditores individuais em SMAPE e fica a 1,76 ponto percentual do melhor deles. Em POCID, o CARTE tem 62,11\% e fica atrás do Random Forest (CWT) (65,84\%), do Random Forest (Original + CWT) (65,22\%), do CatBoost (Original + FT) (65,22\%), do FFORMA (65,22\%), do ADE (62,73\%) e do ARIMA (62,73\%); empata com a mediana em 62,11\%. Não é top2 em POCID no conjunto completo.
 
 \subsection{Comparação geral e discussão} \label{subsec:etth1-discussao}
 
-A Figura~\ref{fig:mcm-etth1} apresenta a Matriz de Comparação Múltipla entre o Random Forest (CWT), o CARTE, a mediana, o FFORMA e o ADE, ordenados por SMAPE médio.
+A Figura~\ref{fig:mcm-etth1} apresenta a Matriz de Comparação Múltipla entre o Random Forest (CWT), o CARTE, a mediana, o FFORMA e o ADE. A MCM de SMAPE usa o melhor individual e a melhor estática por SMAPE.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTH1.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh1, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh1.}
     \label{fig:mcm-etth1}
 \end{figure}
 
-A MCM mostra que o Random Forest (CWT) tem o menor SMAPE médio (20,96\%), seguido do CARTE (22,36\%), da mediana (26,02\%), do FFORMA (30,01\%) e do ADE (39,51\%). O CARTE perde para o Random Forest (CWT) em SMAPE ($p = 0{,}0312$), mas supera a mediana ($p = 0{,}0220$), o FFORMA ($p = 0{,}0156$) e o ADE ($p = 0{,}0156$). Em POCID, o CARTE não se separa do FFORMA ($p = 0{,}4903$), da mediana ($p = 1{,}0000$) nem do ADE ($p = 1{,}0000$); perde para o Random Forest (CWT) ($p = 0{,}0496$).
+A MCM de SMAPE mostra que o Random Forest (CWT) tem o menor SMAPE médio (20,96\%), seguido do CARTE (22,72\%), da mediana (26,02\%), do FFORMA (30,01\%) e do ADE (39,51\%). O CARTE perde para o Random Forest (CWT) em SMAPE ($p = 0{,}0312$), mas supera a mediana ($p = 0{,}0156$), o FFORMA ($p = 0{,}0156$) e o ADE ($p = 0{,}0156$).
 
-O ETTh1 é o primeiro conjunto em que o CARTE é a melhor combinação por uma margem ampla: 3,66 pontos percentuais à frente da mediana e 7,65 pontos à frente do FFORMA em SMAPE. O CARTE também é o único método de combinação que supera o segundo melhor modelo individual do conjunto, o Random Forest (Original + CWT), e fica próximo do melhor individual. Em POCID, mantém a constância no top-2 entre as combinações, dividindo o segundo lugar com o ADE e ficando atrás apenas do FFORMA. O conjunto reforça, portanto, dois pontos positivos do CARTE: a capacidade de selecionar uma combinação competitiva em um cenário com forte heterogeneidade entre modelos individuais e a constância no topo do ranking de POCID.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTH1_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh1, para o POCID.}
+    \label{fig:mcm-etth1-pocid}
+\end{figure}
 
-A estratégia final escolhida pelo CARTE foi a média em 3 das 7 séries, a mediana em 2 e uma combinação ponderada em 2. O pool completo foi usado em apenas 1 série, o que indica que o agente recorreu com frequência a subconjuntos menores para este conjunto.
+A MCM de POCID usa o Random Forest (CWT) como melhor individual e a mediana como melhor estática. O Random Forest (CWT) lidera (65,84\%), seguido do FFORMA (65,22\%), do ADE (62,73\%), do CARTE (62,11\%) e da mediana (62,11\%). O CARTE não se separa do Random Forest (CWT) ($p = 0{,}0781$), do FFORMA ($p = 0{,}4688$), do ADE ($p = 0{,}9375$) nem da mediana ($p = 1{,}0000$).
 
+O ETTh1 é o conjunto em que o CARTE é a melhor combinação em SMAPE por uma margem ampla: 3,30 pontos percentuais à frente da mediana e 7,29 pontos à frente do FFORMA. É a única combinação que supera o terceiro melhor modelo individual, o Random Forest (Original + DWT), com 23,22\%, mas fica atrás dos dois melhores. Em POCID, o CARTE fica no grupo intermediário, empatado com a mediana e atrás do FFORMA e do ADE, sem separação estatística de nenhum deles. O ETTh1 reforça o ponto forte do CARTE em SMAPE, mas não sustenta a constância top2 em POCID.
+
+Ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 3,2 das 7 séries, em média; a mediana em cerca de 2,1, a média em cerca de 1,1 e a média aparada em cerca de 0,6. O pool completo foi usado em cerca de uma série, em média, o que indica que o agente recorreu com frequência a subconjuntos menores para este conjunto.
 \section{ETTh2} \label{sec:resultados-etth2}
 
 \subsection{Desempenho dos modelos individuais}
@@ -481,7 +542,7 @@ O padrão observado no ETTh2 é semelhante ao do ETTh1: os treze modelos de apre
 
 \subsection{Desempenho entre estratégias de combinação}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth2-estaticas}, o CARTE obtém o menor SMAPE (17,31\%), à frente da mediana (18,15\%), do FFORMA (20,35\%) e do ADE (22,61\%). O valor é também inferior ao do melhor modelo individual do conjunto, o CatBoost (Original + CWT), com 17,94\% (Tabela~\ref{tab:etth2-individual}): o ETTh2 é o primeiro conjunto em que o CARTE é o melhor método geral em SMAPE, superando todos os dezenove preditores individuais e todas as combinações. A média e o DBA ficam muito acima das demais estratégias (171,97\% e 172,57\%, respectivamente). Em POCID, a mediana, o FFORMA e o ADE empatam no maior valor entre as seis estratégias (56,52\%), com o CARTE em 54,66\%, à frente do DBA (52,80\%) e da média (49,69\%).
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth2-estaticas}, o CARTE obtém o menor SMAPE (17,67\%), à frente da mediana (18,15\%), do FFORMA (20,35\%) e do ADE (22,61\%). O valor é também inferior ao do melhor modelo individual do conjunto, o CatBoost (Original + CWT), com 17,94\% (Tabela~\ref{tab:etth2-individual}): o ETTh2 é o primeiro conjunto em que o CARTE é o melhor método geral em SMAPE, superando todos os dezenove preditores individuais e todas as combinações. A média e o DBA ficam muito acima das demais estratégias (171,97\% e 172,57\%, respectivamente). Em POCID, a mediana, o FFORMA e o ADE empatam no maior valor entre as seis estratégias (56,52\%), com o CARTE em 54,22\%, à frente do DBA (52,80\%) e da média (49,69\%).
 
 \begin{table}[H]
 \centering
@@ -491,7 +552,7 @@ Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:etth2-e
 \toprule
 \textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
 \midrule
-CARTE   & \textbf{17,31} & 54,66 \\
+CARTE   & \textbf{17,67} & 54,22 \\
 Mediana & 18,15 & \textbf{56,52} \\
 FFORMA  & 20,35 & \textbf{56,52} \\
 ADE     & 22,61 & \textbf{56,52} \\
@@ -503,21 +564,29 @@ DBA     & 172,57 & 52,80 \\
 
 \subsection{Comparação geral e discussão} \label{subsec:etth2-discussao}
 
-A Figura~\ref{fig:mcm-etth2} apresenta a Matriz de Comparação Múltipla entre o CARTE, o CatBoost (Original + CWT), a mediana, o FFORMA e o ADE, ordenados por SMAPE médio.
+A Figura~\ref{fig:mcm-etth2} apresenta a Matriz de Comparação Múltipla entre o CARTE, o CatBoost (Original + CWT), a mediana, o FFORMA e o ADE. A MCM de SMAPE usa o melhor individual e a melhor estática por SMAPE.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTH2.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh2, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh2.}
     \label{fig:mcm-etth2}
 \end{figure}
 
-A MCM mostra que o CARTE tem o menor SMAPE médio (17,31\%), seguido do CatBoost (Original + CWT) (17,94\%), da mediana (18,15\%), do FFORMA (20,35\%) e do ADE (22,61\%). O CARTE supera a mediana de forma estatisticamente significativa ($p = 0{,}0314$) e não se separa do CatBoost (Original + CWT) ($p = 0{,}3750$), do FFORMA ($p = 0{,}1562$) nem do ADE ($p = 0{,}2188$). Em POCID, o CARTE não se separa da mediana ($p = 0{,}4446$), do FFORMA ($p = 0{,}5781$), do CatBoost (Original + CWT) ($p = 0{,}7889$) nem do ADE ($p = 0{,}6875$).
+A MCM de SMAPE mostra que o CARTE tem o menor SMAPE médio (17,67\%), seguido do CatBoost (Original + CWT) (17,94\%), da mediana (18,15\%), do FFORMA (20,35\%) e do ADE (22,61\%). O CARTE não se separa estatisticamente de nenhum dos quatro: CatBoost (Original + CWT) ($p = 0{,}4688$), mediana ($p = 0{,}1493$), FFORMA ($p = 0{,}1562$) e ADE ($p = 0{,}2188$). A vantagem em SMAPE é numérica, não significativa.
 
-O ETTh2 é o resultado mais favorável ao CARTE em SMAPE entre os conjuntos analisados até aqui: ele é o melhor método geral, com vantagem de 0,63 ponto percentual sobre o melhor modelo individual, 0,84 ponto sobre a mediana, 3,04 pontos sobre o FFORMA e 5,30 pontos sobre o ADE. A única ressalva é o POCID: o CARTE fica em quarto lugar entre as combinações, atrás dos três métodos empatados em 56,52\%, e abaixo do CatBoost (Original + CWT), com 55,90\%. O ETTh2 é, portanto, a exceção mais clara à constância top-2 no POCID, mas compensa essa posição com a melhor colocação geral em SMAPE.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTH2_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTh2, para o POCID.}
+    \label{fig:mcm-etth2-pocid}
+\end{figure}
 
-A estratégia final escolhida pelo CARTE foi a mediana em 2 das 7 séries, a média aparada em 2, a combinação ponderada em 2 e o DBA em 1. O pool completo foi usado em 4 séries, e o tamanho mediano do pool final foi de 19 modelos.
+A MCM de POCID usa o Random Forest (DWT) como melhor individual e a mediana como melhor estática. O Random Forest (DWT), o FFORMA, o ADE e a mediana empatam em 56,52\%, e o CARTE fica em 54,22\%. O CARTE não se separa de nenhum deles: ADE ($p = 0{,}8125$), FFORMA ($p = 0{,}4688$), mediana ($p = 0{,}1493$) e Random Forest (DWT) ($p = 0{,}5520$).
 
+O ETTh2 é o resultado mais favorável ao CARTE em SMAPE entre os conjuntos analisados: ele é o melhor método geral, com vantagem de 0,27 ponto percentual sobre o melhor modelo individual, 0,48 ponto sobre a mediana, 2,68 pontos sobre o FFORMA e 4,94 pontos sobre o ADE. A única ressalva é o POCID: na tabela das seis combinações, o CARTE é quarto, atrás dos três métodos empatados em 56,52\%; no conjunto completo, também fica atrás do Random Forest (DWT) (56,52\%) e do CatBoost (Original + CWT) (55,90\%), em sexto. O ETTh2 é, portanto, a exceção mais clara à constância top-2 no POCID, mas compensa essa posição com a melhor colocação geral em SMAPE.
+
+Ao longo das dez execuções, a estratégia final foi a média aparada em cerca de 3,0 das 7 séries, em média; a mediana em cerca de 2,6, a combinação ponderada em cerca de 0,8, a média em cerca de 0,5 e o DBA em cerca de 0,1. O pool completo foi usado em cerca de 4,2 séries, e o tamanho mediano do pool final foi de 19 modelos.
 
 \section{ETTm1} \label{sec:resultados-ettm1}
 
@@ -560,7 +629,7 @@ O ETTm1 se distingue dos demais ETT pela posição dos modelos estatísticos: ET
 
 \subsection{Desempenho entre estratégias de combinação}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm1-estaticas}, o CARTE obtém o menor SMAPE (43,03\%), à frente do FFORMA (43,96\%), do ADE (45,72\%) e da mediana (54,43\%). A média e o DBA atingem o valor máximo possível de SMAPE (200,00\%). Em POCID, a mediana obtém o melhor resultado entre as seis (58,39\%), seguida do CARTE (55,90\%), do FFORMA (51,55\%), do ADE (50,93\%), do DBA (47,20\%) e da média (44,72\%). O CARTE é, portanto, a melhor combinação em SMAPE e a segunda melhor em POCID.
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm1-estaticas}, o CARTE obtém o menor SMAPE (41,03\%), à frente do FFORMA (43,96\%), do ADE (45,72\%) e da mediana (54,43\%). A média e o DBA atingem o valor máximo possível de SMAPE (200,00\%). Em POCID, a mediana obtém o melhor resultado entre as seis (58,39\%), seguida do CARTE (54,47\%), do FFORMA (51,55\%), do ADE (50,93\%), do DBA (47,20\%) e da média (44,72\%). O CARTE é, portanto, a melhor combinação em SMAPE e a segunda melhor em POCID.
 
 \begin{table}[H]
 \centering
@@ -570,7 +639,7 @@ Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm1-e
 \toprule
 \textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
 \midrule
-CARTE   & \textbf{43,03} & 55,90 \\
+CARTE   & \textbf{41,03} & 54,47 \\
 FFORMA  & 43,96 & 51,55 \\
 ADE     & 45,72 & 50,93 \\
 Mediana & 54,43 & \textbf{58,39} \\
@@ -580,24 +649,33 @@ DBA     & 200,00 & 47,20 \\
 \end{tabular}
 \end{table}
 
-O resultado em SMAPE é particularmente forte: o CARTE fica atrás apenas do Random Forest (DWT), com 40,52\%, e supera os outros dezoito modelos individuais. A vantagem sobre o segundo melhor modelo individual, o CatBoost (DWT), é de 7,10 pontos percentuais. Em POCID, o CARTE fica atrás apenas da mediana entre as combinações e abaixo de dois modelos individuais, o Random Forest (Original + DWT) e o CatBoost (Original + FT).
+O resultado em SMAPE é particularmente forte: o CARTE fica atrás apenas do Random Forest (DWT), com 40,52\%, e supera os outros dezoito modelos individuais. A vantagem sobre o segundo melhor modelo individual, o CatBoost (DWT), é de 9,10 pontos percentuais. Em POCID, o CARTE é segundo entre as combinações, atrás da mediana, mas no conjunto completo fica atrás de seis modelos individuais: Random Forest (Original + DWT) 58,39\%, CatBoost (Original + FT) 56,52\%, Random Forest (Original + FT) 55,90\%, CatBoost (Original + CWT) 54,66\%, Random Forest (CWT) 54,66\% e Random Forest (Original + CWT) 54,66\%. O valor de 41,03\% é a média de dez execuções, com desvio-padrão de 4,35 pontos percentuais; a variabilidade do ETTm1 é discutida na Seção~\ref{sec:execucoes}.
 
 \subsection{Comparação geral e discussão} \label{subsec:ettm1-discussao}
 
-A Figura~\ref{fig:mcm-ettm1} apresenta a Matriz de Comparação Múltipla entre o Random Forest (DWT), o CARTE, o FFORMA, o ADE e a mediana, ordenados por SMAPE médio.
+A Figura~\ref{fig:mcm-ettm1} apresenta a Matriz de Comparação Múltipla entre o Random Forest (DWT), o CARTE, o FFORMA, o ADE e a mediana. A MCM de SMAPE usa o melhor individual e a melhor estática por SMAPE.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTM1.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm1, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm1.}
     \label{fig:mcm-ettm1}
 \end{figure}
 
-A MCM mostra que o Random Forest (DWT) tem o menor SMAPE médio (40,52\%), seguido do CARTE (43,03\%), do FFORMA (43,96\%), do ADE (45,72\%) e da mediana (54,43\%). O CARTE não se separa do Random Forest (DWT) ($p = 0{,}2969$), do FFORMA ($p = 0{,}9375$), do ADE ($p = 0{,}5781$) nem da mediana ($p = 0{,}9375$). A única comparação significativa da MCM é entre o Random Forest (DWT) e a mediana ($p = 0{,}0156$), com vantagem do modelo individual. Em POCID, o CARTE também não se separa da mediana ($p = 0{,}2256$), do Random Forest (DWT) ($p = 0{,}3508$), do FFORMA ($p = 0{,}2685$) nem do ADE ($p = 0{,}3750$).
+A MCM de SMAPE mostra que o Random Forest (DWT) tem o menor SMAPE médio (40,52\%), seguido do CARTE (41,03\%), do FFORMA (43,96\%), do ADE (45,72\%) e da mediana (54,43\%). O CARTE não se separa do Random Forest (DWT) ($p = 0{,}5781$), do FFORMA ($p = 0{,}9375$), do ADE ($p = 0{,}5781$) nem da mediana ($p = 0{,}9375$). A única comparação significativa da MCM é entre o Random Forest (DWT) e a mediana ($p = 0{,}0156$), com vantagem do modelo individual.
 
-O ETTm1 reforça dois pontos positivos do CARTE: a melhor combinação em SMAPE, com vantagem de 0,93 ponto percentual sobre o FFORMA, e a constância no top-2 em POCID, atrás apenas da mediana. O CARTE fica a 2,51 pontos percentuais do melhor modelo individual em SMAPE, mas supera todos os outros dezoito preditores e todas as demais combinações. A mediana, que lidera o POCID, tem SMAPE 11,40 pontos percentuais pior, o que evidencia o trade-off entre as duas métricas e a posição equilibrada do CARTE.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTM1_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm1, para o POCID.}
+    \label{fig:mcm-ettm1-pocid}
+\end{figure}
 
-A estratégia final escolhida pelo CARTE foi a mediana em 3 das 7 séries, uma combinação ponderada em 3 e a média aparada em 1. O pool completo foi usado em 3 séries, e o tamanho mediano do pool final foi de 7 modelos.
+A MCM de POCID usa o Random Forest (Original + DWT) como melhor individual e a mediana como melhor estática. A mediana e o Random Forest (Original + DWT) empatam em 58,39\%, seguidos do CARTE (54,47\%), do FFORMA (51,55\%) e do ADE (50,93\%). O CARTE não se separa da mediana ($p = 0{,}2188$), do Random Forest (Original + DWT) ($p = 0{,}2969$), do FFORMA ($p = 0{,}6875$) nem do ADE ($p = 0{,}6875$).
+
+O ETTm1 reforça dois pontos positivos do CARTE: a melhor combinação em SMAPE, com vantagem de 2,93 pontos percentuais sobre o FFORMA, e a posição de segundo melhor em POCID entre as combinações, atrás apenas da mediana. O CARTE fica a 0,51 ponto percentual do melhor modelo individual em SMAPE, mas supera todos os outros dezoito preditores e todas as demais combinações. A mediana, que lidera o POCID, tem SMAPE 13,40 pontos percentuais pior, o que evidencia o trade-off entre as duas métricas e a posição equilibrada do CARTE.
+
+Ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 3,0 das 7 séries, em média; a média aparada em cerca de 1,7, a mediana em cerca de 1,5, o DBA em cerca de 0,5 e a média em cerca de 0,3. O pool completo não foi usado em nenhuma execução; o tamanho mediano do pool final ficou entre 7 e 14 modelos, com mediana de 8,0.
 \section{ETTm2} \label{sec:resultados-ettm2}
 
 \subsection{Desempenho dos modelos individuais}
@@ -647,8 +725,8 @@ O ETTm2 apresenta a maior separação observada até aqui entre um grupo de dest
 \toprule
 \textbf{Combinação} & \textbf{SMAPE (\%)} & \textbf{POCID (\%)} \\
 \midrule
-CARTE   & \textbf{16,42} & 39,13 \\
-FFORMA  & 16,54 & 31,06 \\
+FFORMA  & \textbf{16,54} & 31,06 \\
+CARTE   & 17,02 & 40,37 \\
 ADE     & 18,72 & 31,06 \\
 Mediana & 19,97 & 39,13 \\
 Média   & 174,05 & \textbf{43,48} \\
@@ -657,29 +735,35 @@ DBA     & 174,38 & 37,27 \\
 \end{tabular}
 \end{table}
 
-Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm2-estaticas}, o CARTE obtém o menor SMAPE (16,42\%), à frente do FFORMA (16,54\%), do ADE (18,72\%) e da mediana (19,97\%). A média e o DBA atingem valores muito acima das demais estratégias (174,05\% e 174,38\%). Em POCID, a média obtém o maior valor entre as seis (43,48\%), seguida do CARTE e da mediana, empatados em 39,13\%, do DBA (37,27\%) e do FFORMA e do ADE (31,06\%). O CARTE é, portanto, a melhor combinação em SMAPE e a segunda melhor em POCID, empatado com a mediana.
+Entre as seis estratégias de combinação comparadas na Tabela~\ref{tab:ettm2-estaticas}, o FFORMA obtém o menor SMAPE (16,54\%), seguido do CARTE (17,02\%), do ADE (18,72\%) e da mediana (19,97\%). A média e o DBA atingem valores muito acima das demais estratégias (174,05\% e 174,38\%). Em POCID, a média obtém o maior valor entre as seis (43,48\%), seguida do CARTE (40,37\%), da mediana (39,13\%), do DBA (37,27\%) e do FFORMA e do ADE (31,06\%). O CARTE é, portanto, a segunda melhor combinação em SMAPE e a segunda melhor em POCID, atrás da média e à frente da mediana.
 
-O ETTm2 é um caso em que os modelos individuais transformados dominam: o CARTE é a melhor combinação, mas fica atrás dos cinco primeiros modelos individuais em SMAPE. Ainda assim, supera os outros catorze preditores individuais e todas as demais combinações. A vantagem sobre o FFORMA é pequena (0,12 ponto percentual), mas suficiente para colocá-lo no topo das combinações; a vantagem sobre o ADE e a mediana é de 2,30 e 3,55 pontos percentuais, respectivamente.
+O ETTm2 é um caso em que os modelos individuais transformados dominam: o CARTE é a segunda melhor combinação, mas fica atrás dos cinco primeiros modelos individuais em SMAPE. Ainda assim, supera os outros catorze preditores individuais e todas as demais combinações, exceto o FFORMA. A desvantagem para o FFORMA é de 0,48 ponto percentual; a vantagem sobre o ADE e a mediana é de 1,70 e 2,95 pontos percentuais, respectivamente.
 
 \subsection{Comparação geral e discussão} \label{subsec:ettm2-discussao}
 
-A Figura~\ref{fig:mcm-ettm2} apresenta a Matriz de Comparação Múltipla entre o Random Forest (DWT), o CARTE, o FFORMA, o ADE e a mediana, ordenados por SMAPE médio.
+A Figura~\ref{fig:mcm-ettm2} apresenta a Matriz de Comparação Múltipla entre o Random Forest (DWT), o FFORMA, o CARTE, o ADE e a mediana. A MCM de SMAPE usa o melhor individual e a melhor estática por SMAPE.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTM2.png}
-    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm2, ordenados por SMAPE médio.}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm2.}
     \label{fig:mcm-ettm2}
 \end{figure}
 
-A MCM mostra que o Random Forest (DWT) tem o menor SMAPE médio (7,48\%), seguido do CARTE (16,42\%), do FFORMA (16,54\%), do ADE (18,72\%) e da mediana (19,97\%). O CARTE perde para o Random Forest (DWT) ($p = 0{,}0469$) e não se separa do FFORMA ($p = 1{,}0000$), do ADE ($p = 0{,}2969$) nem da mediana ($p = 0{,}1562$). Em POCID, o CARTE não se separa da mediana ($p = 1{,}0000$), do Random Forest (DWT) ($p = 0{,}2969$), do ADE ($p = 0{,}0749$) nem do FFORMA ($p = 0{,}0781$).
+A MCM de SMAPE mostra que o Random Forest (DWT) tem o menor SMAPE médio (7,48\%), seguido do FFORMA (16,54\%), do CARTE (17,02\%), do ADE (18,72\%) e da mediana (19,97\%). O CARTE perde para o Random Forest (DWT) ($p = 0{,}0312$) e não se separa do FFORMA ($p = 0{,}9375$), do ADE ($p = 0{,}5781$) nem da mediana ($p = 0{,}2188$).
 
-O ETTm2 confirma a capacidade do CARTE de ser a melhor combinação em SMAPE mesmo quando o conjunto é dominado por um pequeno grupo de modelos individuais muito fortes. O CARTE não alcança os cinco primeiros individuais, mas supera os catorze restantes e todas as outras combinações. Em POCID, mantém a constância no top-2 entre as combinações, empatado com a mediana e atrás apenas da média, cujo SMAPE de 174,05\% inviabiliza seu uso como estratégia principal. O caso ilustra o compromisso do CARTE: ele não é o melhor em todos os cenários, mas permanece competitivo e no topo das combinações.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{images/resultados_final/mcm_ETTM2_pocid.png}
+    \caption{Matriz de Comparação Múltipla entre os cinco métodos no ETTm2, para o POCID.}
+    \label{fig:mcm-ettm2-pocid}
+\end{figure}
 
-A estratégia final escolhida pelo CARTE foi uma combinação ponderada em 3 das 7 séries, a média aparada em 2, a mediana em 1 e a média em 1. O pool completo foi usado em 2 séries, e o tamanho mediano do pool final foi de 7 modelos.
+A MCM de POCID usa o ARIMA como melhor individual e a média como melhor estática. O ARIMA lidera (48,45\%), seguido da média (43,48\%), do CARTE (40,37\%), do ADE (31,06\%) e do FFORMA (31,06\%). O CARTE não se separa do ARIMA ($p = 0{,}1094$), da média ($p = 0{,}6875$), do ADE ($p = 0{,}0781$) nem do FFORMA ($p = 0{,}0781$).
 
+O ETTm2 mostra duas posições distintas do CARTE. Em SMAPE, é a segunda melhor combinação, atrás do FFORMA por 0,48 ponto percentual, e supera os catorze modelos individuais que não estão no grupo das cinco variantes transformadas. Em POCID, é o segundo entre as seis combinações, atrás apenas da média e à frente da mediana, mas no conjunto completo fica atrás de nove modelos individuais e empata com dois: ARIMA 48,45\%, Random Forest (Original + DWT) 47,83\%, Random Forest (Original) 47,20\%, Random Forest (CWT) 44,10\%, Random Forest (Original + CWT) 42,86\%, CatBoost (Original) 42,24\%, CatBoost (Original + DWT) 41,61\%, ETS 41,61\% e CatBoost (Original + CWT) 40,99\%; empata com Random Forest (Original + FT) e CatBoost (Original + FT), ambos com 40,37\%. O caso ilustra o compromisso do CARTE: ele permanece no topo das combinações, mas não domina os modelos individuais transformados.
 
-
+Ao longo das dez execuções, a estratégia final foi uma combinação ponderada em cerca de 3,1 das 7 séries, em média; a mediana em cerca de 1,3, a média aparada em cerca de 1,1, o DBA em cerca de 0,9 e a média em cerca de 0,6. O pool completo não foi usado em nenhuma execução, e o tamanho mediano do pool final foi de 7 modelos.
 \section{Síntese entre conjuntos de dados} \label{sec:resultados-sintese}
 \subsection{Impacto das transformações}
 
@@ -708,6 +792,97 @@ ETTm2  & 9/10  \\
 
 Em nenhum dos sete conjuntos de dados menos de oito das dez melhores posições são ocupadas por essas variantes, e no ETTh1 a totalidade das dez melhores posições é ocupada por modelos com alguma forma de transformação. Esse resultado é consistente com a decisão de projeto de ampliar a diversidade do conjunto de preditores por meio de diferentes representações dos dados, discutida na Seção~\ref{sec:formulacao} do Capítulo~\ref{chp:proposta}: a transformação dos dados não apenas contribui com preditores adicionais ao conjunto $\mathcal{M}$, mas contribui, de forma consistente entre domínios distintos, com os preditores de melhor desempenho individual entre os dezenove disponíveis.
 
+As transformações também dominam as escolhas finais do CARTE. Nas dez execuções, elas aparecem em 6.744 dos 6.800 pools (99,2\%), proporção que fica entre 98,2\% e 100\% em todos os conjuntos. Elas ocupam 58.179 dos 90.581 lugares (64,2\%) e recebem 61,7\% do peso nas estratégias ponderadas. A Tabela~\ref{tab:sintese-transformacoes-escolhas} mostra a distribuição por conjunto de dados.
+
+\begin{table}[H]
+\centering
+\caption{Composição dos pools finais do CARTE, por conjunto de dados. A última coluna é o peso médio das variantes transformadas nas estratégias ponderadas.}
+\label{tab:sintese-transformacoes-escolhas}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Conjunto} & \textbf{Lugares transf. (\%)} & \textbf{Pools sem base ML (\%)} & \textbf{Peso transf. (\%)} \\
+\midrule
+ANP    & 61,3 & 22,3 & 49,8 \\
+NN5    & 59,3 & 22,0 & 45,5 \\
+M4     & 66,9 & 20,9 & 74,8 \\
+ETTh1  & 88,3 & 80,0 & 99,2 \\
+ETTh2  & 67,7 & 32,9 & 84,4 \\
+ETTm1  & 58,1 & 20,0 & 63,7 \\
+ETTm2  & 74,7 & 34,3 & 69,8 \\
+\midrule
+\textbf{Total} & \textbf{64,2} & \textbf{22,3} & \textbf{61,7} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O ETTh1 é o caso extremo. Nele, 88,3\% dos lugares são transformados, 80,0\% dos pools não têm nenhum modelo base de aprendizado de máquina e as transformações recebem 99,2\% do peso nas estratégias ponderadas. O ETTm1 tem 58,1\% dos lugares transformados. A presença quase universal das transformações não diz, por si só, se elas ajudam a combinação. Para isso, foi realizado o exercício a seguir.
+
+Para medir a contribuição das transformações, removi do pool final as doze variantes transformadas (CWT, DWT e FT de Random Forest e CatBoost), tanto as concatenadas com a representação original quanto as isoladas, e recalculei a previsão com a mesma regra de combinação, os mesmos pesos renormalizados e o mesmo percentual de aparamento. A comparação usa as 670 séries em que o pool final ainda tem ao menos um modelo não transformado. As 10 séries em que o pool fica vazio (4 do ETTh1 e 6 do M4) ficam fora, porque não há modelo não transformado para substituir as transformações. Essas séries são as mais dependentes das transformações e não entram na comparação. A reconstrução da previsão original reproduz exatamente o CARTE. A Tabela~\ref{tab:sintese-transformacoes-remocao-smape} apresenta o resultado.
+
+\begin{table}[H]
+\centering
+\caption{SMAPE médio do CARTE e da versão sem transformações, nas 670 séries em que o pool final tem ao menos um modelo não transformado.}
+\label{tab:sintese-transformacoes-remocao-smape}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Conjunto} & \textbf{SMAPE CARTE (\%)} & \textbf{SMAPE sem transf. (\%)} & \textbf{$\Delta$ SMAPE} \\
+\midrule
+ANP    & 22,24 & 22,99 & +0,75 \\
+NN5    & 12,03 & 13,46 & +1,42 \\
+M4     & 9,17  & 23,70 & +14,53 \\
+ETTh1  & 14,85 & 35,04 & +20,19 \\
+ETTh2  & 17,83 & 50,68 & +32,84 \\
+ETTm1  & 41,04 & 48,12 & +7,08 \\
+ETTm2  & 17,03 & 25,75 & +8,72 \\
+\midrule
+\textbf{Total 670} & \textbf{13,73} & \textbf{22,42} & \textbf{+8,69} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Sem as transformações, o SMAPE médio sobe de 13,73\% para 22,42\%, um aumento de 8,69 pontos. O aumento ocorre nos sete conjuntos. Os maiores ganhos estão no ETTh2 (+32,84), no ETTh1 (+20,19) e no M4 (+14,53). No ETTm2 (+8,72), no ETTm1 (+7,08), no NN5 (+1,42) e na ANP (+0,75), o ganho também é positivo.
+
+\begin{table}[H]
+\centering
+\caption{POCID médio do CARTE e da versão sem transformações, nas 670 séries em que o pool final tem ao menos um modelo não transformado.}
+\label{tab:sintese-transformacoes-remocao-pocid}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Conjunto} & \textbf{POCID CARTE (\%)} & \textbf{POCID sem transf. (\%)} & \textbf{$\Delta$ POCID} \\
+\midrule
+ANP    & 63,42 & 65,24 & +1,82 \\
+NN5    & 46,02 & 42,41 & -3,61 \\
+M4     & 57,58 & 50,46 & -7,12 \\
+ETTh1  & 57,65 & 50,08 & -7,57 \\
+ETTh2  & 54,14 & 50,42 & -3,72 \\
+ETTm1  & 53,90 & 46,86 & -7,05 \\
+ETTm2  & 41,43 & 46,69 & +5,26 \\
+\midrule
+\textbf{Total 670} & \textbf{57,01} & \textbf{53,06} & \textbf{-3,95} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$\Delta$ = sem transformações $-$ original. Para o SMAPE, valores positivos indicam piora da versão sem transformações. Para o POCID, valores positivos indicam melhora da versão sem transformações.
+
+A Tabela~\ref{tab:sintese-transformacoes-remocao-pocid} repete a comparação para o POCID. A versão com transformações tem média 57,01\% contra 53,06\% da versão sem transformações, uma diferença de 3,95 pontos. A versão sem transformações só é melhor na ANP (+1,82) e no ETTm2 (+5,26). Nos outros cinco conjuntos, a versão com transformações tem POCID maior.
+
+A Figura~\ref{fig:sintese-transformacoes-delta} resume os deltas médios por conjunto de dados.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/resultados_final/sintese_transformacoes_delta.png}
+    \caption{$\Delta$ SMAPE médio e $\Delta$ POCID médio entre a versão sem transformações e o CARTE, por conjunto de dados, nas 670 séries em que o pool final tem ao menos um modelo não transformado. Para o SMAPE, valores positivos indicam piora da versão sem transformações. Para o POCID, valores negativos indicam que a versão com transformações tem POCID maior.}
+    \label{fig:sintese-transformacoes-delta}
+\end{figure}
+
+A leitura é direta. As transformações ajudam a combinação. Sem elas, o SMAPE médio sobe 8,69 pontos e o POCID médio cai 3,95 pontos. O ganho no SMAPE é positivo nos sete conjuntos. É maior no ETTh1, no ETTh2 e no M4, e também positivo na ANP, no NN5, no ETTm1 e no ETTm2. A implicação de não ter as transformações é uma perda de 8,69 pontos de SMAPE na média. A perda é maior no ETTh1, no ETTh2 e no M4, e também aparece na ANP, no NN5, no ETTm1 e no ETTm2.
+
+A ressalva metodológica é que o contrafactual mantém a decisão final do agente fixa. Ele mede a sensibilidade da previsão à composição do pool, não o que o CARTE faria se nunca tivesse tido acesso às transformações.
+
 \subsection{Ranking por conjunto de dados}
 
 A Tabela~\ref{tab:sintese-ranking} consolida a posição de cada método em cada um dos sete conjuntos de dados, por SMAPE médio, com 1 indicando a primeira posição no ranking. As colunas \emph{melhor individual} e \emph{melhor estática} referem-se, em cada conjunto de dados, ao modelo individual e à combinação estática de melhor desempenho naquele conjunto especificamente, não a um método fixo. Conforme discutido anteriormente, o modelo que ocupa essa posição varia conforme o conjunto de dados.
@@ -722,23 +897,23 @@ A Tabela~\ref{tab:sintese-ranking} consolida a posição de cada método em cada
 \textbf{Conjunto de dados} & \textbf{Melhor individual} & \textbf{Melhor estática} & \textbf{FFORMA} & \textbf{ADE} & \textbf{CARTE} \\
 \midrule
 ANP    & 1 (Theta)                       & 4 (Mediana) & 2 & 3 & 5 \\
-NN5    & 5 (CatBoost Original + FT)      & 4 (Média)   & 3 & 2 & 1 \\
+NN5    & 5 (CatBoost Original + FT)      & 3 (Média)   & 2 & 1 & 4 \\
 M4     & 3 (Random Forest CWT)           & 1 (Mediana) & 4 & 5 & 2 \\
 ETTh1  & 1 (Random Forest CWT)           & 3 (Mediana) & 4 & 5 & 2 \\
-ETTh2  & 1 (CatBoost Original + CWT)     & 3 (Mediana) & 4 & 5 & 2 \\
-ETTm1  & 1 (Random Forest DWT)           & 5 (Mediana) & 2 & 3 & 4 \\
-ETTm2  & 1 (Random Forest DWT)           & 4 (Mediana) & 2 & 3 & 5 \\
+ETTh2  & 2 (CatBoost Original + CWT)     & 3 (Mediana) & 4 & 5 & 1 \\
+ETTm1  & 1 (Random Forest DWT)           & 5 (Mediana) & 3 & 4 & 2 \\
+ETTm2  & 1 (Random Forest DWT)           & 5 (Mediana) & 2 & 4 & 3 \\
 \midrule
-\textbf{Rank médio} & \textbf{1,86} & 3,43 & 3,00 & 3,71 & 3,00 \\
+\textbf{Rank médio} & \textbf{2,00} & 3,43 & 3,00 & 3,86 & 2,71 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Nenhum método ocupa a primeira posição em todos os conjuntos de dados. Descontado o melhor modelo individual, cuja posição de destaque no rank médio (1,86) reflete uma escolha retrospectiva, feita conhecendo o resultado de cada um dos dezenove modelos naquele conjunto de dados específico, e não uma decisão que poderia ser tomada de antemão, o CARTE divide com o FFORMA o melhor rank médio entre os métodos comparáveis (3,00 cada), à frente da melhor combinação estática (3,43) e do ADE (3,71).
+Nenhum método ocupa a primeira posição em todos os conjuntos de dados. Descontado o melhor modelo individual, cuja posição de destaque no rank médio (2,00) reflete uma escolha retrospectiva, feita conhecendo o resultado de cada um dos dezenove modelos naquele conjunto de dados específico, e não uma decisão que poderia ser tomada de antemão, o CARTE tem o melhor rank médio entre os métodos comparáveis (2,71), à frente do FFORMA (3,00), da melhor combinação estática (3,43) e do ADE (3,86).
 
-Essa posição reflete um padrão de consistência, não de dominância: o CARTE ocupa a primeira ou a segunda posição em quatro dos sete conjuntos de dados (NN5, M4, ETTh1 e ETTh2), com três exceções, a quarta posição no ETTm1 e a última posição na ANP e no ETTm2. O FFORMA, com o mesmo rank médio (3,00), nunca ocupa a primeira posição em nenhum dos sete conjuntos, atingindo no máximo a segunda colocação (ANP, ETTm1 e ETTm2), mas também nunca ocupa a última; o ADE termina em último em três conjuntos (M4, ETTh1 e ETTh2). Em resumo, o CARTE alterna entre o topo e as últimas posições, o FFORMA permanece no meio do ranqueamento e o ADE é penalizado pelas perdas de grande magnitude, ainda que vença com frequência em contagem direta.
+Essa posição reflete um padrão de consistência, não de dominância: o CARTE ocupa a primeira ou a segunda posição em quatro dos sete conjuntos de dados (M4, ETTh1, ETTh2 e ETTm1), fica em terceiro no ETTm2, em quarto no NN5 e em quinto na ANP. O FFORMA nunca ocupa a primeira posição em nenhum dos sete conjuntos, atingindo no máximo a segunda colocação (ANP, NN5 e ETTm2), mas também nunca ocupa a última. O ADE lidera no NN5, mas termina em último em três conjuntos (M4, ETTh1 e ETTh2). Em resumo, o CARTE concentra suas melhores posições no M4, no ETTh1, no ETTh2 e no ETTm1, o FFORMA permanece entre a segunda e a quarta posição e o ADE é penalizado pelas perdas de grande magnitude, ainda que vença com frequência em contagem direta.
 
-Vale notar que o melhor modelo individual de cada conjunto de dados, apesar de ser por definição o mais forte entre os dezenove preditores daquele conjunto, nem sempre se sustenta como o melhor entre os cinco métodos comparados nesta tabela: no NN5, o CatBoost (Original + FT) ocupa a última posição, superado pela mediana, pelo FFORMA, pelo ADE e pelo CARTE, todos métodos de combinação.
+Vale notar que o melhor modelo individual de cada conjunto de dados, apesar de ser por definição o mais forte entre os dezenove preditores daquele conjunto, nem sempre se sustenta como o melhor entre os cinco métodos comparados nesta tabela: no NN5, o CatBoost (Original + FT) ocupa a última posição, superado pela média, pelo FFORMA, pelo ADE e pelo CARTE, todos métodos de combinação.
 
 As duas subseções seguintes adotam uma definição diferente de melhor individual e melhor estática, por uma exigência estatística, não por inconsistência, pois em vez de recalculados por conjunto de dados, como nesta subseção, passam a ser um único modelo e um único método, fixados uma vez a partir do desempenho médio sobre a totalidade das 680 séries. Essa mudança é necessária porque as comparações pareadas empregadas a seguir, a Matriz de Comparação Múltipla e a contagem de vitórias, exigem que cada método comparado mantenha uma identidade única e constante ao longo de toda a população avaliada, o que uma definição que muda por conjunto de dados não permitiria.
 
@@ -753,8 +928,7 @@ A Figura~\ref{fig:mcm-agregado-smape} apresenta a Matriz de Comparação Múltip
     \label{fig:mcm-agregado-smape}
 \end{figure}
 
-Por SMAPE, o CARTE obtém o menor valor médio entre os cinco métodos (13,70\%), à frente da mediana (13,79\%) e do FFORMA (14,15\%), com o Random Forest (DWT) (14,28\%) e o ADE (14,70\%) nas duas últimas posições. Das dez comparações par a par, cinco atingem significância estatística pela Matriz de Comparação Múltipla. O CARTE supera o Random Forest (DWT) ($p = 0,0023$) e o ADE ($p = 0,0002$), a mediana também supera esses dois ($p = 0,0048$ e $p = 0,0002$) e o FFORMA supera o ADE ($p \leq 0,0001$). Entre os três primeiros colocados não há diferença significativa (CARTE contra a mediana, $p = 0,3780$; CARTE contra o FFORMA, $p = 0,5371$; mediana contra o FFORMA, $p = 0,7840$), e a diferença entre o FFORMA e o Random Forest (DWT) fica no limite da significância ($p = 0,0644$). O Random Forest (DWT) e o ADE não diferem entre si ($p = 0,2175$). A comparação entre o CARTE e a mediana é a única desta matriz que registra empates: 108 das 680 séries produzem exatamente o mesmo SMAPE para os dois métodos.
-
+Por SMAPE, o CARTE obtém o menor valor médio entre os cinco métodos (13,78\%), à frente da mediana (13,79\%), do FFORMA (14,15\%), do Random Forest (DWT) (14,28\%) e do ADE (14,70\%). A diferença para a mediana é de 0,01 ponto percentual. Nenhuma comparação entre o CARTE e os demais métodos atinge significância estatística. Os valores de $p$ são 0,2342 contra a mediana, 0,2397 contra o FFORMA, 0,2539 contra o Random Forest (DWT) e 0,2249 contra o ADE. As comparações significativas da matriz são a mediana contra o Random Forest (DWT) ($p = 0{,}0048$) e contra o ADE ($p = 0{,}0002$), e o FFORMA contra o ADE ($p \leq 0{,}0001$). A comparação entre o CARTE e a mediana registra 17 empates. A vantagem do CARTE em SMAPE é numérica, não significativa.
 
 \begin{figure}[H]
     \centering
@@ -763,12 +937,9 @@ Por SMAPE, o CARTE obtém o menor valor médio entre os cinco métodos (13,70\%)
     \label{fig:mcm-agregado-pocid}
 \end{figure}
 
+Por POCID, o FFORMA obtém o maior valor médio (58,21\%), seguido da mediana (57,20\%), do CARTE (57,18\%), do ADE (56,37\%) e do Random Forest (DWT) (56,16\%). O FFORMA supera o CARTE ($p = 0{,}0090$), a mediana ($p = 0{,}0392$), o ADE ($p = 0{,}0001$) e o Random Forest (DWT) ($p = 0{,}0003$), com significância estatística. O CARTE fica em terceiro, praticamente empatado com a mediana ($p = 0{,}6635$), à frente do ADE ($p = 0{,}0777$) e do Random Forest (DWT) ($p = 0{,}1358$), sem diferença significativa. A mediana supera o Random Forest (DWT) ($p = 0{,}0369$). As demais comparações não são significativas.
 
-Por POCID, o CARTE obtém o maior valor médio (58,26\%), seguido de perto pelo FFORMA (58,21\%), sem diferença estatisticamente significativa entre os dois ($p = 0,9609$). Os dois formam um grupo de desempenho equivalente no topo do ranqueamento, à frente da mediana (57,20\%), do ADE (56,37\%) e do Random Forest (DWT) (56,16\%). O CARTE supera o ADE ($p = 0,0024$) e o Random Forest (DWT) ($p = 0,0014$) com significância estatística; o FFORMA supera a mediana ($p = 0,0392$), o ADE ($p = 0,0001$) e o Random Forest (DWT) ($p = 0,0003$); a mediana supera o Random Forest (DWT) ($p = 0,0369$); e as diferenças da mediana contra o CARTE ($p = 0,1131$) e do ADE contra o Random Forest (DWT) ($p = 0,4926$) não são significativas.
-
-
-Em conjunto, as duas matrizes agregadas indicam que o CARTE lidera as duas métricas na comparação com a totalidade das 680 séries (13,70\% de SMAPE e 58,26\% de POCID), integrando o grupo de melhor desempenho estatisticamente indistinguível da mediana e do FFORMA por SMAPE e do FFORMA por POCID, e superando o ADE e o melhor modelo individual isolado nas duas métricas. É importante ressalvar, no entanto, que essa vantagem não se repete de forma uniforme conjunto a conjunto: o CARTE ocupa a última posição na ANP e no ETTm2 e fica atrás de modelos individuais isolados no ETTh1 e no ETTm1, o que indica que seu ganho médio decorre de um desempenho relativamente estável entre a maioria dos conjuntos de dados, e não de uma superioridade absoluta em cada um deles.
-
+Em conjunto, as duas matrizes agregadas mostram que o CARTE tem o menor SMAPE médio (13,78\%), mas sem separação estatística dos demais métodos. No POCID, fica em terceiro (57,18\%), atrás do FFORMA (58,21\%) e da mediana (57,20\%), sem diferença significativa para a mediana. O FFORMA lidera o POCID com significância. A vantagem do CARTE não se repete de forma uniforme conjunto a conjunto. Ele é primeiro no ETTh2, segundo no M4, no ETTh1 e no ETTm1, terceiro no ETTm2, quarto no NN5 e quinto na ANP. O ganho médio decorre de um desempenho relativamente estável na maioria dos conjuntos, não de uma superioridade absoluta em cada um.
 
 \subsection{Contagem de vitórias}
 
@@ -782,208 +953,193 @@ A Tabela~\ref{tab:sintese-vitorias} apresenta o número de séries, entre as 680
 \toprule
 \textbf{Método} & \textbf{Vitórias} & \textbf{\%} \\
 \midrule
-Random Forest (DWT) & \textbf{199} & \textbf{29,26} \\
-CARTE               & 147 & 21,62 \\
-ADE                 & 126 & 18,53 \\
-FFORMA              & 108 & 15,88 \\
-Mediana             & 100 & 14,71 \\
+Random Forest (DWT) & \textbf{205} & \textbf{30,15} \\
+CARTE               & 142 & 20,88 \\
+ADE                 & 127 & 18,68 \\
+FFORMA              & 114 & 16,76 \\
+Mediana             & 92  & 13,53 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-
-O Random Forest (DWT), apesar de ser um único modelo fixo aplicado indistintamente às 680 séries de domínios tão distintos quanto demanda de combustíveis, séries semanais do M4 e temperatura de transformadores elétricos, vence em 199 delas, a maior contagem entre os cinco métodos. Isso não contradiz o resultado da MCM agregada da Seção anterior, em que o CARTE obtém o menor SMAPE médio: um único modelo pode vencer com mais frequência, série a série, sem que isso implique o menor erro médio, caso suas derrotas sejam, em média, maiores em magnitude do que suas vitórias. A ordem obtida pela contagem de vitórias também não coincide inteiramente com a ordem do rank médio da Tabela~\ref{tab:sintese-ranking}: o ADE vence em mais séries que o FFORMA (126 contra 108), mesmo tendo o pior rank médio entre os quatro métodos comparáveis (3,71 contra 3,00) e o pior SMAPE médio agregado da Seção anterior. Esse padrão, já observado repetidamente ao longo deste capítulo em conjuntos de dados individuais, volta a se confirmar na agregação: o desempenho médio do ADE é penalizado por perdas de grande magnitude, ainda que vença com mais frequência do que o FFORMA em termos absolutos.
-
-
+O Random Forest (DWT), apesar de ser um único modelo fixo aplicado indistintamente às 680 séries de domínios tão distintos quanto demanda de combustíveis, séries semanais do M4 e temperatura de transformadores elétricos, vence em 205 delas, a maior contagem entre os cinco métodos. Isso não contradiz o resultado da MCM agregada da Seção anterior, em que o CARTE obtém o menor SMAPE médio: um único modelo pode vencer com mais frequência, série a série, sem que isso implique o menor erro médio, caso suas derrotas sejam, em média, maiores em magnitude do que suas vitórias. A ordem obtida pela contagem de vitórias também não coincide inteiramente com a ordem do rank médio da Tabela~\ref{tab:sintese-ranking}: o ADE vence em mais séries que o FFORMA (127 contra 114), mesmo tendo o pior rank médio entre os quatro métodos comparáveis (3,86 contra 3,00) e o pior SMAPE médio agregado da Seção anterior. Esse padrão, já observado repetidamente ao longo deste capítulo em conjuntos de dados individuais, volta a se confirmar na agregação: o desempenho médio do ADE é penalizado por perdas de grande magnitude, ainda que vença com mais frequência do que o FFORMA em termos absolutos.
 
 \subsection{Erro por passo do horizonte}
 
-A Figura~\ref{fig:erro-horizonte-smape} ilustra a evolução do SMAPE ao longo do horizonte de previsão, e a Figura~\ref{fig:erro-horizonte-pocid} a evolução do POCID, entre os cinco métodos já discutidos: o Random Forest (DWT) e a mediana como modelo e método fixos globais, ao lado do FFORMA, do ADE e do CARTE. Cada figura é dividida em dois painéis: o superior apresenta a média de cada método por passo do horizonte, e o inferior o desvio-padrão correspondente, entre as mesmas séries. Como os sete conjuntos de dados têm horizontes de teste diferentes entre si (12 na ANP, 8 no NN5, 13 no M4, e 24 nos quatro ETT), ambas as figuras são restritas aos oito primeiros passos do horizonte, os únicos em que a população de 680 séries dos sete conjuntos de dados permanece constante e integralmente comparável.
+A Figura~\ref{fig:erro-horizonte-smape} ilustra a evolução do SMAPE ao longo do horizonte de previsão, e a Figura~\ref{fig:erro-horizonte-pocid} a evolução do POCID, entre os cinco métodos já discutidos: o Random Forest (DWT) e a mediana como modelo e método fixos globais, ao lado do FFORMA, do ADE e do CARTE. Cada figura apresenta a média de cada método por passo do horizonte e uma faixa de confiança de 95\% para essa média, calculada a partir da variabilidade entre as séries. Como os sete conjuntos de dados têm horizontes de teste diferentes entre si (12 na ANP, 8 no NN5, 13 no M4, e 24 nos quatro ETT), ambas as figuras são restritas aos oito primeiros passos do horizonte, os únicos em que a população de 680 séries dos sete conjuntos de dados permanece constante e integralmente comparável.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{images/resultados_final/erro_horizonte_smape.png}
-    \caption{SMAPE por passo do horizonte: média (painel superior) e desvio-padrão (painel inferior), restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
+    \caption{SMAPE médio por passo do horizonte, com intervalo de confiança de 95\% para a média, restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
     \label{fig:erro-horizonte-smape}
 \end{figure}
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{images/resultados_final/erro_horizonte_pocid.png}
-    \caption{POCID por passo do horizonte: média (painel superior) e desvio-padrão (painel inferior), restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
+    \caption{POCID médio por passo do horizonte, com intervalo de confiança de 95\% para a média, restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
     \label{fig:erro-horizonte-pocid}
 \end{figure}
 
-No painel superior da Figura~\ref{fig:erro-horizonte-smape}, o SMAPE médio dos cinco métodos cresce de forma moderada e aproximadamente paralela entre o primeiro e o oitavo passo, e o CARTE mantém a primeira posição entre os cinco métodos em todos os oito passos (9,04\% no primeiro passo, 14,54\% no oitavo). A mediana ocupa a segunda posição no primeiro passo (9,17\%) e o Random Forest (DWT), a segunda no oitavo (14,97\%). O painel inferior mostra que o desvio-padrão cresce de forma acompanhada à média, e de maneira muito semelhante entre os cinco métodos, sem que nenhum se distinga como consistentemente mais ou menos variável que os demais ao longo do horizonte.
+Na Figura~\ref{fig:erro-horizonte-smape}, o SMAPE médio dos cinco métodos cresce de forma moderada entre o primeiro e o oitavo passo, com oscilações. No primeiro passo, a mediana tem o menor valor (9,17\%), seguida do Random Forest (DWT) (9,46\%), do FFORMA (9,68\%), do CARTE (9,86\%) e do ADE (10,43\%). No oitavo, o CARTE assume a liderança (14,64\%), à frente do Random Forest (DWT) (14,97\%), da mediana (15,12\%), do FFORMA (15,49\%) e do ADE (15,72\%). Ao longo dos oito passos, a mediana lidera nos passos 1, 2, 3, 5 e 6, e o CARTE lidera nos passos 4, 7 e 8. As faixas de confiança de 95\% se sobrepõem entre os métodos em todos os passos, o que indica que as diferenças entre as médias são pequenas em relação à variabilidade entre as séries.
 
-
-No painel superior da Figura~\ref{fig:erro-horizonte-pocid}, o POCID médio não apresenta a mesma tendência de crescimento monótono observada no SMAPE: decresce de forma leve ao longo dos oito passos para a maioria dos métodos, de valores entre 59,85\% e 66,32\% no primeiro passo para valores entre 55,29\% e 63,38\% no oitavo. O CARTE lidera no primeiro passo (66,32\%) e recua para 60,59\% no oitavo, segundo lugar empatado com a mediana, atrás do FFORMA, que assume a maior taxa no fim do horizonte (63,38\%); o ADE mantém o menor POCID nos dois extremos. O painel inferior mostra um desvio-padrão elevado e praticamente constante ao longo de todo o horizonte, em torno de 49 pontos percentuais para os cinco métodos, reflexo da natureza binária dessa métrica por observação (acerto ou erro de direção).
-
-
+Na Figura~\ref{fig:erro-horizonte-pocid}, o POCID médio não apresenta a mesma tendência de crescimento do SMAPE. Ele oscila ao longo dos oito passos, de valores entre 59,85\% e 66,18\% no primeiro passo para valores entre 55,29\% e 63,38\% no oitavo. No primeiro passo, a mediana lidera (66,18\%), à frente do CARTE (64,72\%), do FFORMA (64,26\%), do Random Forest (DWT) (63,24\%) e do ADE (59,85\%). No oitavo, o FFORMA assume a maior taxa (63,38\%), à frente da mediana (60,59\%), do CARTE (57,24\%), do Random Forest (DWT) (56,91\%) e do ADE (55,29\%). O ADE mantém o menor POCID nos dois extremos. As faixas de confiança de 95\% também se sobrepõem entre os métodos, especialmente nos passos intermediários, o que reflete a variabilidade da métrica binária por série.
 
 A partir do nono passo, a população de séries que alimentaria uma média equivalente deixa de ser constante: o NN5 (horizonte 8) para de contribuir a partir daí, a ANP (horizonte 12) a partir do décimo terceiro passo, e o M4 (horizonte 13) a partir do décimo quarto, restando apenas as 28 séries dos quatro conjuntos ETT do décimo quarto ao vigésimo quarto passo, cerca de 4\% da população original. Por essa razão, o comportamento do erro nessa parte estendida do horizonte não é apresentado nesta seção: qualquer diferença observada ali refletiria majoritariamente a composição dos conjuntos de dados, discutida individualmente nas Seções~\ref{sec:resultados-etth1} a~\ref{sec:resultados-ettm2}, e não um efeito genuíno de acúmulo de erro ao longo da distância de previsão.
-
-
 \section{Análise do comportamento do agente} \label{sec:resultados-agente}
 
-Esta seção analisa o comportamento do agente combinador ao longo das 680 séries dos sete conjuntos de dados, usando os registros de auditoria descritos na Seção~\ref{sec:aplicacao} do Capítulo~\ref{chp:proposta}.
+Esta seção analisa o comportamento do agente combinador ao longo das 680 séries dos sete conjuntos de dados, usando os registros de auditoria descritos na Seção~\ref{sec:aplicacao} do Capítulo~\ref{chp:proposta}. Para a análise qualitativa, usamos a execução mais representativa do conjunto de dez execuções. A escolha não foi manual. Para cada execução, calculamos a média dos sete conjuntos em SMAPE e POCID. A referência é a média das dez execuções, 20,27\% de SMAPE e 54,05\% de POCID. A execução escolhida é a que fica mais próxima dessa referência nas duas métricas, com 20,33\% de SMAPE e 53,99\% de POCID. A distância é padronizada pelas duas médias, para que SMAPE e POCID tenham o mesmo peso. Os traces, contagens e estudos de caso desta seção vêm dessa execução, não da média das dez.
 
 \subsection{Frequência de uso do catálogo de ações}
 
-As onze ações oferecidas ao agente no protocolo adotado foram todas chamadas ao menos uma vez ao longo das 680 séries, além do aceite; a única ação registrada e não oferecida é o peso por mínimos quadrados, que exige mais janelas de validação do que as três disponíveis. A Tabela~\ref{tab:agente-acoes} apresenta a contagem total de chamadas de cada ação.
+A Tabela~\ref{tab:agente-acoes} apresenta o número de séries em que cada ação foi usada ao menos uma vez e o número total de chamadas, na execução representativa.
 
 \begin{table}[H]
 \centering
-\caption{Contagem total de chamadas por ação, entre as 680 séries.}
+\caption{Ações usadas na execução representativa, por número de séries e de chamadas.}
 \label{tab:agente-acoes}
-\begin{tabular}{@{}lr@{}}
+\begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{Ação} & \textbf{Chamadas} \\
+\textbf{Ação} & \textbf{Séries} & \textbf{Chamadas} \\
 \midrule
-Peso pelo erro inverso                 & 366 \\
-Avaliação da estratégia                & 338 \\
-Poda de redundância                    & 324 \\
-Peso pela seleção gulosa               & 85 \\
-Seleção pelos $k$ melhores             & 55 \\
-Peso pela média dos melhores por passo & 33 \\
-Peso pelo meta-modelo                  & 30 \\
-Seleção pelos mais estáveis            & 17 \\
-Peso pelo melhor preditor por passo    & 17 \\
-Seleção gulosa de subconjunto          & 12 \\
-Peso pela tendência do erro            & 10 \\
+Avaliação da estratégia & 680 & 12.675 \\
+Seleção pelos $k$ melhores & 462 & 550 \\
+Peso pela média dos melhores por passo & 337 & 480 \\
+Peso pelo melhor preditor por passo & 101 & 109 \\
+Peso pela seleção gulosa & 92 & 99 \\
+Peso pelo erro inverso & 82 & 110 \\
+Seleção pelos mais estáveis & 41 & 46 \\
+Seleção gulosa de subconjunto & 8 & 8 \\
+Peso pela tendência do erro & 8 & 8 \\
+Peso pelo meta-modelo & 1 & 1 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-O peso pelo erro inverso é o critério de ponderação mais utilizado, seguido da avaliação da estratégia, o único caminho pelo qual uma tentativa entra no histórico, e da poda de redundância. Entre as ações de seleção de subconjunto, a seleção pelos $k$ melhores lidera, à frente da seleção pelos mais estáveis e da seleção gulosa; entre as receitas adicionais de ponderação, a seleção gulosa e a média dos melhores por passo aparecem mais que o melhor preditor por passo. O equilíbrio entre exploração e preparação acompanha o comportamento conservador do agente neste protocolo: em média, pouco mais de meia avaliação de estratégia por série.
+A avaliação da estratégia é a ação central. Ela aparece em todas as 680 séries e responde por 12.675 chamadas, 18,6 por série, em média. O agente testa muitas combinações antes de escolher. A seleção pelos $k$ melhores é a ação de seleção mais usada, em 462 séries e 550 chamadas. Em seguida vem a média dos melhores por passo, em 337 séries e 480 chamadas. O padrão é reduzir o pool e testar uma ponderação por passo.
 
-Uma leitura dos pensamentos que antecedem cada chamada, combinada à distribuição das ações entre as séries, ajuda a explicar essa concentração. Das 680 séries, 225 (33\%) terminam no aceite de uma estratégia já semeada sem nenhuma chamada adicional, e a mediana de passos por série é de 2: a tabela reflete, portanto, o que o agente faz quando decide ir além das sementes, e nesse subconjunto o roteiro típico de intervenção é podar, ponderar e avaliar. A poda de redundância é a ação de seleção mais usada (304 séries, 45\%) e tende a abrir o ciclo: em 74\% das séries que a usam, ela é a primeira chamada. Em 88\% das suas chamadas, os pensamentos citam erros correlacionados, 86\% citam redundância e 42\% descrevem o ranqueamento como instável, como neste exemplo real, em uma série da ANP: \textit{"The series has unstable ranking and many correlated errors; pruning redundant models should reduce noise, and then inverse-error weighting on the cleaned pool may improve performance."} O peso pelo erro inverso é a receita de ponderação padrão do roteiro (269 séries, 40\%): em 85\% dos pensamentos que o antecedem a própria expressão aparece, 92\% citam o erro dos preditores e 57\% mencionam a média vigente, quase sempre como a referência a ser batida. A avaliação da estratégia, única via de entrada no histórico de tentativas, ocorre em 194 séries (29\%), justamente aquelas em que o agente testa uma proposta: entre elas, 70\% passam também pela poda e 77\% pelo erro inverso, e 64\% dos pensamentos que antecedem a avaliação citam pesos, refletindo o padrão de testar uma receita de ponderação e registrá-la. Nas ações menos frequentes, o motivo é mais específico: a seleção pelos mais estáveis aparece com o ranqueamento instável citado em 76\% dos casos, o peso pela tendência do erro cita a tendência em 100\% deles, o peso pelo meta-modelo cita o conhecimento entre séries em 90\%, e as duas receitas por passo do horizonte citam o horizonte em 100\% deles. A concentração do catálogo, portanto, não indica preferência do agente por ferramentas específicas: ela reflete o roteiro de poda, ponderação e avaliação das séries em que o agente decide ir além das sementes.
+As receitas de peso pelo melhor preditor por passo (101 séries), pela seleção gulosa (92), pelo erro inverso (82), pela seleção mais estável (41), pela seleção gulosa de subconjunto (8), pela tendência do erro (8) e pelo meta-modelo (1) completam o repertório. As ações menos frequentes aparecem em situações específicas, não como ruído. Não há poda de redundância na execução representativa. A redução do pool é feita pelas ações de seleção, sobretudo a seleção pelos $k$ melhores e a seleção pelos mais estáveis.
+
+O perfil é de exploração intensa. A mediana é de 21 iterações por série, e a média é de 20,86 chamadas por série. O agente usa o orçamento para avaliar candidatos e só então escolhe a melhor tentativa do histórico. O uso do catálogo, portanto, não é o de um agente que aceita a primeira proposta. É o de um agente que testa alternativas de seleção e ponderação antes de decidir.
+
 \subsection{Motivo de encerramento do ciclo} \label{subsec:motivo-encerramento}
 
-A Tabela~\ref{tab:agente-encerramento} apresenta a distribuição dos três critérios de encerramento do ciclo de decisão, descritos na Seção~\ref{sec:agente}, entre as 680 séries.
+A Tabela~\ref{tab:agente-encerramento} apresenta a distribuição dos motivos de encerramento do ciclo na execução representativa. O ciclo não termina por aceite explícito nem por estagnação. A configuração usada não tem parada antecipada, e as duas únicas formas de encerramento são o orçamento de avaliação e o orçamento total de turnos.
 
 \begin{table}[H]
 \centering
-\caption{Motivo de encerramento do ciclo, entre as 680 séries.}
+\caption{Motivo de encerramento do ciclo, na execução representativa.}
 \label{tab:agente-encerramento}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \textbf{Motivo} & \textbf{Séries} & \textbf{\%} \\
 \midrule
-Aceite explícito       & 671 & 98,68 \\
-Estagnação            & 8   & 1,18  \\
-Orçamento esgotado    & 1   & 0,15  \\
+Orçamento de avaliação esgotado & 552 & 81,18 \\
+Orçamento de turnos esgotado    & 128 & 18,82 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-O aceite explícito encerra a quase totalidade das séries (98,68\%), e a estagnação responde pelas oito restantes, distribuídas entre ANP, NN5, M4 e ETTh1. O esgotamento do orçamento de iterações, a rede de segurança descrita na Seção~\ref{sec:agente}, ocorre em uma única série (NN5), o que indica que o orçamento estabelecido é, na prática, mais que suficiente: o agente encerra o ciclo por decisão própria bem antes do limite.
+Em 552 séries (81,2\%), o ciclo termina quando o orçamento de avaliação se esgota. Em 128 (18,8\%), termina quando o total de 24 turnos se esgota antes. A diferença entre os dois grupos reflete a composição do turno. As ações de seleção e de ponderação não consomem o orçamento de avaliação, mas consomem turnos. Quando o agente prepara muito, o limite de 24 turnos chega primeiro. Quando avalia muito, o orçamento de avaliação chega primeiro. A mediana de 21 turnos e a média de 20,86 mostram que o agente usa quase todo o orçamento disponível.
 
-Vale registrar o comportamento da única série que esgota o orçamento, no NN5. O agente encontra uma liderança logo na segunda iteração, ao testar o peso pelo erro inverso sobre um subconjunto estável (pontuação 0,6586), e em seguida testa, sem superá-la, uma média dos melhores por passo, uma mediana e um peso pelo erro inverso sobre o conjunto podado. Como o líder não se separa com margem confiável, o ciclo continua e, na décima iteração, o agente encontra uma nova melhor pontuação, com o peso pela tendência do erro (0,6582); a melhora marginal reinicia a janela de estagnação, a tentativa seguinte não supera o novo líder e o ciclo atinge o limite de doze iterações antes de acumular quatro avaliações consecutivas sem melhora. A decisão final recai sobre a melhor tentativa do histórico, como previsto pelo mecanismo: o teto de iterações funciona como a rede de segurança que encerra o ciclo mesmo quando o agente preferiria continuar explorando.
+O encerramento por orçamento não é falha. A escolha final recai sobre a melhor tentativa do histórico, que inclui todas as avaliações feitas. O orçamento limita o custo e garante que o ciclo termine. A distribuição 552/128 mostra que o orçamento de avaliação é o limite efetivo na maioria das séries, e o limite de turnos atua como rede de segurança nas séries em que a preparação consome mais turnos.
+\subsection{Passo a passo de uma decisão} \label{subsec:transcricao-decisao}
 
-\subsection{Passo a passo de uma decisão: da semente ao aceite} \label{subsec:transcricao-decisao}
-
-Esta subseção acompanha, iteração a iteração, a decisão do agente para a série 206 do M4, a mesma do caso de sucesso da Subseção~\ref{subsec:interpretabilidade-previsoes}, desde o ponto de partida determinístico até o aceite final. Os pensamentos são apresentados em tradução livre na Tabela~\ref{tab:transcricao-decisao}, e os trechos decisivos são citados literalmente no texto. Todos os escores e posições citados até o aceite são de validação, calculados sobre as três janelas usadas na decisão; as métricas de teste aparecem apenas no fecho desta subseção. Para evitar ambiguidade, os identificadores são os registrados pelo próprio método: pool$N$ denota um subconjunto de preditores (os pools 1 a 3 são preparados antes do ciclo, e os demais são criados pelas ações de seleção durante o ciclo), w$N$ denota um vetor de pesos calculado na série, e a$N$ denota a $N$-ésima tentativa do histórico, com as dez sementes ocupando a1 a a10 e a estratégia final sendo sempre a de melhor pontuação entre todas.
-
-Antes de o agente atuar, dez estratégias fixas são avaliadas e registradas no histórico da série. A melhor delas é a média aparada sobre o pool3 (a9), com pontuação de validação 0,4099, à frente da média (0,4177), da mediana (0,4385) e da combinação ponderada semeada (0,6516); o DBA fica bem atrás (0,8106). É esse piso de 0,4099 que o agente precisa superar.
+Esta subseção acompanha a decisão do agente para a série 87 do M4, escolhida por ilustrar um caso em que o agente muda o pool e reencontra uma combinação que havia falhado no pool completo. Os pensamentos são apresentados em tradução livre na Tabela~\ref{tab:transcricao-decisao}, e os trechos decisivos são citados literalmente no texto. Todos os escores e posições citados são de validação, calculados sobre as três janelas usadas na decisão. As métricas de teste aparecem apenas no fecho desta subseção. Os identificadores são os registrados pelo próprio método. Pools são denotados por pool$N$, vetores de pesos por w$N$ e tentativas por a$N$. A escolha final é a de melhor pontuação entre as tentativas.
 
 \begin{table}[H]
 \centering
-\caption{Transcrição da trajetória de decisão do agente na série 206 do M4.}
+\caption{Transcrição da trajetória de decisão do agente na série 87 do M4.}
 \label{tab:transcricao-decisao}
 \footnotesize
 \begin{tabular}{@{}cp{6.2cm}p{3.8cm}p{3.2cm}@{}}
 \toprule
 \textbf{Iter.} & \textbf{Pensamento (tradução livre)} & \textbf{Ação} & \textbf{Resultado (validação)} \\
 \midrule
-1 & O líder é uma média aparada no pool3, mas o diagnóstico sugere que uma combinação ponderada pode melhorar; testar o peso pelo erro inverso no pool3 com pequeno encolhimento para reduzir a variância das três janelas. & Peso pelo erro inverso (pool3, encolhimento 0,1) & w2 registrado (9 de 9 modelos) \\
-2 & O líder é uma média aparada no pool3, mas a correlação de erros mostra grupos redundantes; podar deve reduzir o ruído e permitir que a ponderação supere a média aparada. & Poda de redundância (pool3) & pool4: 9 para 7 modelos \\
-3 & Testar a combinação ponderada com o w2 no pool3 para ver se a média ponderada regularizada supera a média aparada. & Avaliação do w2 (pool3) & 2º de 11 (0,4142); líder: a9 (média aparada no pool3) \\
-4 & Reduzir os erros correlacionados podando e reponderando o conjunto reduzido; o erro inverso no pool4 pode superar o líder. & Peso pelo erro inverso (pool4, encolhimento 0) & w3 registrado (7 de 7 modelos) \\
-5 & O líder é a média aparada no pool3; uma média ponderada com os pesos do w3 no pool4 pode reduzir a variância, já que o pool4 contém os modelos mais estáveis e não redundantes. & Avaliação do w3 (pool4) & 1º de 12 (0,378; melhor até aqui) \\
-6 & O melhor até aqui (ponderação no pool4 com w3) é estatisticamente indistinguível do segundo colocado e nenhuma outra estratégia deve superá-lo. & Aceite & a12 aceito \\
+1 & A série é dominada por tendência, com estabilidade moderada. Uma média aparada deve reduzir o efeito de previsões extremas. & Média aparada (pool completo, 20\%) & 1º de 1, 0,4131 \\
+2 & Testar uma ponderação pelo erro inverso para aproveitar a tendência e a estabilidade moderada. & Peso pelo erro inverso (pool completo) & 1º de 2, 0,3105 \\
+4 & Uma mediana no pool completo pode reduzir o efeito de valores extremos. & Mediana (pool completo) & 1º de 4, 0,1294 \\
+5 & Testar o DBA no pool completo, que pode superar a mediana. & DBA (pool completo) & 5º de 5, 1,0140 \\
+7 & Selecionar os sete melhores modelos por RMSE para reduzir a variância. & Seleção pelos 7 melhores (RMSE) & pool4 com 7 modelos \\
+8 & Testar a ponderação pelo erro inverso no pool reduzido. & Peso pelo erro inverso (pool4) & 1º de 7, 0,1268 \\
+13 & Uma média simples do pool reduzido pode reduzir a variância. & Média (pool4) & 1º de 10, 0,1254 \\
+16 & Testar o DBA no pool reduzido, que pode reduzir a variância ainda mais. & DBA (pool4) & 1º de 12, 0,1126 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-O primeiro pensamento já antecipa o desfecho: \textit{"The current leader is a trimmed-mean on pool3, but the diagnostics suggest a weighted combination could improve performance. I'll try inverse-error weights on pool3 with a small shrinkage to reduce variance from only three windows."} A decisão que muda a liderança vem na quinta iteração: \textit{"The current leader is a trimmed-mean on pool3. A weighted average using the inverse-error weights on the pruned pool4 might reduce variance and improve over the trimmed-mean, especially since pool4 contains the most stable, non-redundant models."} E o aceite é acompanhado de \textit{"The current best weighted pool4 w3 is statistically indistinguishable from the runner-up, and no further strategy is likely to beat it."}, com a justificativa registrada: \textit{"Weighted pool4 w3 achieves the lowest score and is not statistically worse than the runner-up; accepting it is the prudent choice."}
+A primeira avaliação é uma média aparada no pool completo, com pontuação 0,4131. O primeiro pensamento é \textit{"The series is trend dominated with moderate ranking stability; a selective trimming of extreme forecasts should help reduce outliers from correlated groups."} A ponderação pelo erro inverso melhora para 0,3105, e a mediana para 0,1294. O DBA no pool completo é o pior resultado, 1,0140. O agente então seleciona os sete melhores modelos por RMSE, formando o pool4. A ponderação pelo erro inverso no pool4 cai para 0,1268, a média para 0,1254, e o DBA no pool4 para 0,1126, o melhor resultado. O mesmo DBA que era o pior no pool completo se torna o melhor no pool reduzido.
 
-Em seis iterações e duas avaliações, o agente substitui a média aparada semeada por uma combinação ponderada pelo erro inverso sobre o subconjunto podado. A Tabela~\ref{tab:transcricao-validacao-teste} compara as duas estratégias nas duas janelas.
+A decisão que muda o resultado vem no passo 16. O pensamento registrado é \textit{"The series is trend-dominated and the diagnostic suggests a selective combination; a DBA on the selective pool may reduce variance further."} A escolha final é o DBA no pool4, com pontuação de validação 0,1126.
+
+A Tabela~\ref{tab:transcricao-validacao-teste} compara a primeira avaliação e a estratégia final nas duas janelas.
 
 \begin{table}[H]
 \centering
-\caption{Pontuação de validação e métricas de teste da melhor semente e da estratégia aceita, na série 206 do M4.}
+\caption{Métricas de teste da primeira avaliação e da estratégia final, na série 87 do M4. A pontuação de validação aparece entre parênteses na primeira coluna.}
 \label{tab:transcricao-validacao-teste}
-\begin{tabular}{@{}lrrr@{}}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrr@{}}
 \toprule
-\textbf{Estratégia} & \textbf{Pontuação (validação)} & \textbf{SMAPE (teste, \%)} & \textbf{POCID (teste, \%)} \\
+\textbf{Estratégia} & \textbf{SMAPE (teste, \%)} & \textbf{POCID (teste, \%)} \\
 \midrule
-Melhor semente (a9)     & 0,4099 & 10,93 & \textbf{50,00} \\
-Estratégia aceita (a12) & \textbf{0,3780} & \textbf{10,37} & \textbf{50,00} \\
+Primeira avaliação (a1, 0,4131) & 7,97 & 33,33 \\
+Estratégia final (a12, 0,1126) & \textbf{0,52} & \textbf{75,00} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A melhora de 0,0319 na validação se confirmou na direção no teste: o SMAPE cai de 10,93\% na melhor semente para 10,37\% na estratégia aceita, uma diferença de 0,56 ponto percentual, enquanto o POCID permanece idêntico (50,00\%). A trajetória ilustra o padrão descrito nas subseções anteriores: o agente parte do diagnóstico, testa a receita de ponderação sobre o conjunto disponível, compara cada proposta com o líder vigente e aceita a melhor pontuação do histórico quando a margem é indistinguível.
-\subsection{Estudo de caso ilustrativo} \label{subsec:estudo-caso-trajetoria}
-
-Esta subseção ilustra o funcionamento do ciclo de decisão do agente a partir de duas séries reais da ANP: uma em que a estratégia final aceita já constava entre as sementes pré-testadas (série de índice 8), e outra em que a estratégia final resultou de um subconjunto construído pelo próprio agente (série de índice 5).
-
-Na série de índice 8, o agente explorou, ao longo de onze iterações, pesos pelo erro inverso sobre o conjunto podado, pesos pelo meta-modelo entre séries, pesos pela seleção gulosa e pesos pela tendência do erro, além de uma segunda poda do conjunto completo; as duas alternativas avaliadas nas janelas de validação ficaram atrás da mediana, e o agente aceitou a estratégia a2, a mediana sobre o conjunto completo de preditores, que já constava entre as sementes pré-testadas. Nenhuma das alternativas exploradas nas iterações seguintes a superou.
-
-Na série de índice 5, o agente também iniciou pela poda de redundância, reduzindo o conjunto de dezenove para doze modelos; avaliou de imediato a mediana sobre o subconjunto podado, que assumiu a liderança, e calculou em seguida pesos pelo meta-modelo, pesos pelo erro inverso com dois níveis de encolhimento e pesos pela seleção gulosa, que reteve um único modelo em doze. Aplicou então uma segunda poda, de doze para dez modelos; a mediana sobre esse subconjunto final voltou a liderar e foi aceita como estratégia final (a12), de origem no próprio agente, e não entre as sementes. Na avaliação final, essa decisão superou a versão do método sem o agente em 2,09 pontos percentuais de SMAPE, a maior melhoria entre as 680 séries deste estudo.
-
-Em ambos os casos, a justificativa textual do agente aponta a robustez da mediana como motivo da escolha final e descreve a margem do líder como estatisticamente indistinguível da do segundo colocado. Essa coincidência, à primeira vista, poderia sugerir um padrão de vocabulário fixo entre justificativas; a Seção~\ref{subsec:rastreabilidade} apresenta uma análise quantitativa dessa questão sobre a totalidade das séries com estratégia final de origem no agente, não apenas estes dois casos.
-
-Os dois casos ilustram o mesmo padrão observado de forma agregada nas seções seguintes: o ciclo de raciocínio do agente frequentemente envolve testar múltiplas hipóteses de ponderação sobre subconjuntos podados do conjunto de preditores antes de convergir para uma decisão final, que pode ou não superar o que já estava disponível antes de o agente começar a atuar.
-
-
+A melhora de 0,3005 na validação se confirmou no teste. O SMAPE cai de 7,97\% para 0,52\%, e o POCID sobe de 33,33\% para 75,00\%. A trajetória ilustra o padrão descrito nas subseções anteriores. O agente testa alternativas, reduz o pool e escolhe a melhor tentativa do histórico quando o orçamento de avaliação se esgota.
 \subsection{Interpretabilidade das previsões} \label{subsec:interpretabilidade-previsoes}
 
-Para ilustrar concretamente como a estratégia final se traduz em previsões, esta subseção apresenta duas outras séries em extremos opostos de desempenho, uma do M4 semanal (série 206) e uma da ANP (série 13), ambas com estratégia final de origem no próprio agente, e ambas combinando múltiplos preditores por peso, não um único modelo isolado.
+Para ilustrar como a estratégia final se traduz em previsões, esta subseção apresenta duas séries em extremos opostos de desempenho, uma do M4 semanal (série 206) e uma da ANP (série 13), ambas com estratégia final proposta pelo agente e combinando múltiplos preditores, não um único modelo isolado.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_sucesso.png}
-    \caption{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 206 do M4, a série com a maior vantagem do CARTE sobre os demais métodos de combinação entre as séries com estratégia de origem no agente; o painel inferior amplia a faixa das estratégias de combinação.}
+    \caption{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 206 do M4, um caso de sucesso. O painel inferior amplia a faixa das estratégias de combinação.}
     \label{fig:caso-sucesso}
 \end{figure}
 
-Na série 206 do M4 (Figura~\ref{fig:caso-sucesso}), o CARTE obtém SMAPE de 10,37\%, combinando sete modelos (Random Forest e CatBoost sobre as transformações wavelet contínua e discreta e de Fourier) por média ponderada, com pesos médios entre 0,11 e 0,18 e sem concentração em um único modelo. As sete previsões individuais acompanham o nível geral da série, mas divergem entre si nos picos e vales ao longo do horizonte; a combinação final segue a tendência de alta de forma mais fiel que as demais estratégias de combinação, e é o único método cujo intervalo de previsão se estende acima de 14.000, aproximando-se do patamar atingido pelo valor real, enquanto todas as demais combinações permanecem abaixo de 13.500. No pico isolado do sexto passo, nenhuma previsão de combinação acompanha o salto da série, um dos poucos momentos em que o CARTE se afasta do valor observado. As demais estratégias de combinação ficam bem atrás nesta série: contra 10,37\% do CARTE, o ADE obtém 13,90\%, o FFORMA, 14,15\%, a mediana, 15,39\%, e o DBA, 21,87\%. A justificativa real do agente para este caso foi: \textit{"Weighted pool4 w3 achieves the lowest score and is not statistically worse than the runner-up; accepting it is the prudent choice."}
+Na série 206 do M4 (Figura~\ref{fig:caso-sucesso}), o CARTE obtém SMAPE de 10,92\%, combinando sete modelos, entre Random Forest e CatBoost sobre as transformações wavelet contínua, discreta e de Fourier, além do Random Forest na representação original por média ponderada, com pesos médios entre 0,12 e 0,17 e sem concentração em um único modelo. As sete previsões individuais acompanham o nível geral da série, mas divergem nos picos e vales ao longo do horizonte. A combinação final segue a alta de forma mais fiel que as demais estratégias e é a que mais se aproxima do valor real entre as combinações, embora fique abaixo do pico isolado do sexto passo, quando o valor observado salta para 20.567 e nenhuma combinação acompanha o movimento. As demais estratégias ficam atrás. Contra 10,92\% do CARTE, o ADE obtém 13,90\%, o FFORMA 14,15\%, a mediana 15,39\% e o DBA 21,87\%. A justificativa registrada é \textit{"Selected 'weighted on pool4 weighted by w5' (an agent proposal) as the best of 11 backtested attempts, score 0.771."}
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_fracasso.png}
-    \caption{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 13 da ANP, um dos maiores SMAPE entre as séries com estratégia de origem no agente; o painel inferior amplia a faixa das estratégias de combinação.}
+    \caption{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 13 da ANP, um caso de fracasso. O painel inferior amplia a faixa das estratégias de combinação.}
     \label{fig:caso-fracasso}
 \end{figure}
 
-Na série 13 da ANP (Figura~\ref{fig:caso-fracasso}), o CARTE obtém SMAPE de 21,55\%, combinando nove modelos (ARIMA e ETS, Random Forest e CatBoost em representações originais e transformadas, e o Naive Seasonal) por média ponderada, com pesos médios entre 0,09 e 0,14 e sem concentração em um único modelo. A figura revela por que a combinação não teve sucesso: o valor real recua de aproximadamente 1.540 para pouco mais de 900 nos primeiros passos, recupera-se parcialmente e volta a subir até 1.884 no fim do horizonte, enquanto a maioria das previsões individuais permanece numa faixa estreita e a combinação final fica confinada entre 1.370 e 1.536, sem reproduzir nem o vale nem a recuperação. A ponderação pelo erro inverso, com pesos espalhados por nove modelos, dilui os poucos preditores que acompanham a mudança de nível e resulta em uma previsão suavizada que não segue nenhum dos extremos; o melhor modelo individual isolado, o ETS, teria obtido 16,31\% de SMAPE nesta série. As demais estratégias de combinação erram na mesma faixa do CARTE: FFORMA (21,17\%), DBA (21,82\%), mediana (21,98\%) e ADE (22,27\%), e nenhuma delas reproduz os movimentos da série. Nesse caso, a justificativa do agente foi: \textit{"trend-dominated series with unstable ranking; the weighted pool4 w2 strategy gives the lowest RMSE and is statistically indistinguishable from the runner-up, so it is the optimal choice."}
-
-
+Na série 13 da ANP (Figura~\ref{fig:caso-fracasso}), o CARTE obtém SMAPE de 20,03\%, combinando sete modelos (ARIMA, ETS, Theta, Random Forest na representação original, CatBoost e Random Forest sobre a transformação de Fourier e o Naive Moving Average) por média simples. A figura mostra por que a combinação não teve sucesso. O valor real recua de aproximadamente 1.540 para pouco mais de 900 nos primeiros passos, recupera-se em parte e volta a subir até 1.884 no fim do horizonte, enquanto a média dos sete modelos fica confinada entre 1.279 e 1.432. A média dilui os poucos preditores que acompanham a mudança de nível e produz uma previsão suavizada. O melhor modelo individual isolado, o ETS, teria obtido 16,31\% de SMAPE. As demais combinações ficam entre 21,17\% e 22,27\% de SMAPE. O CARTE é a melhor combinação nesta série, mas ainda assim não acompanha a magnitude. O POCID do CARTE é 100,00\%, o que indica que a direção é correta em todos os passos. O erro está na magnitude, comprimida pela média. As demais combinações acertam a direção em 54,55\% a 72,73\% dos passos. A justificativa registrada é \textit{"Selected 'mean on pool4' (an agent proposal) as the best of 12 backtested attempts, score 0.9119."}
 \subsection{Distribuição da melhoria relativa}
 
-Para cada uma das 680 séries, comparou-se a pontuação da estratégia final com a menor pontuação entre as estratégias semeadas, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao} do Capítulo~\ref{chp:proposta}. Em nenhuma das 680 séries a estratégia final apresentou pontuação pior que a melhor semente (0\%), confirmando empiricamente, sobre a totalidade das séries deste estudo, a garantia de que a estratégia final nunca é pior que o piso estabelecido pelas sementes, descrita na Seção~\ref{sec:aplicacao}. Em 351 séries (51,6\%), a estratégia final iguala essa melhor semente, dentro da precisão de registro dos escores. Nas demais 329 séries (48,4\%), a estratégia final apresenta pontuação estritamente melhor, o que reflete tanto propostas do agente quanto a escolha entre as estratégias de estabilidade semeadas. A maior melhoria observada ocorre em uma série do M4, na qual a pontuação final é 0,345 menor que a da melhor semente.
+Para cada uma das 680 séries, comparou-se a pontuação de validação da estratégia final com a menor pontuação entre as primeiras dez tentativas, segundo o mecanismo descrito na Seção~\ref{subsec:pontuacao} do Capítulo~\ref{chp:proposta}. A estratégia final é, por construção, a melhor tentativa do histórico. Como as primeiras dez tentativas fazem parte desse histórico, ela nunca é pior que a melhor delas. Em nenhuma das 680 séries a estratégia final apresentou pontuação pior que a melhor das primeiras dez tentativas (0\%). Em 509 séries (74,9\%), a estratégia final iguala essa melhor tentativa, dentro da precisão de registro dos escores. Nas 171 restantes (25,1\%), a estratégia final apresenta pontuação estritamente melhor. A maior melhoria observada ocorre na série 9 do M4, na qual a pontuação final é 0,232 menor que a da melhor das primeiras dez tentativas.
 
 \begin{table}[H]
 \centering
-\caption{Distribuição das 329 séries com melhoria estrita, por faixa de ganho na pontuação.}
+\caption{Distribuição das 171 séries com melhoria estrita, por faixa de ganho na pontuação.}
 \label{tab:melhoria-faixas}
 \begin{tabular}{@{}lrr@{}}
 \toprule
 \textbf{Faixa de ganho} & \textbf{Séries} & \textbf{\% das 680} \\
 \midrule
-até 0,001        & 14  & 2,1  \\
-0,001 a 0,01     & 108 & 15,9 \\
-0,01 a 0,05      & 150 & 22,1 \\
-0,05 a 0,10      & 38  & 5,6  \\
-acima de 0,10    & 19  & 2,8  \\
+até 0,001        & 29  & 4,3  \\
+0,001 a 0,01     & 53  & 7,8  \\
+0,01 a 0,05      & 67  & 9,9  \\
+0,05 a 0,10      & 16  & 2,4  \\
+acima de 0,10    & 6   & 0,9  \\
+\midrule
+\textbf{Total}   & \textbf{171} & \textbf{25,1} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A Tabela~\ref{tab:melhoria-faixas} detalha esses ganhos: a maioria das 329 séries com melhoria estrita apresenta ganho de até 0,05 ponto de pontuação (272 séries, 40\% das 680), e apenas 19 séries (2,8\%) superam 0,10; entre as 329, a mediana do ganho é de 0,017 e as dez maiores melhorias concentram 20\% do ganho total.
+A Tabela~\ref{tab:melhoria-faixas} detalha esses ganhos. A maioria das 171 séries com melhoria estrita apresenta ganho de até 0,05 ponto de pontuação (149 séries, 21,9\% das 680), e apenas 6 séries (0,9\%) superam 0,10. Entre as 171, a mediana do ganho é de 0,011 e as dez maiores melhorias concentram 34,2\% do ganho total. O padrão é de ganhos pequenos na maioria dos casos e de um grupo menor com ganhos maiores, o que é consistente com a exploração adicional do agente depois das primeiras dez tentativas.
 \subsection{Custo computacional}
+
+A Tabela~\ref{tab:agente-custo} apresenta o tempo médio de decisão por série, por conjunto de dados.
 
 \begin{table}[H]
 \centering
@@ -993,238 +1149,274 @@ A Tabela~\ref{tab:melhoria-faixas} detalha esses ganhos: a maioria das 329 séri
 \toprule
 \textbf{Conjunto de dados} & \textbf{Tempo médio (s)} & \textbf{Desvio-padrão (s)} \\
 \midrule
-ETTm1  & 6,19  & 7,70  \\
-ETTm2  & 7,69  & 9,42  \\
-M4     & 8,26  & 8,68  \\
-NN5    & 10,04 & 12,46 \\
-ANP    & 10,32 & 13,94 \\
-ETTh2  & 14,34 & 7,48  \\
-ETTh1  & 14,43 & 21,97 \\
+ETTm1  & 17,63 & 2,36 \\
+ETTh2  & 17,73 & 1,89 \\
+ANP    & 19,10 & 2,83 \\
+ETTm2  & 19,72 & 2,66 \\
+ETTh1  & 20,45 & 2,66 \\
+M4     & 21,98 & 3,14 \\
+NN5    & 22,95 & 5,97 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-O tempo médio de decisão varia de aproximadamente 6 a 14 segundos por série, dependendo do conjunto de dados, um custo baixo quando comparado ao tempo de execução dos modelos individuais, das combinações estáticas e dos métodos de meta-aprendizagem da literatura. O desvio-padrão é, em vários conjuntos, comparável à própria média, o que indica grande variação no tempo de decisão entre séries de um mesmo conjunto de dados, compatível com o número variável de iterações consumidas antes do encerramento do ciclo, descrito na Seção~\ref{subsec:motivo-encerramento}.
-
-
+O tempo médio de decisão varia de aproximadamente 18 a 23 segundos por série, dependendo do conjunto de dados, um custo baixo quando comparado ao tempo de execução dos modelos individuais, das combinações estáticas e dos métodos de meta-aprendizagem da literatura. O desvio-padrão fica entre 1,9 e 6,0 segundos, o que indica variação moderada entre séries de um mesmo conjunto. A maior variação aparece no NN5, com 6,0 segundos. A variação reflete tanto o número de turnos quanto a latência variável do modelo de linguagem.
 \subsection{Rastreabilidade da decisão do agente} \label{subsec:rastreabilidade}
 
-Além da comparação de acurácia agregada discutida nas seções anteriores, o CARTE oferece uma vantagem qualitativa que os métodos de meta-aprendizagem revisados no Capítulo~\ref{chp:revisao} não replicam: cada decisão de combinação é acompanhada de um histórico de tentativas e de uma justificativa textual explícita, auditável a posteriori, como ilustrado nas Seções~\ref{subsec:estudo-caso-trajetoria} e~\ref{subsec:interpretabilidade-previsoes} desta seção. Nem o FFORMA nem o ADE produzem um artefato equivalente: suas decisões de combinação resultam de um modelo estatístico ou de pesos aprendidos, sem uma explicação interpretável do motivo pelo qual uma determinada combinação foi escolhida para uma série específica.
+Além da acurácia agregada, o CARTE oferece um diferencial qualitativo que o FFORMA e o ADE não replicam. Cada série tem um histórico com os pensamentos, as ações, os argumentos e os resultados de validação de cada tentativa, como ilustrado na Subseção~\ref{subsec:transcricao-decisao} e nos casos da Subseção~\ref{subsec:interpretabilidade-previsoes}. Esse histórico permite reconstruir a decisão e verificar por que uma estratégia foi escolhida, o que não está disponível nos métodos de meta-aprendizagem tradicionais.
 
-Essa auditabilidade é particularmente relevante em contextos de aplicação em que a decisão de combinação precisa ser justificada a um usuário humano, ou em que a checagem manual das séries de maior impacto é viável, dois cenários em que os métodos de meta-aprendizagem tradicionais oferecem pouco além do valor previsto pelo modelo. Essa vantagem, no entanto, deve ser lida com uma ressalva, quantificada sobre as 47 séries cuja estratégia final tem origem no próprio agente. A similaridade textual entre pares dessas justificativas, medida pelo coeficiente de Jaccard \citep{jaccard1912} (a razão entre a interseção e a união dos conjuntos de palavras de conteúdo das duas justificativas), é de 0,13 em média entre todos os pares de séries, e sobe para 0,24 entre pares que compartilham exatamente a mesma estratégia, contra 0,13 entre pares com estratégias diferentes: uma diferença pequena, mas na direção esperada, indicando que o texto acompanha, ainda que fracamente, a decisão real, e não é puro ruído desconectado dela.
+A justificativa final, porém, é um resumo curto e altamente padronizado. Entre as 165 séries cuja estratégia final foi proposta pelo agente, a similaridade média de Jaccard entre pares de justificativas é 0,85, com mediana 0,93. Entre pares que compartilham a mesma estratégia, a média é 0,94. Entre pares com estratégias diferentes, 0,84. A diferença é pequena, o que mostra que o texto é dominado pelo molde, não pelas particularidades da série. Dos 165 casos, 160 têm a mesma primeira frase depois de normalizados os números e o nome da estratégia. O trecho \textit{"an agent proposal as the best of backtested"} aparece em 160 dos 165 casos, 97,0\% do total.
 
-Não há repetição de frases longas: nenhum trecho de cinco a oito palavras aparece em mais de 20\% das justificativas. A abertura, no entanto, é mais repetitiva que o corpo: por correspondência exata, as primeiras frases se distribuem em 46 moldes distintos entre as 47 séries, e, agrupando por quase-duplicata, 30 moldes cobrem 38 das 47 séries. Esse padrão é compatível com o vocabulário fechado do diagnóstico interpretativo descrito na Seção~\ref{sec:diagnostico} do Capítulo~\ref{chp:proposta}, que entrega ao agente quatro categorias de vocabulário fechado (regime, previsibilidade, indicação de combinação, riscos), preenchidas no diagnóstico a partir das evidências: parte da semelhança estrutural entre justificativas é, portanto, esperada por construção, e não indica necessariamente que o agente ignore as particularidades de cada série ao redigir sua justificativa.
-
-
+Esse resultado não elimina o valor da rastreabilidade, mas desloca o foco. O que permite auditar a decisão é o histórico de tentativas, não a frase final. O histórico registra as hipóteses testadas, as ações de seleção e ponderação, os escores de validação e a evolução do líder. A justificativa final identifica a estratégia escolhida e o escore, mas não explica a decisão em termos das particularidades da série. A leitura da trajetória, como no passo a passo da série 87 do M4, continua sendo a via principal para entender a escolha.
 
 
+\section{Estudo de ablação: a seleção pelo agente} \label{sec:ablacao-agente}
 
-\section{Estudo de ablação: contribuição do agente na seleção das estratégias} \label{sec:ablacao-agente}
+Esta seção isola o mecanismo de seleção do CARTE. A comparação é feita em dois níveis. No primeiro, o agente é substituído por três buscas sem LLM que usam o mesmo catálogo, o mesmo orçamento de doze avaliações e a mesma regra final. No segundo, tetos de seleção mostram o que uma escolha perfeita teria alcançado. A coluna do CARTE usa a média das dez execuções, e todas as comparações usam a mesma janela de teste.
 
-As seções anteriores mostram que a estratégia final do CARTE nunca obtém pontuação de validação pior que a melhor entre as dez estratégias fixas semeadas (Seção~\ref{sec:resultados-agente}). Para isolar a contribuição do agente sobre essa fase determinística, foi conduzido um experimento de ablação: a mesma preparação por conjunto de dados e o mesmo diagnóstico por série foram executados até o fim, mas sem que o agente atuasse em nenhuma série, de modo que a estratégia final de cada série passa a ser simplesmente a de menor pontuação entre as dez sementes.
+\subsection{Buscas sem LLM} \label{subsec:buscas-sem-llm}
 
-\subsection{Desempenho agregado}
+Para isolar o efeito do modelo de linguagem, o agente foi substituído por três políticas que não usam LLM. A busca aleatória foi repetida três vezes, e o valor reportado é a média. A busca gulosa e a seleção por bandit (UCB) são determinísticas. As três partem de um histórico vazio, usam as mesmas ferramentas e receitas do agente, com uma grade fixa de parâmetros, e aplicam a mesma regra final. O espaço das buscas é um subconjunto do espaço do agente, que pode propor estratégias fora da grade. Entre os braços, muda apenas o mecanismo que propõe novas estratégias.
 
-A Tabela~\ref{tab:ablacao-desempenho} compara o SMAPE e o POCID médios do CARTE completo e do CARTE sem o agente, por conjunto de dados.
-
-\begin{table}[H]
-\centering
-\caption{Desempenho médio do CARTE completo e do CARTE sem o agente (só a fase determinística), por conjunto de dados.}
-\label{tab:ablacao-desempenho}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-& \multicolumn{2}{c}{\textbf{SMAPE (\%)}} & \multicolumn{2}{c}{\textbf{POCID (\%)}} \\
-\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{sem agente} & \textbf{CARTE} & \textbf{sem agente} \\
-\midrule
-ANP    & 21,97 & 21,97 & 64,79 & 64,54 \\
-NN5    & 11,57 & 11,57 & 45,95 & 46,33 \\
-M4     & 9,15  & 9,14  & 59,03 & 59,40 \\
-ETTh1  & 22,72 & 22,62 & 63,35 & 61,49 \\
-ETTh2  & 17,99 & 17,99 & 55,28 & 55,28 \\
-ETTm1  & 45,98 & 46,04 & 55,28 & 55,28 \\
-ETTm2  & 20,30 & 20,30 & 45,34 & 45,34 \\
-
-
-\bottomrule
-\end{tabular}
-\end{table}
-
-As diferenças entre as duas versões são pequenas em todos os conjuntos de dados, em ambas as direções. Em SMAPE, quatro conjuntos são idênticos e nenhuma diferença passa de 0,10 ponto percentual. Em POCID, o CARTE ganha 1,86 ponto percentual no ETTh1 e 0,25 na ANP, perde 0,38 no NN5 e 0,37 no M4, e empata nos três conjuntos restantes. Nenhum conjunto se destaca como caso isolado de ganho da atuação do agente, e a leitura agregada, apresentada a seguir, confirma que as duas versões são estatisticamente indistinguíveis.
-
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.85\textwidth]{images/resultados_final/mcm_agente_vs_sem_agente_smape.png}
-    \caption{Matriz de Comparação Múltipla entre o CARTE completo e o CARTE sem o agente, por SMAPE, entre as 680 séries dos sete conjuntos de dados.}
-    \label{fig:mcm-ablacao-smape}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.85\textwidth]{images/resultados_final/mcm_agente_vs_sem_agente_pocid.png}
-    \caption{Matriz de Comparação Múltipla entre o CARTE completo e o CARTE sem o agente, por POCID, entre as 680 séries dos sete conjuntos de dados.}
-    \label{fig:mcm-ablacao-pocid}
-\end{figure}
-
-Tratando as 680 séries como uma população única, o SMAPE e o POCID médios das duas versões são estatisticamente indistinguíveis pelo teste de Wilcoxon ($p = 0,3080$ e $p = 0,0738$, respectivamente): a fase determinística isolada já estabelece um piso de desempenho sólido, sobre o qual o agente atua.
-
-\subsection{Quando o agente muda a decisão}
-
-Em 633 das 680 séries (93,1\%), a estratégia final é idêntica entre as duas versões, indicando que a fase determinística, por si só, já converge para a decisão correta na quase totalidade dos casos. Nas 47 séries restantes (6,9\%), em que o agente de fato propõe algo diferente, o resultado na janela de teste é misto: melhor em 20 séries e pior em 27. Essa divisão, praticamente equilibrada, é compatível com a limitação de apenas três janelas de validação disponíveis para fundamentar a decisão (Seção~\ref{sec:formulacao} do Capítulo~\ref{chp:proposta}): uma vantagem observada nas janelas de validação nem sempre se sustenta na janela de teste, nunca vista durante a decisão. O ganho mais expressivo do experimento inteiro, em ambas as direções, veio de uma decisão do agente: a maior melhoria ocorre na série 5 da ANP (de 20,77\% para 18,68\% de SMAPE, 2,09 pontos percentuais) e a maior piora, na série 137 da ANP (de 6,61\% para 9,74\%, 3,13 pontos percentuais), reforçando que a contribuição do agente, quando se manifesta, pode ser substancial, ainda que não uniformemente positiva.
-
-\subsection{Busca sem LLM: o agente contra buscas simples}
-
-Para isolar o efeito do modelo de linguagem, esta subseção compara o CARTE a três buscas sem LLM que partem das mesmas dez sementes, usam o mesmo orçamento de avaliações por série e aplicam a mesma regra final, a melhor pontuação do histórico: a busca aleatória, a busca gulosa e a seleção por bandit (UCB). Os braços usam as mesmas ferramentas e receitas do agente, com uma grade fixa de parâmetros; o agente pode escolher fora dessa grade, então o espaço dos braços é um subconjunto do espaço do agente. Entre os braços, muda apenas o mecanismo que propõe novas estratégias.
-
-A Tabela~\ref{tab:busca-nao-llm} mostra o SMAPE médio por conjunto de dados para as sementes, para cada braço, para o melhor braço escolhido na validação e para o CARTE; a Tabela~\ref{tab:busca-nao-llm-pocid} repete a estrutura para o POCID. O melhor braço é escolhido na validação e as tabelas reportam o teste; a última linha traz o agregado das 680 séries, ponderado pelo número de séries de cada conjunto.
-
-\begin{table}[H]
-\centering
-\caption{SMAPE médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados.}
-\label{tab:busca-nao-llm}
-\begin{tabular}{@{}lrrrrrr@{}}
-\toprule
-\textbf{Conjunto de dados} & \textbf{Sementes} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} & \textbf{CARTE} \\
-\midrule
-ANP    & \textbf{21,97} & 22,24 & 21,99 & 22,20 & 22,18 & \textbf{21,97} \\
-ETTh1  & 22,62 & 24,70 & 24,70 & 22,50 & \textbf{22,48} & 22,72 \\
-ETTh2  & 17,99 & \textbf{17,64} & 17,70 & 18,85 & 18,82 & 17,99 \\
-ETTm1  & 46,04 & 46,37 & \textbf{45,30} & 45,41 & 45,98 & 45,98 \\
-ETTm2  & 20,30 & \textbf{19,49} & 20,22 & 20,46 & 20,84 & 20,30 \\
-M4     & \textbf{9,14} & 9,45 & 9,38 & 9,37 & 9,56 & 9,15 \\
-NN5    & \textbf{11,57} & 12,19 & 11,90 & 12,06 & 12,20 & \textbf{11,57} \\
-\midrule
-Agregado (680 séries) & \textbf{13,69} & 14,05 & 13,89 & 13,96 & 14,09 & 13,70 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{POCID médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados.}
-\label{tab:busca-nao-llm-pocid}
-\begin{tabular}{@{}lrrrrrr@{}}
-\toprule
-\textbf{Conjunto de dados} & \textbf{Sementes} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} & \textbf{CARTE} \\
-\midrule
-ANP    & 64,54 & \textbf{64,84} & 64,79 & 63,79 & 64,54 & 64,79 \\
-ETTh1  & 61,49 & 62,11 & 61,49 & 60,25 & 60,87 & \textbf{63,35} \\
-ETTh2  & 55,28 & 54,04 & 55,28 & \textbf{55,90} & 54,66 & 55,28 \\
-ETTm1  & 55,28 & 54,04 & 57,14 & \textbf{59,01} & 53,42 & 55,28 \\
-ETTm2  & \textbf{45,34} & \textbf{45,34} & 44,10 & 42,24 & 44,72 & \textbf{45,34} \\
-M4     & \textbf{59,40} & 55,87 & 58,75 & 56,27 & 56,59 & 59,03 \\
-NN5    & \textbf{46,33} & 43,89 & 43,24 & 40,80 & 42,21 & 45,95 \\
-\midrule
-Agregado (680 séries) & \textbf{58,43} & 56,23 & 57,66 & 55,68 & 56,24 & 58,26 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-No agregado, o melhor braço fica em 14,09\% de SMAPE, contra 13,69\% da semente e 13,70\% do CARTE. Em POCID, a semente lidera (58,43\%), à frente do CARTE (58,26\%) e do melhor braço (56,24\%). Nenhuma diferença entre os braços e a semente é significativa após correção para as comparações múltiplas, nem no SMAPE nem no POCID; os p-valores brutos abaixo de 0,05 são todos pioras, no NN5 e no M4, e nenhum sobrevive à correção. O agente fica próximo do piso determinístico e as buscas simples não trazem vantagem consistente: o ganho observável não vem do mecanismo de busca, mas da fase determinística de preparação, isto é, das sementes e do meta-modelo entre séries, como na ablação anterior.
-
-\begin{table}[H]
-\centering
-\caption{Tempo médio por série (s) do CARTE e dos braços de busca, por conjunto de dados.}
-\label{tab:busca-tempo}
-\begin{tabular}{@{}lrrrrr@{}}
-\toprule
-\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Sementes} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} \\
-\midrule
-ANP    & 10,32 & 0,24 & 0,33 & 0,82 & 0,24 \\
-ETTh1  & 14,43 & 0,06 & 0,10 & 0,10 & 0,10 \\
-ETTh2  & 14,34 & 0,04 & 0,10 & 0,10 & 0,10 \\
-ETTm1  & 6,19  & 0,00 & 0,10 & 0,10 & 0,10 \\
-ETTm2  & 7,69  & 0,03 & 0,10 & 0,11 & 0,10 \\
-M4     & 8,26  & 0,92 & 1,79 & 3,30 & 1,03 \\
-NN5    & 10,04 & 0,10 & 0,20 & 0,27 & 0,13 \\
-\midrule
-Agregado (680 séries) & 9,20 & 0,57 & 1,07 & 2,01 & 0,63 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Os braços custam de 0,6 a 2,0 s por série, contra 9,2 s do laço do CARTE; a diferença é o custo das chamadas ao LLM. A soma dos quatro braços nas 680 séries é 0,81 h, contra 1,74 h do laço do CARTE. Os braços são mais baratos, mas não melhores em acurácia: o custo do agente não se traduz em ganho.
-\subsection{Vencedor versus melhor semente no teste}
-
-A garantia de que a estratégia final nunca é pior que a melhor semente vale para a validação, mas não necessariamente para a janela de teste. Para quantificar essa diferença, as sementes foram reconstruídas com o mesmo procedimento determinístico de preparação e comparadas, na janela de teste, com o vencedor efetivamente aplicado. A Tabela~\ref{tab:replay-vencedor-semente} apresenta o SMAPE médio das duas versões por conjunto de dados.
-
-\begin{table}[H]
-\centering
-\caption{SMAPE médio (\%) do vencedor aplicado e da melhor semente reconstruída, por conjunto de dados.}
-\label{tab:replay-vencedor-semente}
-\begin{tabular}{@{}lrr@{}}
-\toprule
-\textbf{Conjunto de dados} & \textbf{Vencedor} & \textbf{Melhor semente} \\
-\midrule
-ANP    & \textbf{21,97} & \textbf{21,97} \\
-ETTh1  & 22,72 & \textbf{22,62} \\
-ETTh2  & \textbf{17,99} & \textbf{17,99} \\
-ETTm1  & \textbf{45,98} & 46,04 \\
-ETTm2  & \textbf{20,30} & \textbf{20,30} \\
-M4     & 9,15  & \textbf{9,14} \\
-NN5    & \textbf{11,57} & \textbf{11,57} \\
-\midrule
-Agregado (680 séries) & 13,70 & \textbf{13,69} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Das 680 séries, em 633 as duas versões produzem previsões numericamente idênticas; nas 47 restantes, o vencedor obtém SMAPE menor em 20 e a semente em 27, sem empates. No agregado, a semente fica ligeiramente à frente do vencedor (13,69\% contra 13,70\% em SMAPE, 58,43\% contra 58,26\% em POCID).
-
-O padrão de sobreajuste se manifesta de forma moderada: nas 27 séries em que o vencedor melhora a pontuação de validação em mais de 5\%, o resultado na janela de teste é, em média, 0,17 ponto percentual pior que o da semente, indício do \textit{winner's curse} descrito na literatura. Regras que só trocam a semente pelo vencedor quando o ganho de validação supera uma margem fixa, entre 0,5\% e 5\%, alteram a decisão em apenas 27 a 37 das 680 séries e obtêm 13,70\% de SMAPE médio nas quatro margens, sem superar a política de manter sempre a melhor semente (13,69\%), que também lidera no POCID (58,43\%), à frente de todas as regras avaliadas.
-
-\subsection{O teto no espaço de busca: oráculo de validação e oráculo de teste}
-\label{subsec:oraculo-condicional}
-
-A subseção anterior comparou o vencedor aplicado com a melhor semente. Esta subseção faz uma pergunta distinta: qual seria a melhor estratégia de validação que o agente teria à disposição e quanto ela valeria no teste? Para isso, define o universo $U$ com o pool completo, os pools referenciados nas tentativas do agente, os pools criados por suas ações e o pool da melhor semente. Sobre esses pools, a enumeração cobre média, mediana, média aparada com \textit{trim} de 0 a 0,4 em passos de 0,1, DBA, melhor modelo individual para cada um dos dezenove modelos e média ponderada com as receitas \textit{inverse} (shrinkage de 0 a 0,5 em passos de 0,1), \textit{error trend}, \textit{best per horizon}, \textit{top-k per horizon} e \textit{forward selection}; em média, $U$ contém 56 estratégias por série. A receita \textit{pooled}/meta, que depende do pré-passo entre séries, e as receitas \textit{softmax}, \textit{feature-based} e OLS ficaram fora da enumeração; a \textit{pooled}/meta aparece em quatro estratégias finais e não altera a comparação entre agente e semente.
-
-Dois oráculos são calculados sobre $U$. O oráculo de validação escolhe a estratégia de menor score de validação, usando o mesmo score composto do agente, e só depois a aplica à janela de teste; ele representa a melhor decisão possível com a informação disponível no momento da escolha. O oráculo de teste escolhe, por série, a estratégia de menor SMAPE e a de maior POCID na própria janela de teste; ele é retrospectivo (um teto): usa informação indisponível na decisão e, por isso, não é um método implantável.
-
-A Tabela~\ref{tab:oraculo-condicional} apresenta os dois oráculos. Os valores do agente e da melhor semente já foram apresentados na Tabela~\ref{tab:ablacao-desempenho} e na subseção anterior; no agregado, eles ficam em 13,70\% e 13,69\% de SMAPE, e 58,26\% e 58,43\% de POCID.
+A Tabela~\ref{tab:ablacao-buscas-smape} apresenta o SMAPE médio por conjunto de dados. A coluna \textit{melhor braço} indica, em cada série, o braço de menor pontuação de validação, e reporta o teste desse braço. As duas últimas linhas trazem a média dos sete conjuntos e o agregado das 680 séries.
 
 \begin{table}[H]
 \centering
 \small
-\caption{SMAPE e POCID médios (\%) no teste do oráculo de validação e do oráculo de teste, por conjunto de dados.}
-\label{tab:oraculo-condicional}
-\begin{tabular}{@{}lrr@{}}
+\caption{SMAPE médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o menor valor da linha. A coluna \textit{melhor braço} indica o braço escolhido por série pela menor pontuação de validação, não um método fixo.}
+\label{tab:ablacao-buscas-smape}
+\begin{tabular}{@{}lrrrrr@{}}
 \toprule
-\multicolumn{3}{c}{\textbf{SMAPE (\%)}} \\
-\textbf{Conjunto de dados} & \textbf{Oráculo de validação} & \textbf{Oráculo de teste} \\
+\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} \\
 \midrule
-ANP    & 21,91 & 17,24 \\
-NN5    & 12,38 & 9,17  \\
-M4     & 10,20 & 5,25  \\
-ETTh1  & 25,60 & 19,61 \\
-ETTh2  & 18,09 & 15,54 \\
-ETTm1  & 48,15 & 35,82 \\
-ETTm2  & 23,01 & 13,68 \\
+ANP    & 22,24 & \textbf{22,05} & 22,30 & 22,24 & 22,18 \\
+NN5    & 12,04 & 12,04 & 12,29 & \textbf{11,89} & 12,12 \\
+M4     & \textbf{9,18} & 9,31 & 10,50 & 9,39 & 9,49 \\
+ETTh1  & 22,72 & 22,68 & 24,91 & \textbf{22,24} & 24,91 \\
+ETTh2  & \textbf{17,67} & 18,27 & 18,44 & 18,85 & 18,50 \\
+ETTm1  & \textbf{41,03} & 44,60 & 49,09 & 43,84 & 49,26 \\
+ETTm2  & \textbf{17,02} & 18,62 & 18,78 & 18,10 & 18,73 \\
 \midrule
-Agregado (680 séries) & 14,45 & 9,75 \\
-\midrule
-\multicolumn{3}{c}{\textbf{POCID (\%)}} \\
-\textbf{Conjunto de dados} & \textbf{Oráculo de validação} & \textbf{Oráculo de teste} \\
-\midrule
-ANP    & 62,84 & 82,02 \\
-NN5    & 44,14 & 78,76 \\
-M4     & 57,85 & 80,57 \\
-ETTh1  & 62,73 & 73,91 \\
-ETTh2  & 54,66 & 67,70 \\
-ETTm1  & 60,25 & 71,43 \\
-ETTm2  & 45,34 & 55,28 \\
-\midrule
-Agregado (680 séries) & 56,86 & 80,11 \\
+Média dos 7 & \textbf{20,27} & 21,08 & 22,33 & 20,94 & 22,17 \\
+Agregado (680 séries) & \textbf{13,78} & 13,85 & 14,66 & 13,91 & 14,07 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Na validação, o oráculo encontra uma estratégia com score menor que o do agente em 93,8\% das séries, com ganho médio de 0,061. No teste, porém, essa vantagem não se traduz em melhor desempenho: o oráculo de validação supera o agente em apenas 39,1\% das séries pelo SMAPE e 29,3\% pelo POCID, e fica, em média, 0,75 ponto percentual pior no SMAPE e 1,4 ponto percentual pior no POCID. No agregado, 14,45\% e 56,86\%, contra 13,70\% e 58,26\% do agente e 13,69\% e 58,43\% da semente. O oráculo de teste fica em 9,75\% e 80,11\%.
+O CARTE obtém o menor SMAPE na média dos sete conjuntos, com 20,27\%, e no agregado das 680 séries, com 13,78\%. A busca aleatória fica em 21,08\% e 13,85\%, a UCB em 20,94\% e 13,91\%, e a busca gulosa em 22,33\% e 14,66\%. A vantagem do CARTE é de 0,81 ponto percentual na média dos sete e 0,08 no agregado sobre a aleatória, 0,66 e 0,13 sobre a UCB, e 2,06 e 0,89 sobre a gulosa. A diferença contra a gulosa é a única que sobrevive à correção de Holm ($p = 0{,}0003$). As demais têm p corrigido acima de 0,12. A ausência de significância nas outras comparações não significa que os métodos sejam equivalentes. A diferença observada aparece nas duas agregações.
 
-Esse é o \textit{winner's curse} em sua forma mais clara. Com apenas três janelas de validação, o máximo de um conjunto que tem, em média, 56 candidatos é uma estatística extrema: parte do ganho de validação é ruído específico dessas janelas e não se repete no teste. Quanto maior o conjunto em que se escolhe o máximo, maior a parcela de ruído capturada. O agente, que avalia um conjunto menor (as dez sementes e no máximo doze propostas), é na prática mais regularizado que o oráculo; sua escolha não é a melhor da validação em $U$, mas generaliza melhor que a do oráculo, embora ainda não supere a semente. O oráculo de teste mostra que existe espaço para melhorar (3,95 pontos percentuais no SMAPE e 21,85 no POCID), mas também que esse espaço não é alcançável por seleção na validação com o protocolo atual.
+O CARTE é o melhor SMAPE em quatro dos sete conjuntos, ETTh2, ETTm1, ETTm2 e M4. A busca aleatória vence na ANP, e a UCB vence no ETTh1 e no NN5. As maiores diferenças a favor do CARTE contra a aleatória estão no ETTm1 e no ETTm2. Contra a UCB, estão no ETTm1 e no ETTh2. Contra a gulosa, a maior diferença está no ETTm1, seguida do ETTh1. Em ANP, ETTh1 e NN5, a melhor busca vence por margens de 0,15 a 0,48 ponto percentual. Uma diferença de 0,1 ponto percentual no SMAPE médio é uma diferença no erro médio de previsão, não uma posição no ranking. Ela se repete nas duas agregações.
 
-A leitura conjunta com o replay anterior é coerente com a ablação: o agente não encontra o ótimo global, e uma busca mais ampla no mesmo sinal de validação não melhora o teste. O que o agente oferece não é a escolha do melhor entre todas as estratégias possíveis, e sim uma escolha conservadora, auditável e limitada ao histórico que ele próprio construiu.
+A Tabela~\ref{tab:ablacao-buscas-pocid} repete a estrutura para o POCID. O POCID é reportado em separado e não participa da escolha da estratégia.
+
+\begin{table}[H]
+\centering
+\small
+\caption{POCID médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o maior valor da linha. A coluna \textit{melhor braço} indica o braço escolhido por série pela menor pontuação de validação, não um método fixo.}
+\label{tab:ablacao-buscas-pocid}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Melhor braço} \\
+\midrule
+ANP    & 63,28 & 63,34 & \textbf{64,14} & 62,14 & 63,00 \\
+NN5    & \textbf{46,04} & 43,63 & 40,28 & 41,96 & 43,03 \\
+M4     & \textbf{57,88} & 56,79 & 56,10 & 56,75 & 56,86 \\
+ETTh1  & \textbf{62,11} & 61,49 & \textbf{62,11} & 57,76 & \textbf{62,11} \\
+ETTh2  & 54,22 & 56,73 & 57,76 & 58,39 & \textbf{59,63} \\
+ETTm1  & 54,47 & 54,04 & 52,80 & \textbf{54,66} & 52,59 \\
+ETTm2  & 40,37 & 41,20 & \textbf{46,58} & 44,72 & 45,55 \\
+\midrule
+Média dos 7 & 54,05 & 53,89 & 54,25 & 53,77 & \textbf{54,68} \\
+Agregado (680 séries) & \textbf{57,18} & 56,25 & 55,62 & 55,66 & 56,17 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No POCID, o CARTE é o melhor no agregado das 680 séries, com 57,18\%, à frente da aleatória (56,25\%), da gulosa (55,62\%) e da UCB (55,66\%). Na média dos sete, o maior valor é o do melhor braço (54,68\%), seguido da gulosa (54,25\%) e do CARTE (54,05\%). A aleatória fica em 53,89\% e a UCB em 53,77\%. O CARTE fica em terceiro quando o melhor braço entra na comparação e em segundo entre os métodos fixos. Nenhuma diferença de POCID é significativa após a correção de Holm, e há muitos empates.
+
+O CARTE é melhor no M4 e no NN5. A gulosa vence na ANP e no ETTm2, a UCB vence no ETTm1, e o melhor braço vence no ETTh2. No ETTh1, o CARTE empata com a gulosa e o melhor braço em 62,11\%. No ETTh2, a diferença para o melhor valor da linha é de 5,41 pontos percentuais, e no ETTm2, de 6,21. Como o POCID não participa da seleção, ele é uma leitura complementar. A ausência de significância não deve ser lida como equivalência, porque o teste tem pouca potência com tantos empates.
+
+A Tabela~\ref{tab:ablacao-buscas-vantagem} resume a vantagem do CARTE e as contagens pareadas. Valores positivos indicam vantagem do CARTE, e negativos, vantagem do braço.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\caption{Vantagem média do CARTE sobre as buscas sem LLM, em pontos percentuais, e número de séries em que o CARTE vence, empata ou perde (C/E/B). As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries. Valores positivos indicam vantagem do CARTE.}
+\label{tab:ablacao-buscas-vantagem}
+\begin{tabular}{@{}lrrrrcc@{}}
+\toprule
+\textbf{Braço} & \textbf{SMAPE 7} & \textbf{SMAPE 680} & \textbf{POCID 7} & \textbf{POCID 680} & \textbf{C/E/B SMAPE} & \textbf{C/E/B POCID} \\
+\midrule
+Aleatória    & +0,81 & +0,08 & +0,17 & +0,93 & 358/0/322 & 335/44/301 \\
+Gulosa       & +2,06 & +0,89 & $-$0,20 & +1,57 & 373/0/307 & 312/61/307 \\
+UCB          & +0,66 & +0,13 & +0,29 & +1,52 & 320/52/308 & 276/127/277 \\
+Melhor braço & +1,90 & +0,29 & $-$0,63 & +1,01 & 329/46/305 & 290/116/274 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A vantagem do CARTE aparece em 14 das 16 células da tabela. As exceções são o POCID na média dos sete contra a gulosa e contra o melhor braço. O CARTE vence a aleatória em 358 séries e perde em 322 no SMAPE. Contra a UCB, vence em 320 e perde em 308. Contra a gulosa, vence em 373 e perde em 307. As contagens não são unânimes, mas as vitórias do CARTE contra a gulosa são, em média, maiores que as derrotas.
+
+A Tabela~\ref{tab:ablacao-buscas-vitorias} complementa a leitura com a contagem exclusiva do melhor método em cada série.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Número de séries em que cada método obtém o melhor valor, por métrica. Empates são contados à parte e não entram na coluna de nenhum método.}
+\label{tab:ablacao-buscas-vitorias}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Métrica} & \textbf{CARTE} & \textbf{Aleatória} & \textbf{Gulosa} & \textbf{UCB} & \textbf{Empates} \\
+\midrule
+SMAPE & 150 & 119 & 196 & 158 & 57 \\
+POCID & 124 & 95 & 145 & 107 & 209 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A gulosa é o melhor SMAPE em 196 séries, contra 150 do CARTE. A diferença entre as duas contagens não se traduz em melhor média para a gulosa porque suas perdas são maiores.
+
+O melhor braço, escolhido por série na validação, tem 22,17\% de SMAPE na média dos sete, atrás do CARTE, da aleatória e da UCB, e à frente apenas da gulosa. No POCID, tem o maior valor na média dos sete, 54,68\%, mas fica em 56,17\% no agregado, abaixo do CARTE. A escolha do braço na validação não reproduz a vantagem do agente. O p bruto dessa comparação no SMAPE é 0,042, mas o valor corrigido é 0,127. A diferença entre o CARTE e o melhor braço é compatível com o uso do diagnóstico da série e do histórico de tentativas na escolha das estratégias, e não somente da pontuação de validação. A seleção do agente é, portanto, mais eficiente que a escolha do braço por validação no SMAPE e competitiva no POCID.
+
+As buscas custam entre 0,13 e 5,76 s por série, contra 17,63 a 22,95 s do CARTE na execução representativa. A diferença é o custo das chamadas ao LLM. As buscas são mais baratas, mas não superam o CARTE de forma consistente. O custo adicional do CARTE corresponde à seleção feita pelo agente.
+
+As três buscas mostram que a vantagem do CARTE não depende de um único conjunto. A busca gulosa é a mais competitiva em número de vitórias por série, mas perde por margens maiores. A aleatória e a UCB ficam próximas no agregado, sem superar o CARTE nas duas agregações. A vantagem do CARTE é de décimos de ponto percentual em algumas comparações e de pontos inteiros em outras, mas a direção é consistente. O que distingue o CARTE é a seleção das estratégias pelo modelo de linguagem, guiada pelo diagnóstico da série e pelo histórico de tentativas, e não o orçamento de avaliações.
+
+\subsection{CARTE-oráculo} \label{subsec:carte-oraculo}
+
+O CARTE-oráculo é o melhor cenário possível para o agente com acesso à janela de teste. Ele não é um método, porque usa informação que o CARTE não tem no momento da escolha. Para separar o que o agente poderia alcançar sem novas propostas do que o catálogo oferece, a análise distingue três versões. O CARTE-oráculo restrito escolhe a melhor entre as tentativas do agente em cada execução. O CARTE-oráculo escolhe a melhor entre as estratégias de $U$. O CARTE-oráculo de validação escolhe a melhor pela pontuação de validação e não usa a janela de teste. O melhor individual é o menor SMAPE entre os dezenove preditores em cada série. Todos, exceto o de validação, usam a janela de teste.
+
+O CARTE-oráculo restrito é calculado execução a execução, e o valor reportado é a média das dez execuções. As melhores 10 restringem o conjunto às tentativas a1 a a10. O CARTE-oráculo e o CARTE-oráculo de validação são calculados sobre $U$. O melhor individual é escolhido em cada série.
+
+$U$ é uma grade fixa de estratégias. Ela contém o pool completo, as seleções por estabilidade, as seleções pelos melhores, a seleção forward, a média, a mediana, a média aparada, o DBA e as médias ponderadas, com as grades de \textit{trim} e \textit{shrinkage}. No agregado, $U$ tem em média 226 estratégias por série. Na média dos sete, são 215. Em ANP, NN5 e M4, chega a 228. Nos ETT, fica em 216 ou menos porque o meta-modelo entre séries não é treinado com sete séries. O CARTE-oráculo é um limite dentro de $U$. Como a grade não esgota todos os parâmetros, o limite verdadeiro pode ser menor.
+
+A Tabela~\ref{tab:ablacao-carte-oraculo-smape} apresenta o SMAPE médio do CARTE e dos oráculos. Em negrito, o menor valor da linha.
+
+\begin{table}[H]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\caption{SMAPE médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o menor valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhores 10, CARTE-oráculo de validação, CARTE-oráculo e melhor individual.}
+\label{tab:ablacao-carte-oraculo-smape}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Restrito} & \textbf{10 primeiras} & \textbf{Validação} & \textbf{Oráculo} & \textbf{Individual} \\
+\midrule
+ANP    & 22,24 & 20,42 & 20,59 & 22,27 & 18,99 & \textbf{17,36} \\
+NN5    & 12,04 & 10,54 & 10,64 & 12,03 & 9,66 & \textbf{9,33} \\
+M4     & 9,18 & 6,57 & 6,67 & 9,57 & 5,66 & \textbf{5,57} \\
+ETTh1  & 22,72 & 21,80 & 21,91 & 25,06 & 20,60 & \textbf{19,61} \\
+ETTh2  & 17,67 & 16,78 & 16,86 & 17,66 & 16,22 & \textbf{15,54} \\
+ETTm1  & 41,03 & 38,55 & 38,92 & 49,47 & \textbf{37,80} & 38,60 \\
+ETTm2  & 17,02 & 15,82 & 16,52 & 17,29 & \textbf{12,83} & 16,85 \\
+\midrule
+Média dos 7 & 20,27 & 18,64 & 18,87 & 21,91 & \textbf{17,39} & 17,55 \\
+Agregado (680 séries) & 13,78 & 11,61 & 11,74 & 14,11 & 10,55 & \textbf{10,04} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O CARTE-oráculo restrito fica em 18,64\% na média dos sete e 11,61\% no agregado. As melhores 10 ficam em 18,87\% e 11,74\%. O CARTE-oráculo fica em 17,39\% e 10,55\%. O melhor individual fica em 17,55\% e 10,04\%. O CARTE fica 1,63 e 2,17 pontos percentuais acima do CARTE-oráculo restrito, 1,40 e 2,04 acima das melhores 10, 2,88 e 3,23 acima do CARTE-oráculo, e 2,72 e 3,74 acima do melhor individual. A distância para o CARTE-oráculo restrito e para as melhores 10 é menor que a distância para o CARTE-oráculo e para o melhor individual. A seleção do agente é eficiente porque aproveita bem o histórico que ele próprio construiu.
+
+A diferença entre o CARTE-oráculo restrito e as melhores 10 é de 0,23 e 0,13 ponto percentual. Ela é menor que a distância entre o CARTE e as melhores 10, de 1,40 e 2,04. O gargalo está na seleção, não na quantidade de propostas.
+
+O CARTE-oráculo de validação fica em 21,91\% e 14,11\%, pior que o CARTE em 1,64 e 0,33 ponto percentual. Em ETTh1 e ETTm1, a deterioração é grande, de 22,72\% para 25,06\% e de 41,03\% para 49,47\%. Com cerca de 226 estratégias e três janelas, o máximo da validação é uma estatística extrema. Parte do ganho é ruído das janelas e não se repete no teste. Esse é o \textit{winner's curse}. O agente avalia até doze propostas, enquanto o CARTE-oráculo de validação escolhe entre 226. A seleção do agente é mais conservadora, e é mais eficiente que a maximização da validação em $U$.
+
+O CARTE-oráculo fica em 17,39\% e 10,55\%, 2,88 e 3,23 pontos percentuais abaixo do CARTE. É o espaço que resta, mas é um limite que usa a janela de teste. O CARTE-oráculo de validação é pior que o CARTE, o que mostra que o agente não se limita a escolher o máximo da validação em um conjunto grande. Ele usa o diagnóstico da série e o histórico de tentativas para propor e selecionar.
+
+A Tabela~\ref{tab:ablacao-carte-oraculo-pocid} repete a estrutura para o POCID. Nessa tabela, o melhor individual é o modelo de maior POCID entre os dezenove preditores em cada série.
+
+\begin{table}[H]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\caption{POCID médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o maior valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhores 10, CARTE-oráculo de validação, CARTE-oráculo e melhor individual. O melhor individual é o modelo de maior POCID entre os dezenove preditores em cada série.}
+\label{tab:ablacao-carte-oraculo-pocid}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Conjunto de dados} & \textbf{CARTE} & \textbf{Restrito} & \textbf{10 primeiras} & \textbf{Validação} & \textbf{Oráculo} & \textbf{Individual} \\
+\midrule
+ANP    & 63,28 & 74,52 & 73,63 & 64,64 & \textbf{82,07} & 80,82 \\
+NN5    & 46,04 & 65,82 & 64,29 & 45,30 & \textbf{77,22} & 76,32 \\
+M4     & 57,88 & 72,79 & 72,14 & 56,15 & \textbf{79,34} & 78,69 \\
+ETTh1  & 62,11 & 70,43 & 70,43 & 61,49 & \textbf{73,91} & 71,43 \\
+ETTh2  & 54,22 & 64,22 & 63,79 & 58,39 & \textbf{68,94} & 64,60 \\
+ETTm1  & 54,47 & 67,33 & 66,71 & 54,04 & \textbf{73,29} & 70,81 \\
+ETTm2  & 40,37 & 50,06 & 49,69 & 41,61 & \textbf{54,66} & \textbf{54,66} \\
+\midrule
+Média dos 7 & 54,05 & 66,45 & 65,81 & 54,52 & \textbf{72,78} & 71,05 \\
+Agregado (680 séries) & 57,18 & 71,71 & 70,87 & 56,56 & \textbf{79,25} & 78,32 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No POCID, o CARTE-oráculo fica em 72,78\% e 79,25\%, o CARTE-oráculo restrito em 66,45\% e 71,71\%, e as melhores 10 em 65,81\% e 70,87\%. O melhor individual por POCID máximo fica em 71,05\% e 78,32\%. O CARTE-oráculo de validação fica em 54,52\% e 56,56\%, praticamente o CARTE, que fica em 54,05\% e 57,18\%. O CARTE está 18,72 e 22,06 pontos percentuais abaixo do CARTE-oráculo, 12,40 e 14,53 abaixo do CARTE-oráculo restrito, e 11,76 e 13,68 abaixo das melhores 10. No POCID, o CARTE-oráculo de validação não agrega. Ele fica 0,46 ponto acima do CARTE na média dos sete e 0,63 abaixo no agregado.
+
+No POCID, o CARTE-oráculo supera o melhor individual em seis dos sete conjuntos e empata no ETTm2. O POCID tem muitos empates e não participa da seleção. A leitura principal é o SMAPE. O POCID confirma que o espaço para melhorar é grande, mas não indica um caminho de seleção.
+
+As Tabelas~\ref{tab:ablacao-carte-oraculo-ganho-smape} e~\ref{tab:ablacao-carte-oraculo-ganho-pocid} resumem o ganho dos oráculos sobre o CARTE e as contagens pareadas. Valores positivos indicam que o oráculo é melhor.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\caption{Ganho médio dos oráculos sobre o CARTE em SMAPE, em pontos percentuais, na média dos sete conjuntos e no agregado das 680 séries, e número de séries em que o oráculo vence, empata ou perde (O/E/C). Restrito, 10 primeiras, Validação, Oráculo e Individual seguem a Tabela~\ref{tab:ablacao-carte-oraculo-smape}. Valores positivos indicam que o oráculo é melhor.}
+\label{tab:ablacao-carte-oraculo-ganho-smape}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Oráculo} & \textbf{Média 7} & \textbf{680} & \textbf{O/E/C} \\
+\midrule
+Restrito      & +1,63 & +2,17 & 672/8/0 \\
+10 primeiras  & +1,40 & +2,04 & 666/10/4 \\
+Validação     & $-$1,64 & $-$0,33 & 308/27/345 \\
+Oráculo       & +2,88 & +3,23 & 679/1/0 \\
+Individual    & +2,72 & +3,74 & 659/0/21 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\caption{Ganho médio dos oráculos sobre o CARTE em POCID, em pontos percentuais, na média dos sete conjuntos e no agregado das 680 séries, e número de séries em que o oráculo vence, empata ou perde (O/E/C). Restrito, 10 primeiras, Validação, Oráculo e Individual seguem a Tabela~\ref{tab:ablacao-carte-oraculo-smape}. Valores positivos indicam que o oráculo é melhor.}
+\label{tab:ablacao-carte-oraculo-ganho-pocid}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Oráculo} & \textbf{Média 7} & \textbf{680} & \textbf{O/E/C} \\
+\midrule
+Restrito      & +12,40 & +14,53 & 648/32/0 \\
+10 primeiras  & +11,76 & +13,68 & 639/36/5 \\
+Validação     & +0,46 & $-$0,63 & 281/106/293 \\
+Oráculo       & +18,72 & +22,06 & 662/17/1 \\
+Individual    & +16,99 & +21,14 & 653/22/5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O CARTE-oráculo supera o CARTE em 679 das 680 séries no SMAPE e em 662 no POCID. O CARTE-oráculo restrito supera em 672 e 648. As melhores 10 superam em 666 e 639. O melhor individual supera em 659 e 653. O CARTE-oráculo de validação supera o CARTE em 308 séries no SMAPE e 281 no POCID, empata em 27 e 106, e perde em 345 e 293. A contagem confirma que o CARTE-oráculo de validação não é uma alternativa. Ele vence menos da metade das séries e perde mais do que vence.
+
+Os oráculos mostram que o CARTE não é o ótimo global. O espaço restante até as melhores 10 é de 1,40 e 2,04 pontos percentuais, na média dos sete e no agregado. Até o CARTE-oráculo restrito, é de 1,63 e 2,17. Até o CARTE-oráculo, é de 2,88 e 3,23. A maior parte do espaço perdido está na seleção, não na geração. As melhores 10 já são 1,40 e 2,04 melhores que o CARTE, e as duas últimas tentativas acrescentam 0,23 e 0,13 ponto percentual ao valor das melhores 10. O CARTE-oráculo de validação em $U$ é pior que o CARTE, o que mostra que a seleção do agente é mais eficiente do que maximizar a validação em um conjunto grande. O que o CARTE oferece é uma escolha conservadora, auditável e próxima do melhor que ele próprio gerou, não o ótimo global.
+\subsection{Síntese da ablação} \label{subsec:sintese-ablacao}
+
+A ablação compara o CARTE em dois eixos. No primeiro, o agente é substituído por buscas sem LLM com o mesmo catálogo e o mesmo orçamento. No segundo, os oráculos mostram o melhor resultado que uma escolha perfeita teria alcançado. A leitura conjunta é que a seleção do agente é eficiente e que o espaço restante está na escolha, não na geração de candidatos.
+
+No SMAPE, o CARTE lidera as duas agregações (Tabela~\ref{tab:ablacao-buscas-smape}), com 20,27\% na média dos sete e 13,78\% no agregado. A busca aleatória fica em 21,08\% e 13,85\%, a UCB em 20,94\% e 13,91\%, e a gulosa em 22,33\% e 14,66\%. A diferença contra a gulosa é a única que sobrevive à correção de Holm. As diferenças contra a aleatória e a UCB são de 0,81 e 0,66 ponto percentual na média dos sete, e de 0,08 e 0,13 no agregado. Essas diferenças são menores que a diferença contra a gulosa, mas são diferenças no erro médio e aparecem nas duas agregações. O CARTE vence quatro dos sete conjuntos. A aleatória vence na ANP, e a UCB vence no ETTh1 e no NN5. A gulosa vence mais séries, 196 contra 150, mas perde por margens maiores, o que explica a média pior.
+
+No POCID, o CARTE é o melhor no agregado (Tabela~\ref{tab:ablacao-buscas-pocid}), com 57,18\%, à frente da aleatória (56,25\%), da gulosa (55,62\%) e da UCB (55,66\%). Na média dos sete, o CARTE fica em 54,05\%, atrás do melhor braço (54,68\%) e da gulosa (54,25\%), e à frente da aleatória (53,89\%) e da UCB (53,77\%). Nenhuma diferença de POCID é significativa, e há muitos empates. O POCID não participa da seleção, então ele é uma leitura complementar.
+
+Os oráculos mostram que o CARTE não é o ótimo global, mas que a seleção do agente é eficiente (Tabela~\ref{tab:ablacao-carte-oraculo-smape}). O CARTE fica 1,63 e 2,17 pontos percentuais acima do CARTE-oráculo restrito, 1,40 e 2,04 acima das melhores 10, 2,88 e 3,23 acima do CARTE-oráculo e 2,72 e 3,74 acima do melhor individual. A distância para o CARTE-oráculo restrito e para as melhores 10 é menor que a distância para o CARTE-oráculo e para o melhor individual. O CARTE-oráculo de validação fica em 21,91\% e 14,11\%, pior que o CARTE em 1,64 e 0,33 ponto percentual. Com cerca de 226 estratégias e três janelas, o máximo da validação captura ruído. A seleção do agente, mais conservadora, generaliza melhor. O mesmo padrão aparece no melhor braço das buscas, que fica em 22,17\% de SMAPE, atrás do CARTE.
+
+A diferença entre o CARTE-oráculo restrito e as melhores 10 é de 0,23 e 0,13 ponto percentual. O CARTE ainda está 1,40 e 2,04 acima das melhores 10. O gargalo está na seleção, não na quantidade de propostas. O limite das dez primeiras tentativas já está próximo do limite de todas as tentativas. A dificuldade é escolher o melhor com três janelas de validação.
+
+A ablação não sustenta a ideia de que o CARTE é o ótimo global. Ela sustenta que a seleção feita pelo modelo de linguagem, com o diagnóstico da série e o histórico de tentativas, é mais eficiente que uma busca fixa e que a maximização da validação em $U$. As buscas custam entre 0,13 e 5,76 s por série, contra 17,63 a 22,95 s do CARTE na execução representativa. A diferença é o custo das chamadas ao LLM. O que o CARTE oferece é uma escolha conservadora, auditável e próxima do melhor que ele próprio gerou.
+
 \section{Considerações finais}
+Este capítulo mostrou que o CARTE é uma alternativa competitiva e consistente para a combinação de previsões em domínios distintos. O método alcança o melhor rank médio entre os métodos comparáveis, o menor SMAPE agregado e a primeira ou a segunda posição em quatro dos sete conjuntos (Tabela~\ref{tab:sintese-ranking}). A contribuição do trabalho combina desempenho, seleção interpretável e um histórico de decisão que pode ser auditado. Os pontos fortes aparecem na consistência (Figura~\ref{fig:mcm-agregado-smape}). O CARTE mantém desempenho competitivo em conjuntos com características distintas, vence mais séries do que a maioria dos concorrentes e sustenta um POCID competitivo. No horizonte, o CARTE melhora relativamente nos passos finais. A escolha do gpt-oss foi um compromisso entre acurácia agregada, POCID e custo. A análise do agente mostra exploração intensa, melhorias adicionais em parte das séries e um histórico que registra hipóteses, ações e pontuações de validação.
 
-Os resultados apresentados neste capítulo mostram que nenhum método isolado domina em todos os sete conjuntos de dados. O CARTE obtém o melhor rank médio por SMAPE entre os métodos comparáveis (2,57, Tabela~\ref{tab:sintese-ranking}), ocupando a primeira ou a segunda posição em cinco dos sete conjuntos de dados, e integra o grupo de melhor desempenho, estatisticamente indistinguível da mediana e do FFORMA, na MCM agregada (Seção~\ref{sec:resultados-sintese}). Ainda assim, essa vantagem não é absoluta: o CARTE fica atrás do melhor modelo individual isolado em cinco dos sete conjuntos de dados, e ocupa a última posição do ranqueamento na ANP.
+As transformações dos preditores são uma das contribuições mais claras do desenho experimental (Tabela~\ref{tab:sintese-transformacoes-remocao-smape}). As variantes com transformação dominam as primeiras posições em todos os conjuntos, e a remoção delas piora o SMAPE em todos os sete. No agregado, o erro sobe de 13,73\% para 22,42\%, e o POCID cai de 57,01\% para 53,06\% nas 670 séries comparáveis. O ganho é maior no ETTh1, no ETTh2 e no M4. O contrafactual mantém a decisão final fixa, então ele mede a sensibilidade da previsão à composição do pool, não o que o agente faria sem as transformações. A contribuição central está em tornar a combinação adaptativa. O CARTE trata a combinação como uma decisão contextual. O perfil da série e o histórico de tentativas orientam a escolha do pool, da forma de combinação e dos pesos. Essa adaptação responde a diferenças de tendência, sazonalidade e estabilidade entre os conjuntos e sustenta o desempenho consistente do método. A ablação confirma que a seleção do agente agrega valor ao processo de combinação (Tabela~\ref{tab:ablacao-carte-oraculo-smape}). O CARTE-oráculo restrito mostra que o agente aproveita bem o histórico que constrói. O CARTE-oráculo amplo estabelece o limite do catálogo. A seleção é o elemento que aproxima o CARTE do seu limite, mais do que a geração de candidatos.
 
-A análise do comportamento do agente combinador (Seção~\ref{sec:resultados-agente}) indica que parte de seu ganho decorre da exploração de estratégias de ponderação sobre subconjuntos podados do conjunto de preditores, e não apenas da repetição das combinações estáticas semeadas: em 61,03\% das séries, a estratégia final aceita supera estritamente a melhor semente pré-testada. Além do desempenho em acurácia, o CARTE oferece uma vantagem qualitativa que os métodos de meta-aprendizagem da literatura não replicam: um histórico de decisão interpretável e auditável por construção (Seção~\ref{sec:resultados-agente}). Esse benefício, porém, tem contrapartida em custo computacional: o ciclo de decisão do agente consome de 39 a 103 segundos por série, uma a duas ordens de magnitude mais lento que os métodos de combinação da literatura. Esses pontos, o ganho estatisticamente limitado em parte dos conjuntos de dados e o custo computacional, são limitações identificadas que devem orientar os próximos passos deste trabalho.
+As limitações são de protocolo, custo, desempenho e interpretação. A janela de validação é a limitação mais importante. A seleção depende de três janelas de validação e de uma única janela de teste. Com tão poucas janelas, a escolha da estratégia fica sensível a ruído e pode não se repetir no teste. O CARTE-oráculo restrito mostra que existe espaço entre a decisão do agente e o melhor que ele próprio gerou. O CARTE-oráculo de validação, que escolhe o máximo da validação, não melhora o teste, o que confirma essa limitação. O custo do agente é de dezenas de segundos por série. A validade externa é restrita a sete conjuntos e 680 séries, e os conjuntos ETT têm apenas sete séries cada. O meta-modelo entre séries não é usado nesses conjuntos porque o número de séries não atinge o mínimo do protocolo. No desempenho e na interpretação, a vantagem média em SMAPE é positiva, mas se concentra em parte dos conjuntos. O POCID não repete a posição do SMAPE e não participa da seleção. Em quatro dos sete conjuntos, o melhor modelo individual, escolhido após o resultado, ainda supera o CARTE. O ANP é o caso de pior desempenho relativo, e o ETTm1 concentra a maior variabilidade entre execuções. A justificativa final é curta e padronizada, e a auditabilidade está no histórico de tentativas.
+
+A contribuição do CARTE é metodológica. O método mostra que um agente com LLM pode selecionar estratégias de combinação de forma competitiva, com desempenho entre os melhores métodos e um histórico auditável. O CARTE combina acurácia, interpretabilidade e rastreabilidade em um único processo de decisão.

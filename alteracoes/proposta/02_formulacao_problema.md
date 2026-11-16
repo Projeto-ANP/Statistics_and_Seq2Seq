@@ -16,11 +16,11 @@ Seja $\mathcal{D} = \{\mathcal{S}_i\}_{i=1}^{N}$ um conjunto de históricos de $
 
 O conjunto de preditores $\mathcal{M}$ pode incluir métodos estatísticos, de aprendizagem de máquina e ingênuos, bem como variantes aplicadas a representações transformadas dos dados. A composição do \textit{pool} de preditores é uma escolha de projeto, de modo que o CARTE opera sobre as previsões fornecidas, sem exigir uma arquitetura ou seleção específica dos preditores. Para permitir a combinação, as previsões devem corresponder aos mesmos instantes e escala da variável-alvo.
 
-Para cada série $i$, consideram-se três janelas de validação $w \in \{1,2,3\}$, e uma janela de teste posterior a elas. Seja $\tau_i^{(w)}$ a origem de previsão da janela de validação $w$, definida como o índice da última observação anterior a essa janela, com
+Para cada série $i$, consideram-se três janelas de validação $w \in \{1,2,3\}$, e uma janela de teste posterior a elas. Seja $o_i^{(w)}$ a origem de previsão da janela de validação $w$, definida como o índice da última observação anterior a essa janela, com
 \[
-    1 \leq \tau_i^{(1)} < \tau_i^{(2)} < \tau_i^{(3)}
+    1 \leq o_i^{(1)} < o_i^{(2)} < o_i^{(3)}
     \quad \text{e} \quad
-    \tau_i^{(w)} + h \leq n_i,
+    o_i^{(w)} + h \leq n_i,
     \qquad w \in \{1,2,3\}.
 \]
 
@@ -33,7 +33,7 @@ O vetor de valores reais da janela de validação $w$ é
     \qquad
     y_{i,k}^{(w)}
     =
-    x_{i,\tau_i^{(w)}+k},
+    x_{i,o_i^{(w)}+k},
 \]
 em que $k \in \{1,\dots,h\}$ identifica o passo no horizonte de previsão. Denota-se por
 \[
@@ -42,7 +42,7 @@ em que $k \in \{1,\dots,h\}$ identifica o passo no horizonte de previsão. Denot
     \bigl(\hat{y}_{i,j,k}^{(w)}\bigr)_{k=1}^{h}
     \in \mathbb{R}^{h}
 \]
-o vetor de previsões produzido pelo método $M_j$ para essa janela, cuja componente $\hat{y}_{i,j,k}^{(w)}$ corresponde à previsão de $x_{i,\tau_i^{(w)}+k}$. Cada vetor de previsões é produzido utilizando apenas informações disponíveis até a respectiva origem $\tau_i^{(w)}$.
+o vetor de previsões produzido pelo método $M_j$ para essa janela, cuja componente $\hat{y}_{i,j,k}^{(w)}$ corresponde à previsão de $x_{i,o_i^{(w)}+k}$. Cada vetor de previsões é produzido utilizando apenas informações disponíveis até a respectiva origem $o_i^{(w)}$.
 
 A janela de teste compreende os $h$ instantes imediatamente posteriores a $n_i$. Denotam-se por $x_{i,n_i+k}$, para $k \in \{1,\dots,h\}$, os valores futuros da série $i$, que não integram o histórico disponível $\mathcal{S}_i$ e são desconhecidos no momento da decisão de combinação. Esses valores compõem o vetor
 \[

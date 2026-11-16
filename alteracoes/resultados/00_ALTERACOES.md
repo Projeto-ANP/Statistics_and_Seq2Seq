@@ -43,9 +43,11 @@ Este diretório reúne a reescrita do capítulo `Avaliação Experimental e Disc
 | `ETTm1` | 459–533 | [`09_ettm1.md`](09_ettm1.md) | pronto para integrar; média das 10 |
 | `ETTm2` | 534–608 | [`10_ettm2.md`](10_ettm2.md) | pronto para integrar; média das 10 |
 | `Síntese entre conjuntos de dados` | 683–826 | [`11_sintese_transformacoes.md`](11_sintese_transformacoes.md), [`12_sintese_ranking.md`](12_sintese_ranking.md), [`13_sintese_mcm_agregada.md`](13_sintese_mcm_agregada.md), [`14_sintese_vitorias.md`](14_sintese_vitorias.md), [`15_sintese_horizonte.md`](15_sintese_horizonte.md) | todas as subseções prontas |
-| `Análise do comportamento do agente` | 827–1021 | [`16_agente_frequencia.md`](16_agente_frequencia.md), [`17_agente_encerramento.md`](17_agente_encerramento.md), [`19_agente_trajetoria.md`](19_agente_trajetoria.md), [`20_agente_interpretabilidade.md`](20_agente_interpretabilidade.md), [`21_agente_melhoria.md`](21_agente_melhoria.md), [`22_agente_custo.md`](22_agente_custo.md), [`23_agente_rastreabilidade.md`](23_agente_rastreabilidade.md) | todas as subseções prontas; `Estudo de caso ilustrativo` removido por sobreposição |
+| `Análise do comportamento do agente` | 827–1021 | [`16_agente_frequencia.md`](16_agente_frequencia.md), [`17_agente_encerramento.md`](17_agente_encerramento.md), [`18_agente_contexto.md`](18_agente_contexto.md), [`19_agente_trajetoria.md`](19_agente_trajetoria.md), [`20_agente_interpretabilidade.md`](20_agente_interpretabilidade.md), [`21_agente_melhoria.md`](21_agente_melhoria.md), [`22_agente_custo.md`](22_agente_custo.md), [`23_agente_rastreabilidade.md`](23_agente_rastreabilidade.md) | todas as subseções prontas; `Estudo de caso ilustrativo` removido por sobreposição |
 | `Estudo de ablação` | 1022–1225 | [`24_ablacao_buscas.md`](24_ablacao_buscas.md), [`25_ablacao_carte_oraculo.md`](25_ablacao_carte_oraculo.md), [`26_ablacao_sintese.md`](26_ablacao_sintese.md) | todas as subseções prontas |
 | `Considerações finais` | 1226–fim | [`27_consideracoes_finais.md`](27_consideracoes_finais.md) | pronta |
+
+O capítulo de conclusões foi reescrito separadamente em [`28_conclusoes.md`](28_conclusoes.md). O resumo revisado está em [`resumo.md`](../resumo.md).
 
 ## Fontes de dados
 
@@ -65,4 +67,4 @@ Este diretório reúne a reescrita do capítulo `Avaliação Experimental e Disc
 
 ## Pendências de decisão
 
-- Atualizar as referências a `sec:preparacao` e `CREST` que ainda existem em `resultados.tex`.
+- Concluído: não há mais `CREST` visível em `overleaf/*.tex`; os rótulos internos `sec:crest`, `alg:crest` e `fig:crest_arquitetura` foram mantidos para não quebrar referências.

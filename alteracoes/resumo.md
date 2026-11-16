@@ -1,0 +1,13 @@
+# Resumo
+
+Versão revisada do resumo, com o fecho ajustado para não afirmar superioridade uniforme sobre as combinações estáticas nem equivalência geral ao FFORMA.
+
+```latex
+\chapter*{Resumo}
+\addcontentsline{toc}{chapter}{Resumo}
+\noindent Séries temporais são amplamente utilizadas em tarefas de aprendizagem de máquina, especialmente para a previsão de valores futuros, uma tarefa capaz de apoiar decisões estratégicas em contextos econômicos, políticos e sociais. Modelos estatísticos, como ARIMA, Theta e ETS, são eficazes na captura de sazonalidade e tendências, enquanto modelos de aprendizagem de máquina, como Random Forest e CatBoost, são mais adequados à extração de padrões não lineares, sobretudo quando combinados a representações alternativas dos dados obtidas por transformações \textit{wavelet} e de Fourier. Como nenhum desses modelos se mostra superior aos demais de forma consistente entre diferentes séries e diferentes domínios de aplicação, a combinação de suas previsões surge como uma estratégia para obter resultados mais estáveis que os de qualquer modelo individual isolado. Os métodos de combinação existentes na literatura, contudo, definem uma regra fixa de ponderação, aprendida uma única vez e aplicada indistintamente a todas as séries. Este trabalho propõe o CARTE, um método que delega essa decisão a um agente baseado em modelo de linguagem, restrito a um catálogo fechado de ações determinísticas, que decide, para cada série individualmente, qual estratégia de combinação entre um conjunto de dezenove preditores estatísticos e de aprendizagem de máquina deve ser empregada. O método foi avaliado sobre sete conjuntos de dados de domínios distintos, incluindo dados de venda de derivados de petróleo e combustíveis disponibilizados pela Agência Nacional do Petróleo, Gás Natural e Biocombustíveis (ANP), e conjuntos públicos do repositório \textit{Monash Time Series Forecasting} e da coleção \textit{Electricity Transformer Temperature}. Os resultados mostram que o CARTE tem o melhor rank médio entre os métodos de combinação comparáveis e o menor SMAPE agregado, com vantagem em SMAPE sobre o ADE em cinco dos sete conjuntos. No SMAPE agregado, não há separação estatística entre o CARTE e o FFORMA. As variantes com transformação ocupam a maior parte das dez primeiras posições dos modelos individuais, e a remoção delas piora o SMAPE em todos os conjuntos. O método é particularmente forte no ETTh1, no ETTh2 e no ETTm1, e mantém desempenho competitivo nos demais conjuntos.
+
+\vspace{.5cm}
+
+\noindent \textbf{Palavras-chave:} Séries temporais, \textit{forecasting}, combinação de modelos, agentes baseados em modelos de linguagem, seleção dinâmica de estratégias.
+```
