@@ -77,7 +77,7 @@ A Tabela~\ref{tab:execucoes-agregados} apresenta os agregados de cada execução
 \footnotesize
 \centering
 \setlength{\tabcolsep}{4pt}
-\caption{Agregados de SMAPE e POCID por execução do CARTE. Valores em percentual. As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries.}
+\caption[Agregados de SMAPE e POCID por execução.]{Agregados de SMAPE e POCID por execução do CARTE. Valores em percentual. As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries.}
 \label{tab:execucoes-agregados}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule

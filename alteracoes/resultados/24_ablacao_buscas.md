@@ -16,7 +16,7 @@ A Tabela~\ref{tab:ablacao-buscas-smape} apresenta o SMAPE médio por conjunto de
 \begin{table}[H]
 \centering
 \small
-\caption{SMAPE médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o menor valor da linha. A coluna \textit{política escolhida} reporta o teste da política de busca de menor pontuação de validação em cada série, não um método fixo.}
+\caption[SMAPE do CARTE e das buscas sem LLM.]{SMAPE médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o menor valor da linha. A coluna \textit{política escolhida} reporta o teste da política de busca de menor pontuação de validação em cada série, não um método fixo.}
 \label{tab:ablacao-buscas-smape}
 \begin{tabular}{@{}lrrrrr@{}}
 \toprule
@@ -45,7 +45,7 @@ A Tabela~\ref{tab:ablacao-buscas-pocid} repete a estrutura para o POCID. O POCID
 \begin{table}[H]
 \centering
 \small
-\caption{POCID médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o maior valor da linha. A coluna \textit{política escolhida} reporta o teste da política de busca de menor pontuação de validação em cada série, não um método fixo.}
+\caption[POCID do CARTE e das buscas sem LLM.]{POCID médio (\%) do CARTE e de três buscas sem LLM sobre o mesmo orçamento, por conjunto de dados. Em negrito, o maior valor da linha. A coluna \textit{política escolhida} reporta o teste da política de busca de menor pontuação de validação em cada série, não um método fixo.}
 \label{tab:ablacao-buscas-pocid}
 \begin{tabular}{@{}lrrrrr@{}}
 \toprule
@@ -75,7 +75,7 @@ A Tabela~\ref{tab:ablacao-buscas-vantagem} resume a vantagem do CARTE e as conta
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
-\caption{Vantagem média do CARTE sobre as buscas sem LLM, em pontos percentuais, e número de séries em que o CARTE vence, empata ou perde (C/E/P). As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries. Valores positivos indicam vantagem do CARTE.}
+\caption[Vantagem do CARTE sobre as buscas sem LLM.]{Vantagem média do CARTE sobre as buscas sem LLM, em pontos percentuais, e número de séries em que o CARTE vence, empata ou perde (C/E/P). As colunas 7 e 680 indicam a média dos sete conjuntos e o agregado das 680 séries. Valores positivos indicam vantagem do CARTE.}
 \label{tab:ablacao-buscas-vantagem}
 \begin{tabular}{@{}lrrrrcc@{}}
 \toprule
@@ -96,7 +96,7 @@ A Tabela~\ref{tab:ablacao-buscas-vitorias} complementa a leitura com a contagem 
 \begin{table}[H]
 \centering
 \small
-\caption{Número de séries em que cada método obtém o melhor valor, por métrica. Empates são contados à parte e não entram na coluna de nenhum método.}
+\caption[Séries com o melhor valor, por método.]{Número de séries em que cada método obtém o melhor valor, por métrica. Empates são contados à parte e não entram na coluna de nenhum método.}
 \label{tab:ablacao-buscas-vitorias}
 \begin{tabular}{@{}lrrrrr@{}}
 \toprule

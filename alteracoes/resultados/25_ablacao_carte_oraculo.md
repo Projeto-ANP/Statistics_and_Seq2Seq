@@ -17,7 +17,7 @@ A Tabela~\ref{tab:ablacao-carte-oraculo-smape} apresenta o SMAPE médio do CARTE
 \centering
 \footnotesize
 \setlength{\tabcolsep}{3pt}
-\caption{SMAPE médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o menor valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhor das 10 primeiras, CARTE-oráculo de validação, CARTE-oráculo e melhor individual.}
+\caption[SMAPE do CARTE e dos oráculos.]{SMAPE médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o menor valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhor das 10 primeiras, CARTE-oráculo de validação, CARTE-oráculo e melhor individual.}
 \label{tab:ablacao-carte-oraculo-smape}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
@@ -51,7 +51,7 @@ A Tabela~\ref{tab:ablacao-carte-oraculo-pocid} repete a estrutura para o POCID. 
 \centering
 \footnotesize
 \setlength{\tabcolsep}{3pt}
-\caption{POCID médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o maior valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhor das 10 primeiras, CARTE-oráculo de validação, CARTE-oráculo e melhor individual. O melhor individual é o modelo de maior POCID entre os dezenove preditores em cada série.}
+\caption[POCID do CARTE e dos oráculos.]{POCID médio (\%) do CARTE e dos oráculos, por conjunto de dados. Em negrito, o maior valor da linha. Restrito, 10 primeiras, Validação, Oráculo e Individual são abreviações de CARTE-oráculo restrito, melhor das 10 primeiras, CARTE-oráculo de validação, CARTE-oráculo e melhor individual. O melhor individual é o modelo de maior POCID entre os dezenove preditores em cada série.}
 \label{tab:ablacao-carte-oraculo-pocid}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
@@ -81,7 +81,7 @@ As Tabelas~\ref{tab:ablacao-carte-oraculo-ganho-smape} e~\ref{tab:ablacao-carte-
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
-\caption{Ganho médio dos oráculos sobre o CARTE em SMAPE, em pontos percentuais, na média dos sete conjuntos e no agregado das 680 séries, e número de séries em que o oráculo vence, empata ou perde (O/E/C). Restrito, 10 primeiras, Validação, Oráculo e Individual seguem a Tabela~\ref{tab:ablacao-carte-oraculo-smape}. Valores positivos indicam que o oráculo é melhor.}
+\caption[Ganho dos oráculos sobre o CARTE em SMAPE.]{Ganho médio dos oráculos sobre o CARTE em SMAPE, em pontos percentuais, na média dos sete conjuntos e no agregado das 680 séries, e número de séries em que o oráculo vence, empata ou perde (O/E/C). Restrito, 10 primeiras, Validação, Oráculo e Individual seguem a Tabela~\ref{tab:ablacao-carte-oraculo-smape}. Valores positivos indicam que o oráculo é melhor.}
 \label{tab:ablacao-carte-oraculo-ganho-smape}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
@@ -100,7 +100,7 @@ Individual    & +2,72 & +3,74 & 659/0/21 \\
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
-\caption{Ganho médio dos oráculos sobre o CARTE em POCID, em pontos percentuais, na média dos sete conjuntos e no agregado das 680 séries, e número de séries em que o oráculo vence, empata ou perde (O/E/C). Restrito, 10 primeiras, Validação, Oráculo e Individual seguem a Tabela~\ref{tab:ablacao-carte-oraculo-smape}. Valores positivos indicam que o oráculo é melhor.}
+\caption[Ganho dos oráculos sobre o CARTE em POCID.]{Ganho médio dos oráculos sobre o CARTE em POCID, em pontos percentuais, na média dos sete conjuntos e no agregado das 680 séries, e número de séries em que o oráculo vence, empata ou perde (O/E/C). Restrito, 10 primeiras, Validação, Oráculo e Individual seguem a Tabela~\ref{tab:ablacao-carte-oraculo-smape}. Valores positivos indicam que o oráculo é melhor.}
 \label{tab:ablacao-carte-oraculo-ganho-pocid}
 \begin{tabular}{@{}lrrr@{}}
 \toprule

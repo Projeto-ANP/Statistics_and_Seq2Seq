@@ -36,7 +36,7 @@ As transformações também dominam as escolhas finais do CARTE. Nas dez execuç
 
 \begin{table}[H]
 \centering
-\caption{Composição dos pools finais do CARTE, por conjunto de dados. A última coluna é o peso médio das variantes transformadas nas estratégias ponderadas.}
+\caption[Composição dos pools finais do CARTE.]{Composição dos pools finais do CARTE, por conjunto de dados. A última coluna é o peso médio das variantes transformadas nas estratégias ponderadas.}
 \label{tab:sintese-transformacoes-escolhas}
 \small
 \begin{tabular}{@{}lrrr@{}}
@@ -62,7 +62,7 @@ Para medir a contribuição das transformações, foram removidas do pool final 
 
 \begin{table}[H]
 \centering
-\caption{SMAPE médio do CARTE e da versão sem transformações, nas 670 séries em que o pool final tem ao menos um modelo não transformado.}
+\caption[SMAPE com e sem transformações (670 séries).]{SMAPE médio do CARTE e da versão sem transformações, nas 670 séries em que o pool final tem ao menos um modelo não transformado.}
 \label{tab:sintese-transformacoes-remocao-smape}
 \small
 \begin{tabular}{@{}lrrr@{}}
@@ -86,7 +86,7 @@ Sem as transformações, o SMAPE médio sobe de 13,78\% para 22,42\%, um aumento
 
 \begin{table}[H]
 \centering
-\caption{POCID médio do CARTE e da versão sem transformações, nas 670 séries em que o pool final tem ao menos um modelo não transformado.}
+\caption[POCID com e sem transformações (670 séries).]{POCID médio do CARTE e da versão sem transformações, nas 670 séries em que o pool final tem ao menos um modelo não transformado.}
 \label{tab:sintese-transformacoes-remocao-pocid}
 \small
 \begin{tabular}{@{}lrrr@{}}
@@ -115,7 +115,7 @@ A Figura~\ref{fig:sintese-transformacoes-delta} resume os deltas médios por con
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.9\textwidth]{images/resultados_final/sintese_transformacoes_delta.png}
-    \caption{$\Delta$ SMAPE médio e $\Delta$ POCID médio entre a versão sem transformações e o CARTE, por conjunto de dados, nas 670 séries em que o pool final tem ao menos um modelo não transformado. Para o SMAPE, valores positivos indicam piora da versão sem transformações. Para o POCID, valores negativos indicam que a versão com transformações tem POCID maior.}
+    \caption[Variação de SMAPE e POCID sem as transformações.]{$\Delta$ SMAPE médio e $\Delta$ POCID médio entre a versão sem transformações e o CARTE, por conjunto de dados, nas 670 séries em que o pool final tem ao menos um modelo não transformado. Para o SMAPE, valores positivos indicam piora da versão sem transformações. Para o POCID, valores negativos indicam que a versão com transformações tem POCID maior.}
     \label{fig:sintese-transformacoes-delta}
 \end{figure}
 

@@ -1,0 +1,2877 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+ata - private remote access without root, VPN, or open ports.
+
+Transport: zrok2 private share (OpenZiti), free plan.
+Both the server and the client only make outbound connections. Neither
+side opens a port to the internet. Shares are closed by default: only
+environments in the same zrok account can access them.
+
+Usage:
+    ./ata init          # configure this machine (server or client)
+    ./ata up            # start gateway + shares (server) or accesses (client)
+    ./ata status
+    ./ata down
+    ./ata doctor
+    ./ata export        # generate a client bundle (contains a secret)
+    ./ata --help
+
+Requirements: Python 3.8+, Linux x86_64/arm64/armv7, outbound HTTPS to
+api-v2.zrok.io and the zrok routers. Root is not required.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as _dt
+import getpass
+import hashlib
+import hmac
+import http.client
+import http.server
+import json
+import os
+import platform
+import re
+import secrets
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+APP = "ata"
+VERSION = "1.0.0"
+DEFAULT_ZROK_VERSION = "2.0.10"
+GITHUB_RELEASES_API = "https://api.github.com/repos/openziti/zrok/releases/latest"
+ZROK_API_URL = "https://api-v2.zrok.io"
+ZROK_DOCS = "https://netfoundry.io/docs/zrok/"
+CRON_MARKER = "# ata:autostart"
+
+
+# ---------------------------------------------------------------------------
+# Output / errors
+# ---------------------------------------------------------------------------
+
+class AtaError(Exception):
+    """Expected error, shown without a traceback."""
+
+
+def _supports_color() -> bool:
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def _c(code: str, text: str) -> str:
+    if not _supports_color():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def info(msg: str) -> None:
+    print(f"{_c('36', '[ata]')} {msg}")
+
+
+def ok(msg: str) -> None:
+    print(f"{_c('32', '[ok]')} {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"{_c('33', '[warn]')} {msg}", file=sys.stderr)
+
+
+def error(msg: str) -> None:
+    print(f"{_c('31', '[error]')} {msg}", file=sys.stderr)
+
+
+def eprint(msg: str = "") -> None:
+    print(msg, file=sys.stderr)
+
+
+def die(msg: str, code: int = 1) -> None:
+    error(msg)
+    raise SystemExit(code)
+
+
+# ---------------------------------------------------------------------------
+# Paths and environment
+# ---------------------------------------------------------------------------
+
+def base_home() -> Path:
+    return Path(os.environ.get("ATA_HOME", str(Path.home()))).expanduser().resolve()
+
+
+def config_path() -> Path:
+    raw = os.environ.get("ATA_CONFIG")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return base_home() / ".config" / "ata" / "config.json"
+
+
+def config_dir() -> Path:
+    return config_path().parent
+
+
+def state_dir() -> Path:
+    return base_home() / ".local" / "state" / "ata"
+
+
+def logs_dir() -> Path:
+    return state_dir() / "logs"
+
+
+def data_dir() -> Path:
+    return base_home() / ".local" / "share" / "ata"
+
+
+def bin_dir() -> Path:
+    return data_dir() / "bin"
+
+
+def unit_dir() -> Path:
+    return base_home() / ".config" / "systemd" / "user"
+
+
+def key_path(service: str = "ollama") -> Path:
+    return config_dir() / ("ollama.key" if service == "ollama" else f"{service}.key")
+
+
+def zrok_bin() -> Path:
+    return bin_dir() / "zrok2"
+
+
+def script_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def now_iso() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def app_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    env = os.environ.copy()
+    # ATA_HOME isola tudo (inclusive ~/.zrok2) durante testes.
+    if os.environ.get("ATA_HOME"):
+        env["HOME"] = os.environ["ATA_HOME"]
+    env["ZROK2_HEADLESS"] = "1"
+    env["NO_COLOR"] = "1"
+    env["TERM"] = "dumb"
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    if extra:
+        env.update(extra)
+    return env
+
+
+def systemd_env() -> Dict[str, str]:
+    env = app_env()
+    if not env.get("XDG_RUNTIME_DIR"):
+        candidate = Path(f"/run/user/{os.getuid()}")
+        if candidate.is_dir():
+            env["XDG_RUNTIME_DIR"] = str(candidate)
+    if os.environ.get("ATA_HOME"):
+        env["XDG_CONFIG_HOME"] = str(base_home() / ".config")
+    return env
+
+
+def ensure_dir(path: Path, mode: int = 0o700) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        os.chmod(path, mode)
+    return path
+
+
+def ensure_secure_file(path: Path) -> None:
+    with contextlib.suppress(OSError):
+        os.chmod(path, 0o600)
+
+
+def atomic_write(path: Path, data: str, mode: int = 0o600) -> None:
+    ensure_dir(path.parent, 0o700)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+
+
+def read_json(path: Path) -> Dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError as exc:
+        raise AtaError(f"file not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise AtaError(f"invalid JSON in {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise AtaError(f"{path} does not contain a JSON object")
+    return data
+
+
+def write_json(path: Path, data: Dict[str, Any]) -> None:
+    atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", 0o600)
+
+
+def run_cmd(
+    argv: List[str],
+    *,
+    check: bool = False,
+    timeout: int = 120,
+    env: Optional[Dict[str, str]] = None,
+    cwd: Optional[Path] = None,
+    input_text: Optional[str] = None,
+) -> subprocess.CompletedProcess:
+    try:
+        proc = subprocess.run(
+            argv,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env or app_env(),
+            cwd=str(cwd) if cwd else None,
+        )
+    except FileNotFoundError as exc:
+        raise AtaError(f"command not found: {argv[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AtaError(f"timed out running {argv[0]}") from exc
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise AtaError(f"{argv[0]} failed (code {proc.returncode}): {detail}")
+    return proc
+
+
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+
+
+def require_cmd(name: str) -> str:
+    found = shutil.which(name)
+    if not found:
+        raise AtaError(f"required command not found: {name}")
+    return found
+
+
+def sanitize_prefix(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9-]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-")
+    if not value:
+        raise AtaError("invalid prefix")
+    if len(value) > 48:
+        value = value[:48].rstrip("-")
+    return value
+
+
+def share_name(prefix: str, service: str) -> str:
+    """Token de share do zrok: minusculas, digitos e '-', no maximo 32 chars."""
+    base = sanitize_prefix(prefix)
+    direct = f"{base}-{service}"
+    if valid_share_token(direct):
+        return direct
+    slug = base[:10].rstrip("-")
+    digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:6]
+    name = f"{slug}-{digest}-{service}"
+    if len(name) > 32:
+        name = name[:32].rstrip("-")
+    return name
+
+
+def valid_share_token(value: str) -> bool:
+    return re.fullmatch(r"[a-z0-9-]{3,32}", value or "") is not None
+
+
+def default_prefix() -> str:
+    host = socket.gethostname().split(".")[0]
+    return sanitize_prefix(f"ata-{host}")
+
+
+def hostname_short() -> str:
+    return socket.gethostname().split(".")[0]
+
+
+def human_bytes(n: int) -> str:
+    units = ["B", "KiB", "MiB", "GiB"]
+    value = float(n)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{n} B"
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+SERVICE_DEFS: Dict[str, Dict[str, Any]] = {
+    "ollama": {
+        "enabled": True,
+        "kind": "http",
+        "upstream_host": "127.0.0.1",
+        "upstream_port": 11434,
+        "gateway_port": 18080,
+        "client_port": 18080,
+        "auth": "bearer",
+        "label": "Ollama",
+        "env_prefix": "OLLAMA",
+        "description": "Ollama (local API protected by an API key)",
+    },
+    "code": {
+        "enabled": True,
+        "kind": "http",
+        "upstream_host": "127.0.0.1",
+        "upstream_port": 8080,
+        "client_port": 8080,
+        "auth": "app",
+        "label": "code-server",
+        "description": "code-server (code-server's own authentication)",
+    },
+    "ssh": {
+        "enabled": True,
+        "kind": "tcp",
+        "upstream_host": "127.0.0.1",
+        "upstream_port": 22,
+        "client_port": 2222,
+        "auth": "ssh",
+        "label": "SSH",
+        "description": "SSH (public-key auth; passwordless)",
+    },
+    "guacamole": {
+        "enabled": False,
+        "kind": "http",
+        "upstream_host": "127.0.0.1",
+        "upstream_port": 8080,
+        "client_port": 8081,
+        "auth": "app",
+        "label": "Guacamole",
+        "description": "Guacamole (optional; WebSocket works through the zrok proxy)",
+    },
+}
+
+
+def default_config(role: str, prefix: str) -> Dict[str, Any]:
+    services: Dict[str, Any] = {}
+    for name, base in SERVICE_DEFS.items():
+        svc = dict(base)
+        svc["share"] = share_name(prefix, name)
+        services[name] = svc
+    # Evita colisao: se code-server usa 8080, Guacamole fica em 8081.
+    return {
+        "ata_version": VERSION,
+        "role": role,
+        "prefix": prefix,
+        "hostname": hostname_short(),
+        "created_at": now_iso(),
+        "services": services,
+        "secrets": {
+            "ollama_key_file": str(key_path()),
+            "ollama_keys": {"ollama": str(key_path())},
+        },
+        "gateway": {
+            "max_body_mb": 2,
+            "max_concurrent": 4,
+            "log_rotate_mb": 5,
+            "allow_model_management": False,
+        },
+        "runtime": {
+            "supervisor": "auto",
+            "active_supervisor": "",
+            "zrok_version": "latest",
+        },
+    }
+
+
+def make_ollama_service(
+    prefix: str,
+    name: str,
+    upstream_port: int,
+    gateway_port: int,
+    client_port: int,
+    label: str,
+    env_prefix: str,
+) -> Dict[str, Any]:
+    return {
+        "enabled": True,
+        "kind": "http",
+        "upstream_host": "127.0.0.1",
+        "upstream_port": int(upstream_port),
+        "gateway_port": int(gateway_port),
+        "client_port": int(client_port),
+        "auth": "bearer",
+        "label": label,
+        "env_prefix": env_prefix,
+        "share": share_name(prefix, name),
+        "description": f"Ollama {label} (port {upstream_port})",
+    }
+
+
+def deep_fill(defaults: Dict[str, Any], value: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(value)
+    for key, default in defaults.items():
+        if key not in out:
+            out[key] = default
+        elif isinstance(default, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_fill(default, out[key])
+    return out
+
+
+def load_config(required: bool = True) -> Dict[str, Any]:
+    path = config_path()
+    if not path.exists():
+        if required:
+            raise AtaError(f"configuration missing at {path}; run: {script_path()} init")
+        return {}
+    cfg = read_json(path)
+    role = cfg.get("role")
+    if role not in ("server", "client"):
+        raise AtaError("invalid configuration: role must be 'server' or 'client'")
+    prefix = sanitize_prefix(str(cfg.get("prefix") or default_prefix()))
+    cfg["prefix"] = prefix
+    cfg = deep_fill(default_config(role, prefix), cfg)
+    secrets_cfg = cfg.setdefault("secrets", {})
+    key_map = secrets_cfg.setdefault("ollama_keys", {})
+    legacy_key = secrets_cfg.get("ollama_key_file")
+    if legacy_key:
+        key_map.setdefault("ollama", str(legacy_key))
+
+    # Ensure every service has a valid share token (max 32 chars in zrok).
+    for index, (name, svc) in enumerate(cfg["services"].items()):
+        current = str(svc.get("share") or "")
+        if not valid_share_token(current):
+            svc["share"] = share_name(prefix, name)
+        svc["enabled"] = bool(svc.get("enabled"))
+        svc.setdefault("label", SERVICE_DEFS.get(name, {}).get("label", name))
+        svc["upstream_port"] = int(svc.get("upstream_port", SERVICE_DEFS.get(name, {}).get("upstream_port", 0)))
+        svc["client_port"] = int(svc.get("client_port", SERVICE_DEFS.get(name, {}).get("client_port", 0)))
+        if svc.get("auth") == "bearer":
+            svc.setdefault("label", "Ollama" if name == "ollama" else name)
+            svc.setdefault(
+                "env_prefix",
+                "OLLAMA" if name == "ollama" else "OLLAMA_" + re.sub(r"[^A-Za-z0-9]+", "_", name).upper(),
+            )
+            svc.setdefault("gateway_port", 18080 + index)
+            svc["gateway_port"] = int(svc["gateway_port"])
+            if not svc["client_port"]:
+                svc["client_port"] = int(svc["gateway_port"])
+            key_map.setdefault(name, str(key_path(name)))
+        elif svc.get("kind") == "http" and "gateway_port" in svc:
+            svc["gateway_port"] = int(svc["gateway_port"])
+    if key_map:
+        secrets_cfg.setdefault("ollama_key_file", key_map.get("ollama", str(key_path())))
+    return cfg
+
+
+def save_config(cfg: Dict[str, Any]) -> None:
+    cfg["ata_version"] = VERSION
+    cfg["updated_at"] = now_iso()
+    write_json(config_path(), cfg)
+    ensure_secure_file(config_path())
+
+
+def cfg_services(cfg: Dict[str, Any], enabled_only: bool = True) -> List[Tuple[str, Dict[str, Any]]]:
+    items = []
+    for name, svc in cfg.get("services", {}).items():
+        if enabled_only and not svc.get("enabled"):
+            continue
+        items.append((name, svc))
+    # bearer/Ollama gateways first, then other HTTP, then TCP
+    def sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, str]:
+        name, svc = item
+        if svc.get("auth") == "bearer":
+            return (0, name)
+        if svc.get("kind") == "http":
+            return (1, name)
+        return (2, name)
+    return sorted(items, key=sort_key)
+
+
+def ollama_services(cfg: Dict[str, Any], enabled_only: bool = True) -> List[Tuple[str, Dict[str, Any]]]:
+    items = [
+        (name, svc)
+        for name, svc in cfg.get("services", {}).items()
+        if svc.get("auth") == "bearer" and (not enabled_only or svc.get("enabled"))
+    ]
+    return sorted(items, key=lambda item: (item[0] != "ollama", item[0]))
+
+
+def service_label(name: str, svc: Dict[str, Any]) -> str:
+    return str(
+        svc.get("label")
+        or SERVICE_DEFS.get(name, {}).get("label")
+        or ("Ollama" if name == "ollama" else name)
+    )
+
+
+def service_env_prefix(name: str, svc: Dict[str, Any]) -> str:
+    if svc.get("env_prefix"):
+        return str(svc["env_prefix"])
+    return "OLLAMA" if name == "ollama" else "OLLAMA_" + re.sub(r"[^A-Za-z0-9]+", "_", name).upper()
+
+
+def service_upstream(svc: Dict[str, Any]) -> str:
+    return f"{svc.get('upstream_host', '127.0.0.1')}:{int(svc.get('upstream_port', 0))}"
+
+
+def service_target_port(svc: Dict[str, Any]) -> int:
+    """Local port the share should point to (gateway for Ollama; upstream otherwise)."""
+    if svc.get("auth") == "bearer" and svc.get("gateway_port"):
+        return int(svc["gateway_port"])
+    return int(svc.get("upstream_port", 0))
+
+
+def service_target(svc: Dict[str, Any]) -> str:
+    """host:port the zrok share should point to."""
+    if svc.get("auth") == "bearer" and svc.get("gateway_port"):
+        return f"127.0.0.1:{int(svc['gateway_port'])}"
+    return f"{svc.get('upstream_host', '127.0.0.1')}:{int(svc.get('upstream_port', 0))}"
+
+
+def service_client_port(svc: Dict[str, Any]) -> int:
+    return int(svc.get("client_port", 0))
+
+
+def service_backend_mode(svc: Dict[str, Any]) -> str:
+    return "tcpTunnel" if svc.get("kind") == "tcp" else "proxy"
+
+
+def gateway_port(cfg: Dict[str, Any], service: str = "ollama") -> int:
+    svc = cfg["services"].get(service, {})
+    return int(svc.get("gateway_port", 18080))
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+def ask_text(
+    label: str,
+    default: Optional[str] = None,
+    secret: bool = False,
+    allow_empty: bool = False,
+) -> str:
+    suffix = f" [{default}]" if default not in (None, "") else ""
+    prompt = f"{label}{suffix}: "
+    while True:
+        try:
+            value = getpass.getpass(prompt) if secret else input(prompt)
+        except EOFError as exc:
+            raise AtaError("input closed") from exc
+        value = value.strip()
+        if value:
+            return value
+        if allow_empty:
+            return ""
+        if default is not None:
+            return str(default)
+        eprint("  value required.")
+
+
+def ask_bool(label: str, default: bool = True) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        try:
+            value = input(f"{label} [{suffix}]: ").strip().lower()
+        except EOFError as exc:
+            raise AtaError("input closed") from exc
+        if not value:
+            return default
+        if value in ("s", "sim", "y", "yes", "1"):
+            return True
+        if value in ("n", "nao", "não", "no", "0"):
+            return False
+        eprint("  answer y or n.")
+
+
+def ask_int(label: str, default: int) -> int:
+    while True:
+        raw = ask_text(label, str(default))
+        try:
+            value = int(raw)
+        except ValueError:
+            eprint("  enter a number.")
+            continue
+        if 1 <= value <= 65535:
+            return value
+        eprint("  invalid port (1-65535).")
+
+
+# ---------------------------------------------------------------------------
+# zrok2: download, environment, shares
+# ---------------------------------------------------------------------------
+
+def _arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    if machine.startswith("armv7") or machine == "armv7l":
+        return "armv7"
+    raise AtaError(f"architecture not supported by zrok2: {machine}")
+
+
+def _platform_asset() -> str:
+    system = platform.system().lower()
+    if system == "linux":
+        return "linux"
+    if system == "darwin":
+        return "darwin"
+    raise AtaError("unsupported OS; use Linux, macOS, or WSL")
+
+
+def _github_json(url: str) -> Dict[str, Any]:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"{APP}/{VERSION}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _download(url: str, dest: Path, timeout: int = 180) -> None:
+    req = urllib.request.Request(url, headers={"User-Agent": f"{APP}/{VERSION}"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp, dest.open("wb") as fh:
+        shutil.copyfileobj(resp, fh, length=1024 * 256)
+
+
+def install_zrok2(version: str = "latest", force: bool = False) -> Path:
+    target = zrok_bin()
+    if target.exists() and not force:
+        probe = run_cmd([str(target), "version"], timeout=15)
+        if probe.returncode == 0:
+            return target
+
+    ensure_dir(bin_dir(), 0o700)
+    arch = _arch()
+    osname = _platform_asset()
+    tag = ""
+    tarball_url = ""
+    checksums_url = ""
+
+    if version and version != "latest":
+        tag = version if version.startswith("v") else f"v{version}"
+    else:
+        try:
+            release = _github_json(GITHUB_RELEASES_API)
+            tag = release.get("tag_name", "")
+            for asset in release.get("assets", []):
+                name = asset.get("name", "")
+                if name == f"zrok_{tag.lstrip('v')}_{osname}_{arch}.tar.gz":
+                    tarball_url = asset.get("browser_download_url", "")
+                elif name == "checksums.sha256.txt":
+                    checksums_url = asset.get("browser_download_url", "")
+        except Exception as exc:  # network / API rate limit
+            warn(f"could not query GitHub ({exc}); using zrok2 {DEFAULT_ZROK_VERSION}")
+            tag = f"v{DEFAULT_ZROK_VERSION}"
+
+    if not tag:
+        tag = f"v{DEFAULT_ZROK_VERSION}"
+    ver = tag.lstrip("v")
+    if not tarball_url:
+        tarball_url = f"https://github.com/openziti/zrok/releases/download/{tag}/zrok_{ver}_{osname}_{arch}.tar.gz"
+    if not checksums_url:
+        checksums_url = f"https://github.com/openziti/zrok/releases/download/{tag}/checksums.sha256.txt"
+
+    info(f"downloading zrok2 {tag} ({osname}/{arch})...")
+    with tempfile.TemporaryDirectory(prefix="ata-zrok-") as tmpdir:
+        tmp = Path(tmpdir)
+        tarball = tmp / f"zrok_{ver}_{osname}_{arch}.tar.gz"
+        checksums = tmp / "checksums.sha256.txt"
+        try:
+            _download(tarball_url, tarball)
+            _download(checksums_url, checksums)
+        except Exception as exc:
+            raise AtaError(f"failed to download zrok2: {exc}") from exc
+
+        expected = None
+        for line in checksums.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[-1] == tarball.name:
+                expected = parts[0].lower()
+                break
+        if not expected:
+            raise AtaError(f"checksum not found for {tarball.name}")
+        actual = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        if not hmac.compare_digest(actual, expected):
+            raise AtaError("zrok2 checksum mismatch; download aborted")
+
+        with tarfile.open(tarball, "r:gz") as tf:
+            member = None
+            for m in tf.getmembers():
+                if m.isfile() and m.name.endswith("/zrok2") or m.isfile() and m.name == "zrok2":
+                    member = m
+                    break
+            if member is None:
+                raise AtaError("zrok2 binary not found in package")
+            extracted = tf.extractfile(member)
+            if extracted is None:
+                raise AtaError("failed to extract zrok2")
+            fd, tmpbin = tempfile.mkstemp(prefix=".zrok2.", dir=str(bin_dir()))
+            try:
+                os.fchmod(fd, 0o700)
+                with os.fdopen(fd, "wb") as out:
+                    shutil.copyfileobj(extracted, out, length=1024 * 256)
+                os.replace(tmpbin, target)
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmpbin)
+    ensure_secure_file(target)
+    with contextlib.suppress(OSError):
+        os.chmod(target, 0o700)
+    if platform.system().lower() == "darwin" and shutil.which("xattr"):
+        with contextlib.suppress(Exception):
+            run_cmd(["xattr", "-d", "com.apple.quarantine", str(target)], timeout=15)
+
+    proc = run_cmd([str(target), "version"], timeout=20)
+    if proc.returncode != 0:
+        raise AtaError(f"zrok2 downloaded but does not run: {(proc.stderr or proc.stdout).strip()}")
+    ok(f"zrok2 installed at {target} ({strip_ansi(proc.stdout).strip().splitlines()[-1]})")
+    return target
+
+
+def ensure_zrok2(cfg: Dict[str, Any], force: bool = False) -> Path:
+    if zrok_bin().exists() and not force:
+        probe = run_cmd([str(zrok_bin()), "version"], timeout=15)
+        if probe.returncode == 0:
+            return zrok_bin()
+    version = str(cfg.get("runtime", {}).get("zrok_version", "latest") or "latest")
+    return install_zrok2(version=version, force=force)
+
+
+def zrok_status_text() -> str:
+    if not zrok_bin().exists():
+        return ""
+    proc = run_cmd([str(zrok_bin()), "status"], timeout=30)
+    return strip_ansi((proc.stdout or "") + (proc.stderr or ""))
+
+
+def zrok_env_enabled() -> bool:
+    text = zrok_status_text()
+    if not text:
+        return False
+    if "To create a local environment" in text:
+        return False
+    return "EnvZId" in text and "<<SET>>" in text
+
+
+def ensure_zrok_enabled(token: Optional[str] = None) -> None:
+    if zrok_env_enabled():
+        return
+    install_zrok2()
+    if not token:
+        token = os.environ.get("ZROK_ACCOUNT_TOKEN", "").strip()
+    if not token:
+        eprint("")
+        eprint("You need a free account at https://myzrok.io")
+        eprint("In the dashboard, click 'CLICK HERE TO GET STARTED' and copy the account token.")
+        eprint("The token is a secret: it identifies your account and all its devices.")
+        token = ask_text("Account token do zrok", secret=True)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", token):
+        raise AtaError("unexpected zrok account token format")
+    info("enabling the zrok2 environment (once per device)...")
+    proc = run_cmd(
+        [str(zrok_bin()), "enable", "--headless", token],
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        detail = strip_ansi((proc.stderr or proc.stdout or "").strip())
+        detail = detail.replace(token, "***")
+        raise AtaError(f"zrok2 enable failed: {detail}")
+    if not zrok_env_enabled():
+        raise AtaError("zrok2 enable finished, but the environment is not active")
+    zrok_root = base_home() / ".zrok2"
+    with contextlib.suppress(OSError):
+        os.chmod(zrok_root, 0o700)
+    ok("zrok2 environment enabled")
+
+
+def zrok_share_info(name: str) -> Optional[Dict[str, Any]]:
+    if not zrok_env_enabled():
+        return None
+    proc = run_cmd(
+        [str(zrok_bin()), "list", "shares", "--json", "--share-token", name],
+        timeout=45,
+    )
+    if proc.returncode != 0:
+        return None
+    raw = strip_ansi(proc.stdout or "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            for share in data.get("shares", []):
+                if isinstance(share, dict) and share.get("shareToken") == name:
+                    return share
+        except json.JSONDecodeError:
+            pass
+    # Fallback for versions that do not support --json.
+    text = strip_ansi((proc.stdout or "") + (proc.stderr or ""))
+    low = text.lower()
+    if (
+        "not found" not in low
+        and "error" not in low
+        and re.search(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])", text)
+    ):
+        return {"shareToken": name}
+    return None
+
+
+def zrok_share_exists(name: str) -> bool:
+    return zrok_share_info(name) is not None
+
+
+def ensure_share(name: str, backend_mode: str) -> None:
+    existing = zrok_share_info(name)
+    if existing:
+        current_mode = str(existing.get("backendMode") or "")
+        if current_mode and current_mode != backend_mode:
+            raise AtaError(
+                f"share '{name}' already exists with backend mode '{current_mode}', "
+                f"but the configuration expects '{backend_mode}'; delete that share or use another prefix"
+            )
+        return
+    info(f"creating private share '{name}' ({backend_mode})...")
+    proc = run_cmd(
+        [
+            str(zrok_bin()),
+            "create",
+            "share",
+            "--backend-mode",
+            backend_mode,
+            "--share-token",
+            name,
+        ],
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        text = strip_ansi((proc.stdout or "") + (proc.stderr or "")).lower()
+        # Idempotencia: alguns servidores retornam conflito se o token ja existe.
+        if not any(s in text for s in ("already", "exists", "conflict", "duplicate", "in use")):
+            detail = strip_ansi((proc.stderr or proc.stdout or "").strip())
+            raise AtaError(f"could not create share '{name}': {detail}")
+    for _ in range(3):
+        if zrok_share_exists(name):
+            return
+        time.sleep(0.5)
+    # Nao falha aqui: o share private ainda pode funcionar; o status mostrara.
+    warn(f"share '{name}' did not appear in the listing; trying to start it anyway")
+
+
+def share_argv(name: str, target: str) -> List[str]:
+    # Quando --share-token e usado, o zrok2 usa o backend-mode gravado no
+    # share reservado e recusa --backend-mode no mesmo comando.
+    return [
+        str(zrok_bin()),
+        "share",
+        "private",
+        "--headless",
+        "--force-local",
+        "--share-token",
+        name,
+        target,
+    ]
+
+
+def access_argv(name: str, bind: str) -> List[str]:
+    return [
+        str(zrok_bin()),
+        "access",
+        "private",
+        "--headless",
+        "--force-local",
+        "--bind",
+        bind,
+        name,
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Supervisor: systemd --user or nohup
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ProcSpec:
+    key: str
+    description: str
+    argv: List[str]
+    log_name: str
+
+    @property
+    def unit(self) -> str:
+        return f"ata-{self.key}.service"
+
+    @property
+    def log_path(self) -> Path:
+        return logs_dir() / f"{self.key}.log"
+
+    @property
+    def pid_path(self) -> Path:
+        return state_dir() / "run" / f"{self.key}.pid"
+
+
+def systemd_available() -> bool:
+    if not shutil.which("systemctl"):
+        return False
+    proc = run_cmd(
+        ["systemctl", "--user", "show-environment"],
+        env=systemd_env(),
+        timeout=15,
+    )
+    return proc.returncode == 0
+
+
+def linger_enabled() -> Optional[bool]:
+    if not shutil.which("loginctl"):
+        return None
+    user = getpass.getuser()
+    proc = run_cmd(
+        ["loginctl", "show-user", user, "-p", "Linger"],
+        env=systemd_env(),
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        return None
+    text = (proc.stdout or "").strip()
+    if "Linger=yes" in text:
+        return True
+    if "Linger=no" in text:
+        return False
+    return None
+
+
+def try_enable_linger() -> bool:
+    if linger_enabled() is True:
+        return True
+    if not shutil.which("loginctl"):
+        return False
+    user = getpass.getuser()
+    info("trying to enable linger so user services survive logout...")
+    proc = run_cmd(
+        ["loginctl", "enable-linger", user],
+        env=systemd_env(),
+        timeout=30,
+    )
+    if proc.returncode == 0 and linger_enabled() is True:
+        return True
+    detail = strip_ansi((proc.stderr or proc.stdout or "").strip())
+    if detail:
+        warn(f"could not enable linger: {detail}")
+    return False
+
+
+def choose_supervisor(requested: str = "auto") -> str:
+    requested = (requested or "auto").lower()
+    if requested not in ("auto", "systemd", "nohup"):
+        raise AtaError("invalid supervisor; use auto, systemd, or nohup")
+    if requested == "nohup":
+        return "nohup"
+    if requested == "systemd":
+        if not systemd_available():
+            raise AtaError("systemd --user is not available in this session")
+        if os.environ.get("ATA_HOME"):
+            raise AtaError("--home is not compatible with systemd --user; use --supervisor nohup")
+        return "systemd"
+    # auto
+    if os.environ.get("ATA_HOME"):
+        return "nohup"
+    if not systemd_available():
+        return "nohup"
+    linger = linger_enabled()
+    if linger is True:
+        return "systemd"
+    if linger is False and try_enable_linger():
+        return "systemd"
+    if linger is None:
+        # Sem loginctl: systemd pode funcionar, mas pode morrer no logout.
+        warn("could not check linger; using nohup to survive logout")
+    else:
+        warn("linger is disabled; using nohup + @reboot to survive logout")
+    return "nohup"
+
+
+def cron_lines() -> List[str]:
+    if not shutil.which("crontab"):
+        return []
+    proc = run_cmd(["crontab", "-l"], timeout=15)
+    if proc.returncode != 0:
+        return []
+    return proc.stdout.splitlines()
+
+
+def cron_write(lines: List[str]) -> bool:
+    if not shutil.which("crontab"):
+        return False
+    text = "\n".join(lines).rstrip("\n") + "\n"
+    proc = run_cmd(["crontab", "-"], input_text=text, timeout=20)
+    return proc.returncode == 0
+
+
+def cron_install_autostart() -> None:
+    if os.environ.get("ATA_NO_CRON") == "1":
+        return
+    if not shutil.which("crontab"):
+        warn("crontab not found; the tunnel will not restart automatically after reboot")
+        return
+    global_args: List[str] = []
+    if os.environ.get("ATA_HOME"):
+        global_args += ["--home", os.environ["ATA_HOME"]]
+    if os.environ.get("ATA_CONFIG"):
+        global_args += ["--config", os.environ["ATA_CONFIG"]]
+    log = state_dir() / "cron.log"
+    ensure_dir(log.parent, 0o700)
+    line = (
+        f"@reboot umask 077 && {shlex.quote(sys.executable)} {shlex.quote(str(script_path()))} "
+        + (" ".join(shlex.quote(a) for a in global_args) + " " if global_args else "")
+        + f"up --quiet --supervisor nohup >> {shlex.quote(str(log))} 2>&1 {CRON_MARKER}"
+    )
+    lines = [ln for ln in cron_lines() if CRON_MARKER not in ln]
+    lines.append(line)
+    if cron_write(lines):
+        ok("@reboot autostart installed in the user crontab")
+    else:
+        warn("could not install the @reboot entry in the crontab")
+
+
+def cron_remove_autostart() -> None:
+    if os.environ.get("ATA_NO_CRON") == "1":
+        return
+    if not shutil.which("crontab"):
+        return
+    lines = cron_lines()
+    new = [ln for ln in lines if CRON_MARKER not in ln]
+    if len(new) != len(lines):
+        with contextlib.suppress(Exception):
+            cron_write(new)
+
+
+def systemd_quote(arg: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_@%+=:,./-]+", arg):
+        return arg
+    return '"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def write_unit(spec: ProcSpec) -> Path:
+    ensure_dir(unit_dir(), 0o755)
+    exec_start = " ".join(systemd_quote(a) for a in spec.argv)
+    unit = f"""[Unit]
+Description={spec.description}
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart={exec_start}
+WorkingDirectory={systemd_quote(str(config_dir()))}
+Environment=HOME={systemd_quote(str(base_home()))}
+Environment=PYTHONUNBUFFERED=1
+Environment=NO_COLOR=1
+Environment=ZROK2_HEADLESS=1
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
+"""
+    path = unit_dir() / spec.unit
+    atomic_write(path, unit, 0o644)
+    return path
+
+
+def systemctl_user(*args: str, check: bool = False) -> subprocess.CompletedProcess:
+    return run_cmd(
+        ["systemctl", "--user", *args],
+        env=systemd_env(),
+        timeout=60,
+        check=check,
+    )
+
+
+def start_systemd(spec: ProcSpec) -> None:
+    write_unit(spec)
+    systemctl_user("daemon-reload")
+    systemctl_user("reset-failed", spec.unit)
+    proc = systemctl_user("enable", "--now", spec.unit)
+    if proc.returncode != 0:
+        detail = strip_ansi((proc.stderr or proc.stdout or "").strip())
+        raise AtaError(f"could not start {spec.unit}: {detail}")
+
+
+def stop_systemd(spec: ProcSpec) -> None:
+    if not systemd_available():
+        return
+    with contextlib.suppress(Exception):
+        systemctl_user("disable", "--now", spec.unit)
+
+
+def systemd_active(spec: ProcSpec) -> bool:
+    if not systemd_available():
+        return False
+    proc = systemctl_user("is-active", spec.unit)
+    return (proc.stdout or "").strip() == "active"
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def read_pid(spec: ProcSpec) -> int:
+    try:
+        return int(spec.pid_path.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def pid_matches(spec: ProcSpec, pid: int) -> bool:
+    """True only if the PID belongs to this ata process (avoids stale PID reuse)."""
+    if not pid_alive(pid):
+        return False
+    environ_path = Path(f"/proc/{pid}/environ")
+    if environ_path.exists():
+        try:
+            entries = environ_path.read_bytes().split(b"\0")
+            return f"ATA_PROC_KEY={spec.key}".encode() in entries
+        except OSError:
+            return False
+    # macOS/BSD fallback: there is no /proc. `ps eww` includes the environment.
+    if shutil.which("ps"):
+        proc = run_cmd(["ps", "eww", "-p", str(pid), "-o", "command="], timeout=5)
+        command = proc.stdout or ""
+        if f"ATA_PROC_KEY={spec.key}" in command:
+            return True
+        return spec.argv[0] in command and spec.argv[-1] in command
+    return True
+
+
+def rotate_log(path: Path, max_mb: int) -> None:
+    with contextlib.suppress(OSError):
+        if path.exists() and path.stat().st_size > max_mb * 1024 * 1024:
+            backup = path.with_suffix(path.suffix + ".1")
+            with contextlib.suppress(FileNotFoundError):
+                backup.unlink()
+            path.rename(backup)
+
+
+def start_nohup(spec: ProcSpec) -> None:
+    old_pid = read_pid(spec)
+    if pid_matches(spec, old_pid):
+        return
+    with contextlib.suppress(FileNotFoundError):
+        spec.pid_path.unlink()
+    ensure_dir(logs_dir(), 0o700)
+    ensure_dir(spec.pid_path.parent, 0o700)
+    rotate_log(spec.log_path, 5)
+    with spec.log_path.open("ab") as log:
+        ensure_secure_file(spec.log_path)
+        proc = subprocess.Popen(
+            spec.argv,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            env=app_env({"ATA_PROC_KEY": spec.key}),
+            cwd=str(config_dir()),
+        )
+    spec.pid_path.write_text(str(proc.pid), encoding="utf-8")
+    ensure_secure_file(spec.pid_path)
+    time.sleep(0.8)
+    if proc.poll() is not None:
+        tail = ""
+        with contextlib.suppress(Exception):
+            tail = "\n".join(spec.log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-15:])
+        raise AtaError(f"{spec.key} exited right after starting.\n{tail}")
+
+
+def stop_nohup(spec: ProcSpec) -> None:
+    pid = read_pid(spec)
+    if pid_matches(spec, pid):
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
+        deadline = time.time() + 8
+        while time.time() < deadline and pid_alive(pid):
+            time.sleep(0.2)
+        if pid_alive(pid):
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+    with contextlib.suppress(FileNotFoundError):
+        spec.pid_path.unlink()
+
+
+def spec_running(spec: ProcSpec, supervisor: str) -> bool:
+    if supervisor == "systemd":
+        return systemd_active(spec)
+    return pid_matches(spec, read_pid(spec))
+
+
+def start_specs(specs: List[ProcSpec], supervisor: str) -> None:
+    if not specs:
+        return
+    # Avoid duplicate processes when switching between systemd and nohup.
+    for spec in specs:
+        if supervisor == "systemd":
+            stop_nohup(spec)
+        else:
+            stop_systemd(spec)
+    if supervisor == "systemd":
+        for spec in specs:
+            info(f"starting {spec.key}...")
+            start_systemd(spec)
+            time.sleep(0.4)
+    else:
+        for spec in specs:
+            info(f"starting {spec.key}...")
+            start_nohup(spec)
+            time.sleep(0.4)
+
+
+def stop_specs(specs: List[ProcSpec]) -> None:
+    # Try both systemd and nohup; one of them is harmless.
+    for spec in specs:
+        stop_systemd(spec)
+        stop_nohup(spec)
+
+
+# ---------------------------------------------------------------------------
+# Process specifications
+# ---------------------------------------------------------------------------
+
+def gateway_spec(cfg: Dict[str, Any], service: str = "ollama") -> ProcSpec:
+    key = "server-gateway" if service == "ollama" else f"server-gateway-{service}"
+    return ProcSpec(
+        key=key,
+        description=f"ata gateway for {service}",
+        argv=[
+            sys.executable,
+            str(script_path()),
+            "--config",
+            str(config_path()),
+            "gateway",
+            "--service",
+            service,
+        ],
+        log_name=key,
+    )
+
+
+def server_specs(cfg: Dict[str, Any]) -> List[ProcSpec]:
+    specs: List[ProcSpec] = []
+    for service, _svc in ollama_services(cfg):
+        specs.append(gateway_spec(cfg, service))
+    for name, svc in cfg_services(cfg):
+        target = service_target(svc)
+        specs.append(
+            ProcSpec(
+                key=f"server-share-{name}",
+                description=f"ata zrok share {name}",
+                argv=share_argv(str(svc["share"]), target),
+                log_name=f"server-share-{name}",
+            )
+        )
+    return specs
+
+
+def client_specs(cfg: Dict[str, Any]) -> List[ProcSpec]:
+    specs: List[ProcSpec] = []
+    for name, svc in cfg_services(cfg):
+        bind = f"127.0.0.1:{service_client_port(svc)}"
+        specs.append(
+            ProcSpec(
+                key=f"client-access-{name}",
+                description=f"ata zrok access {name}",
+                argv=access_argv(str(svc["share"]), bind),
+                log_name=f"client-access-{name}",
+            )
+        )
+    return specs
+
+
+def spec_for_key(cfg: Dict[str, Any], key: str) -> Optional[ProcSpec]:
+    all_specs = server_specs(cfg) + client_specs(cfg)
+    for spec in all_specs:
+        if spec.key == key or spec.key.endswith(f"-{key}"):
+            return spec
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Ollama HTTP gateway
+# ---------------------------------------------------------------------------
+
+GATEWAY_GET_PATHS = {
+    "/api/tags",
+    "/api/version",
+    "/api/ps",
+    "/v1/models",
+}
+GATEWAY_POST_PATHS = {
+    "/api/show",
+    "/api/chat",
+    "/api/generate",
+    "/api/embed",
+    "/api/embeddings",
+    "/v1/chat/completions",
+    "/v1/completions",
+    "/v1/embeddings",
+    "/v1/responses",
+    "/v1/messages",
+}
+MODEL_MANAGEMENT_PREFIXES = (
+    "/api/pull",
+    "/api/push",
+    "/api/create",
+    "/api/copy",
+    "/api/delete",
+    "/api/blobs/",
+)
+
+
+class GatewayError(AtaError):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class GatewayHandler(http.server.BaseHTTPRequestHandler):
+    server_version = f"{APP}-gateway/{VERSION}"
+    sys_version = ""
+    protocol_version = "HTTP/1.1"
+    timeout = 600
+
+    # Silencia o log padrao; usamos JSONL proprio.
+    def log_message(self, fmt: str, *args: Any) -> None:
+        return
+
+    def setup(self) -> None:
+        super().setup()
+        with contextlib.suppress(OSError):
+            self.connection.settimeout(self.timeout)
+
+    # -- helpers ---------------------------------------------------------
+    @property
+    def gw(self) -> "GatewayServer":
+        return self.server  # type: ignore[return-value]
+
+    def _send_json(self, status: int, obj: Dict[str, Any], extra: Optional[Dict[str, str]] = None) -> None:
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+            self.wfile.flush()
+
+    def _auth_ok(self) -> bool:
+        key = self.gw.api_key
+        if not key:
+            return False
+        header = self.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            if hmac.compare_digest(header[7:].strip(), key):
+                return True
+        xkey = self.headers.get("X-API-Key", "")
+        if xkey and hmac.compare_digest(xkey.strip(), key):
+            return True
+        return False
+
+    def _log(self, status: int, started: float, sent: int) -> None:
+        path = urllib.parse.urlsplit(self.path).path
+        client = self.headers.get("X-Forwarded-For") or self.headers.get("X-Real-IP") or self.client_address[0]
+        rec = {
+            "ts": now_iso(),
+            "client": client.split(",")[0].strip()[:80],
+            "method": self.command,
+            "path": path[:200],
+            "status": status,
+            "ms": int((time.time() - started) * 1000),
+            "bytes": sent,
+        }
+        self.gw.log_record(rec)
+
+    def _read_body(self) -> bytes:
+        max_bytes = self.gw.max_body_bytes
+        length_header = self.headers.get("Content-Length")
+        transfer_encoding = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in transfer_encoding:
+            chunks: List[bytes] = []
+            total = 0
+            while True:
+                line = self.rfile.readline(128)
+                if not line:
+                    raise AtaError("truncated chunked body")
+                try:
+                    size = int(line.split(b";", 1)[0].strip(), 16)
+                except ValueError as exc:
+                    raise AtaError("invalid chunked body") from exc
+                if size == 0:
+                    # consome trailers
+                    while True:
+                        trailer = self.rfile.readline(1024)
+                        if trailer in (b"\r\n", b"\n", b""):
+                            break
+                    break
+                total += size
+                if total > max_bytes:
+                    raise GatewayError(413, "request body too large")
+                chunks.append(self.rfile.read(size))
+                self.rfile.read(2)  # CRLF
+            return b"".join(chunks)
+        if length_header:
+            try:
+                length = int(length_header)
+            except ValueError as exc:
+                raise AtaError("invalid Content-Length") from exc
+            if length < 0 or length > max_bytes:
+                raise GatewayError(413, "request body too large")
+            return self.rfile.read(length) if length else b""
+        return b""
+
+    def _allowed(self, method: str, path: str) -> bool:
+        if method in ("GET", "HEAD"):
+            if path in GATEWAY_GET_PATHS or path.startswith("/v1/models/"):
+                return True
+            if self.gw.allow_model_management and path.startswith("/api/blobs/"):
+                return True
+            return False
+        if method == "POST":
+            if path in GATEWAY_POST_PATHS:
+                return True
+            if self.gw.allow_model_management and path.startswith(MODEL_MANAGEMENT_PREFIXES):
+                return True
+            return False
+        return False
+
+    def _handle(self) -> None:
+        started = time.time()
+        sent = 0
+        status = 500
+        acquired = False
+        self._response_started = False
+        parsed = urllib.parse.urlsplit(self.path)
+        path = parsed.path
+        try:
+            if path == "/healthz":
+                self._send_json(200, {"ok": True, "service": "ata-gateway", "version": VERSION})
+                status = 200
+                return
+
+            # Defesa contra path traversal e variantes codificadas.
+            if (
+                "\\" in path
+                or "//" in path
+                or any(seg in ("..", ".") for seg in path.split("/"))
+                or "%2e" in path.lower()
+                or "%2f" in path.lower()
+            ):
+                self._send_json(404, {"error": "not_found"})
+                status = 404
+                return
+
+            if not self._auth_ok():
+                self._send_json(
+                    401,
+                    {"error": "unauthorized", "message": "send Authorization: Bearer <key>"},
+                    {"WWW-Authenticate": 'Bearer realm="ata-gateway"'},
+                )
+                status = 401
+                return
+
+            if not self._allowed(self.command, path):
+                self._send_json(404, {"error": "not_found"})
+                status = 404
+                return
+
+            if not self.gw.semaphore.acquire(timeout=30):
+                self._send_json(429, {"error": "busy", "message": "too many concurrent requests"})
+                status = 429
+                return
+            acquired = True
+
+            body = self._read_body()
+            upstream_path = path + (f"?{parsed.query}" if parsed.query else "")
+            status, sent = self._proxy(upstream_path, body)
+        except GatewayError as exc:
+            if status == 500 and not self._response_started:
+                self._send_json(exc.status, {"error": "gateway_error", "message": str(exc)})
+            status = exc.status
+        except AtaError as exc:
+            if status == 500 and not self._response_started:
+                self._send_json(400, {"error": "bad_request", "message": str(exc)})
+            status = 400
+        except (BrokenPipeError, ConnectionResetError):
+            status = 499
+        except Exception as exc:  # noqa: BLE001 - boundary de servidor
+            with contextlib.suppress(Exception):
+                self._send_json(502, {"error": "gateway_error", "message": str(exc)[:200]})
+            status = 502
+        finally:
+            if acquired:
+                with contextlib.suppress(ValueError):
+                    self.gw.semaphore.release()
+            self._log(status, started, sent)
+
+    def _proxy(self, path: str, body: bytes) -> Tuple[int, int]:
+        host = self.gw.upstream_host
+        port = self.gw.upstream_port
+        conn = http.client.HTTPConnection(host, port, timeout=600)
+        headers: Dict[str, str] = {}
+        for name, value in self.headers.items():
+            low = name.lower()
+            if low in (
+                "host",
+                "authorization",
+                "x-api-key",
+                "connection",
+                "proxy-connection",
+                "keep-alive",
+                "transfer-encoding",
+                "content-length",
+                "accept-encoding",
+                "te",
+                "trailer",
+                "upgrade",
+            ):
+                continue
+            headers[name] = value
+        headers["Host"] = f"{host}:{port}"
+        if body:
+            headers["Content-Length"] = str(len(body))
+        try:
+            conn.request(self.command, path, body=body if body else None, headers=headers)
+            resp = conn.getresponse()
+        except Exception as exc:
+            conn.close()
+            raise GatewayError(502, f"upstream unavailable: {exc}") from exc
+
+        status = resp.status
+        self._response_started = True
+        resp_headers = resp.getheaders()
+        content_length = None
+        for name, value in resp_headers:
+            if name.lower() == "content-length":
+                with contextlib.suppress(ValueError):
+                    content_length = int(value)
+                break
+
+        self.send_response(status)
+        for name, value in resp_headers:
+            low = name.lower()
+            if low in (
+                "connection",
+                "keep-alive",
+                "proxy-authenticate",
+                "proxy-authorization",
+                "te",
+                "trailer",
+                "transfer-encoding",
+                "upgrade",
+                "content-length",
+                "server",
+                "date",
+            ):
+                continue
+            self.send_header(name, value)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+
+        chunked = content_length is None
+        if chunked:
+            self.send_header("Transfer-Encoding", "chunked")
+        else:
+            self.send_header("Content-Length", str(content_length))
+        self.end_headers()
+
+        sent = 0
+        if self.command == "HEAD":
+            conn.close()
+            return status, 0
+        try:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                if chunked:
+                    self.wfile.write(f"{len(chunk):X}\r\n".encode("ascii"))
+                    self.wfile.write(chunk)
+                    self.wfile.write(b"\r\n")
+                else:
+                    self.wfile.write(chunk)
+                self.wfile.flush()
+                sent += len(chunk)
+            if chunked:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+        finally:
+            conn.close()
+        return status, sent
+
+    # -- HTTP methods ----------------------------------------------------
+    def do_GET(self) -> None:
+        self._handle()
+
+    def do_HEAD(self) -> None:
+        self._handle()
+
+    def do_POST(self) -> None:
+        self._handle()
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_PUT(self) -> None:
+        self._send_json(405, {"error": "method_not_allowed"})
+
+    def do_DELETE(self) -> None:
+        self._send_json(405, {"error": "method_not_allowed"})
+
+    def do_PATCH(self) -> None:
+        self._send_json(405, {"error": "method_not_allowed"})
+
+
+class GatewayServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(
+        self,
+        address: Tuple[str, int],
+        *,
+        upstream_host: str,
+        upstream_port: int,
+        api_key: str,
+        max_body_bytes: int,
+        max_concurrent: int,
+        allow_model_management: bool,
+        log_path: Path,
+    ) -> None:
+        self.upstream_host = upstream_host
+        self.upstream_port = upstream_port
+        self.api_key = api_key
+        self.max_body_bytes = max_body_bytes
+        self.semaphore = threading.BoundedSemaphore(max(1, max_concurrent))
+        self.allow_model_management = allow_model_management
+        self.log_path = log_path
+        self._log_lock = threading.Lock()
+        super().__init__(address, GatewayHandler)
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        exc_type = sys.exc_info()[0]
+        if exc_type in (ConnectionResetError, BrokenPipeError):
+            return
+        super().handle_error(request, client_address)
+
+    def log_record(self, rec: Dict[str, Any]) -> None:
+        line = json.dumps(rec, ensure_ascii=False) + "\n"
+        with self._log_lock:
+            try:
+                ensure_dir(self.log_path.parent, 0o700)
+                if self.log_path.exists() and self.log_path.stat().st_size > 5 * 1024 * 1024:
+                    backup = self.log_path.with_suffix(".log.1")
+                    with contextlib.suppress(FileNotFoundError):
+                        backup.unlink()
+                    self.log_path.rename(backup)
+                with self.log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+                ensure_secure_file(self.log_path)
+            except OSError:
+                pass
+
+
+def ollama_key_file(cfg: Dict[str, Any], service: str = "ollama") -> Path:
+    keys = cfg.get("secrets", {}).get("ollama_keys", {})
+    raw = keys.get(service)
+    if not raw and service == "ollama":
+        raw = cfg.get("secrets", {}).get("ollama_key_file")
+    return Path(raw or str(key_path(service))).expanduser()
+
+
+def read_ollama_key(cfg: Dict[str, Any], service: str = "ollama") -> str:
+    path = ollama_key_file(cfg, service)
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise AtaError(
+            f"key for '{service}' not found at {path}; run: {script_path()} key rotate --service {service}"
+        ) from exc
+    if len(key) < 24:
+        raise AtaError(f"key for '{service}' too short at {path}; run: {script_path()} key rotate --service {service}")
+    ensure_secure_file(path)
+    return key
+
+
+def generate_ollama_key(cfg: Dict[str, Any], service: str = "ollama") -> str:
+    path = ollama_key_file(cfg, service)
+    key = secrets.token_hex(32)
+    atomic_write(path, key + "\n", 0o600)
+    keys = cfg.setdefault("secrets", {}).setdefault("ollama_keys", {})
+    keys[service] = str(path)
+    if service == "ollama":
+        cfg["secrets"]["ollama_key_file"] = str(path)
+    return key
+
+
+def cmd_gateway(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    service = args.service or "ollama"
+    svc = cfg["services"].get(service, {})
+    if not svc or svc.get("auth") != "bearer":
+        raise AtaError(f"service '{service}' is not an Ollama gateway")
+    if not svc.get("enabled"):
+        raise AtaError(f"service '{service}' is disabled in the configuration")
+    key = read_ollama_key(cfg, service)
+    listen_port = int(args.listen_port or svc.get("gateway_port", 18080))
+    upstream = args.upstream or service_upstream(svc)
+    if ":" not in upstream:
+        raise AtaError("--upstream must be host:port")
+    up_host, up_port_s = upstream.rsplit(":", 1)
+    try:
+        up_port = int(up_port_s)
+    except ValueError as exc:
+        raise AtaError("--upstream must be host:port") from exc
+    gw_cfg = cfg.get("gateway", {})
+    max_body = int(gw_cfg.get("max_body_mb", 2)) * 1024 * 1024
+    max_conc = int(gw_cfg.get("max_concurrent", 4))
+    allow_mgmt = bool(gw_cfg.get("allow_model_management", False))
+    log_name = "ollama-gateway.jsonl" if service == "ollama" else f"{service}-gateway.jsonl"
+    log_path = logs_dir() / log_name
+    ensure_dir(log_path.parent, 0o700)
+
+    try:
+        server = GatewayServer(
+            ("127.0.0.1", listen_port),
+            upstream_host=up_host,
+            upstream_port=up_port,
+            api_key=key,
+            max_body_bytes=max_body,
+            max_concurrent=max_conc,
+            allow_model_management=allow_mgmt,
+            log_path=log_path,
+        )
+    except OSError as exc:
+        raise AtaError(f"could not bind 127.0.0.1:{listen_port}: {exc}") from exc
+    info(f"Ollama gateway on http://127.0.0.1:{listen_port} -> http://{up_host}:{up_port}")
+    stop = threading.Event()
+
+    def _shutdown(signum: int, frame: Any) -> None:
+        stop.set()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal_handlers = {}
+    with contextlib.suppress(Exception):
+        signal_handlers[signal.SIGTERM] = signal.signal(signal.SIGTERM, _shutdown)
+        signal_handlers[signal.SIGINT] = signal.signal(signal.SIGINT, _shutdown)
+    try:
+        server.serve_forever(poll_interval=0.5)
+    finally:
+        with contextlib.suppress(Exception):
+            server.server_close()
+        for sig, handler in signal_handlers.items():
+            with contextlib.suppress(Exception):
+                signal.signal(sig, handler)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Commands: init / up / down / status / doctor
+# ---------------------------------------------------------------------------
+
+def cmd_init(args: argparse.Namespace) -> int:
+    existing = config_path().exists()
+    if existing and not args.force:
+        cfg = load_config()
+        info(f"configuration already exists at {config_path()} (role={cfg.get('role')})")
+        info("use --force to reconfigure")
+        return 0
+
+    role = args.role
+    if not role:
+        if args.non_interactive:
+            raise AtaError("--role is required with --non-interactive")
+        eprint("")
+        eprint("This script has two roles:")
+        eprint("  server = the remote machine (no root) that will be accessed")
+        eprint("  client = your laptop/PC that will access it")
+        role = "server" if ask_bool("Is this machine the remote server?", True) else "client"
+
+    prefix = args.prefix or (default_prefix() if args.non_interactive else sanitize_prefix(ask_text("Share prefix", default_prefix())))
+    prefix = sanitize_prefix(prefix)
+
+    account_token = args.account_token or os.environ.get("ZROK_ACCOUNT_TOKEN", "").strip()
+    zrok_ready = False
+    with contextlib.suppress(Exception):
+        zrok_ready = zrok_bin().exists() and zrok_env_enabled()
+
+    if not zrok_ready and not account_token and not args.non_interactive:
+        eprint("")
+        eprint("Free account: https://myzrok.io")
+        eprint("Dashboard -> 'CLICK HERE TO GET STARTED' -> copy the account token.")
+        account_token = ask_text(
+            "zrok account token (leave empty to activate later)",
+            secret=True,
+            allow_empty=True,
+        )
+
+    cfg = default_config(role, prefix)
+
+    if role == "server":
+        if not args.non_interactive:
+            eprint("")
+            eprint("Which services should be exposed? (all use a private share)")
+            cfg["services"]["ollama"]["enabled"] = ask_bool("Ollama API?", True)
+            cfg["services"]["code"]["enabled"] = ask_bool("code-server?", True)
+            cfg["services"]["ssh"]["enabled"] = ask_bool("SSH?", True)
+            cfg["services"]["guacamole"]["enabled"] = ask_bool("Guacamole web (optional)?", False)
+        if args.ollama_port:
+            cfg["services"]["ollama"]["upstream_port"] = args.ollama_port
+        if args.code_port:
+            cfg["services"]["code"]["upstream_port"] = args.code_port
+        if args.ssh_port:
+            cfg["services"]["ssh"]["upstream_port"] = args.ssh_port
+        if not args.non_interactive:
+            cfg["services"]["ollama"]["upstream_port"] = ask_int(
+                "Local Ollama port", cfg["services"]["ollama"]["upstream_port"]
+            )
+            cfg["services"]["code"]["upstream_port"] = ask_int(
+                "Local code-server port", cfg["services"]["code"]["upstream_port"]
+            )
+            cfg["services"]["ssh"]["upstream_port"] = ask_int(
+                "Local SSH port", cfg["services"]["ssh"]["upstream_port"]
+            )
+        cfg["services"]["guacamole"]["upstream_port"] = cfg["services"]["code"]["upstream_port"] + 1
+
+        second_default = port_open("127.0.0.1", 11435)
+        second = bool(args.ollama2_port) or (
+            not args.non_interactive
+            and cfg["services"]["ollama"]["enabled"]
+            and ask_bool("Is there a second Ollama instance (another GPU)?", second_default)
+        )
+        if second and not cfg["services"]["ollama"]["enabled"]:
+            warn("second Ollama requested, but the first Ollama is disabled; ignoring it")
+            second = False
+        if second:
+            port2 = args.ollama2_port or (
+                ask_int("Local port for the second Ollama", 11435)
+                if not args.non_interactive
+                else 11435
+            )
+            if port2 == int(cfg["services"]["ollama"]["upstream_port"]):
+                warn("the second Ollama port is the same as the first; check your configuration")
+            label1 = args.ollama_label or (
+                ask_text("Label for Ollama on port %d" % cfg["services"]["ollama"]["upstream_port"], "GPU 1")
+                if not args.non_interactive
+                else "GPU 1"
+            )
+            label2 = args.ollama2_label or (
+                ask_text("Label for the second Ollama on port %d" % port2, "GPU 0")
+                if not args.non_interactive
+                else "GPU 0"
+            )
+            cfg["services"]["ollama"]["label"] = label1
+            cfg["services"]["ollama"]["env_prefix"] = "OLLAMA_GPU1"
+            cfg["services"]["ollama2"] = make_ollama_service(
+                prefix, "ollama2", port2, 18081, 18081, label2, "OLLAMA_GPU0"
+            )
+        else:
+            cfg["services"]["ollama"]["label"] = "Ollama"
+            cfg["services"]["ollama"]["env_prefix"] = "OLLAMA"
+
+        for service, svc in ollama_services(cfg):
+            path = ollama_key_file(cfg, service)
+            if path.exists():
+                ensure_secure_file(path)
+                info(f"keeping existing key for '{service}' at {path}")
+            else:
+                generate_ollama_key(cfg, service)
+                ok(f"key for '{service}' generated at {path} (mode 0600)")
+    else:
+        bundle_path = args.bundle
+        if bundle_path:
+            bundle = load_bundle(Path(bundle_path))
+            apply_bundle(cfg, bundle)
+        else:
+            if not args.non_interactive:
+                eprint("")
+                eprint("Use the same services/prefix configured on the server.")
+                cfg["services"]["ollama"]["enabled"] = ask_bool("Access Ollama?", True)
+                cfg["services"]["code"]["enabled"] = ask_bool("Access code-server?", True)
+                cfg["services"]["ssh"]["enabled"] = ask_bool("Access SSH?", True)
+                cfg["services"]["guacamole"]["enabled"] = ask_bool("Access Guacamole?", False)
+                second = bool(args.ollama2_client_port) or (
+                    cfg["services"]["ollama"]["enabled"]
+                    and ask_bool("Access a second Ollama instance (another GPU)?", False)
+                )
+                if second and not cfg["services"]["ollama"]["enabled"]:
+                    warn("second Ollama requested, but the first Ollama is disabled; ignoring it")
+                    second = False
+                if second:
+                    port1 = ask_int(
+                        "Local port for the first Ollama",
+                        cfg["services"]["ollama"]["client_port"],
+                    )
+                    cfg["services"]["ollama"]["client_port"] = port1
+                    label1 = args.ollama_label or ask_text("Label for the first Ollama", "GPU 1")
+                    label2 = args.ollama2_label or ask_text("Label for the second Ollama", "GPU 0")
+                    port2 = args.ollama2_client_port or ask_int("Local port for the second Ollama", 18081)
+                    if port2 == port1:
+                        warn("the second Ollama client port is the same as the first; check your configuration")
+                    cfg["services"]["ollama"]["label"] = label1
+                    cfg["services"]["ollama"]["env_prefix"] = "OLLAMA_GPU1"
+                    cfg["services"]["ollama2"] = make_ollama_service(
+                        prefix, "ollama2", 0, port2, port2, label2, "OLLAMA_GPU0"
+                    )
+                else:
+                    cfg["services"]["ollama"]["label"] = "Ollama"
+                    cfg["services"]["ollama"]["env_prefix"] = "OLLAMA"
+                for service, svc in ollama_services(cfg):
+                    key = ask_text(
+                        f"API key for {service_label(service, svc)} (same as the server; leave empty to import later)",
+                        secret=True,
+                        allow_empty=True,
+                    )
+                    if key:
+                        path = ollama_key_file(cfg, service)
+                        atomic_write(path, key.strip() + "\n", 0o600)
+                        cfg.setdefault("secrets", {}).setdefault("ollama_keys", {})[service] = str(path)
+                        if service == "ollama":
+                            cfg["secrets"]["ollama_key_file"] = str(path)
+                cfg["services"]["code"]["client_port"] = ask_int(
+                    "Local port for code-server", cfg["services"]["code"]["client_port"]
+                )
+                cfg["services"]["ssh"]["client_port"] = ask_int(
+                    "Local port for SSH", cfg["services"]["ssh"]["client_port"]
+                )
+            if (
+                args.non_interactive
+                and args.ollama2_client_port
+                and cfg["services"]["ollama"]["enabled"]
+            ):
+                cfg["services"]["ollama"]["label"] = args.ollama_label or "GPU 1"
+                cfg["services"]["ollama"]["env_prefix"] = "OLLAMA_GPU1"
+                cfg["services"]["ollama2"] = make_ollama_service(
+                    prefix,
+                    "ollama2",
+                    0,
+                    args.ollama2_client_port,
+                    args.ollama2_client_port,
+                    args.ollama2_label or "GPU 0",
+                    "OLLAMA_GPU0",
+                )
+            for name, svc in cfg["services"].items():
+                svc["share"] = share_name(prefix, name)
+
+    save_config(cfg)
+    ok(f"configuration saved to {config_path()}")
+    if role == "client":
+        for service, svc in ollama_services(cfg):
+            client_key = ollama_key_file(cfg, service)
+            if not client_key.exists():
+                warn(
+                    f"key for '{service}' missing at {client_key}; "
+                    "import the server bundle or set it later"
+                )
+
+    if account_token and not args.no_activate:
+        try:
+            ensure_zrok2(cfg)
+            ensure_zrok_enabled(account_token)
+        except AtaError as exc:
+            warn(str(exc))
+            warn("configuration was saved; run 'ata up' when the network allows it")
+    elif not zrok_ready:
+        warn("zrok environment is not enabled yet; 'ata up' will ask for the account token")
+
+    eprint("")
+    if role == "server":
+        info("next step: ./ata up")
+        info("then: ./ata export > bundle.json  (contains the Ollama key(s); transfer it securely)")
+    else:
+        info("next step: ./ata up")
+        info("if you have not imported the bundle yet: ./ata import bundle.json")
+    return 0
+
+
+def cmd_up(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    ensure_zrok2(cfg)
+    if args.quiet and not zrok_env_enabled():
+        raise AtaError("zrok environment is not enabled; run 'ata up' interactively once")
+    ensure_zrok_enabled(None)
+
+    supervisor = (
+        args.supervisor
+        or cfg.get("runtime", {}).get("active_supervisor")
+        or cfg.get("runtime", {}).get("supervisor")
+        or "auto"
+    )
+    supervisor = choose_supervisor(supervisor)
+    cfg["runtime"]["active_supervisor"] = supervisor
+    save_config(cfg)
+
+    if cfg["role"] == "server":
+        for service, _svc in ollama_services(cfg):
+            read_ollama_key(cfg, service)
+        for name, svc in cfg_services(cfg):
+            ensure_share(str(svc["share"]), service_backend_mode(svc))
+        specs = server_specs(cfg)
+    else:
+        for service, _svc in ollama_services(cfg):
+            key_file = ollama_key_file(cfg, service)
+            if not key_file.exists():
+                warn(f"key for '{service}' missing at {key_file}; import the server bundle")
+        available = set()
+        for name, svc in cfg_services(cfg):
+            if zrok_share_exists(str(svc["share"])):
+                available.add(name)
+            else:
+                warn(f"share '{svc['share']}' does not exist yet; the server must be running 'ata up'")
+        specs = [
+            spec for spec in client_specs(cfg)
+            if any(spec.key.endswith(f"-{name}") for name in available)
+        ]
+        if not specs:
+            raise AtaError("no shares are available; start 'ata up' on the server first")
+
+    try:
+        start_specs(specs, supervisor)
+    except Exception:
+        stop_specs(specs)
+        raise
+
+    if cfg["role"] == "server":
+        for service, _svc in ollama_services(cfg):
+            if not wait_gateway(cfg, service, timeout=15):
+                stop_specs(specs)
+                hint = "gateway" if service == "ollama" else f"gateway-{service}"
+                raise AtaError(f"gateway '{service}' did not start; see 'ata logs {hint}'")
+    if cfg["role"] == "client":
+        wait_client_ports(cfg, timeout=20, only=available)
+
+    if supervisor == "nohup":
+        cron_install_autostart()
+
+    if not args.quiet:
+        eprint("")
+        cmd_status(argparse.Namespace(json=False))
+    return 0
+
+
+def cmd_down(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    specs = server_specs(cfg) + client_specs(cfg)
+    stop_specs(specs)
+    cron_remove_autostart()
+    if not args.quiet:
+        ok("services stopped")
+    return 0
+
+
+def cmd_restart(args: argparse.Namespace) -> int:
+    cmd_down(argparse.Namespace(quiet=True))
+    time.sleep(1.0)
+    return cmd_up(args)
+
+
+def wait_gateway(cfg: Dict[str, Any], service: str = "ollama", timeout: int = 15) -> bool:
+    port = gateway_port(cfg, service)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            status, body, _ = http_get(f"http://127.0.0.1:{port}/healthz", timeout=2)
+            if status == 200 and b'"service": "ata-gateway"' in body:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.4)
+    hint = "gateway" if service == "ollama" else f"gateway-{service}"
+    warn(f"gateway '{service}' has not responded yet; see: ata logs {hint}")
+    return False
+
+
+def wait_client_ports(cfg: Dict[str, Any], timeout: int = 20, only: Optional[set] = None) -> bool:
+    deadline = time.time() + timeout
+    pending = [
+        (n, service_client_port(s))
+        for n, s in cfg_services(cfg)
+        if only is None or n in only
+    ]
+    ok_all = False
+    while time.time() < deadline:
+        remaining = []
+        for name, port in pending:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.7):
+                    pass
+            except OSError:
+                remaining.append((name, port))
+        pending = remaining
+        if not pending:
+            ok_all = True
+            break
+        time.sleep(0.5)
+    if not ok_all:
+        names = ", ".join(f"{n}:{p}" for n, p in pending)
+        warn(f"local ports have not opened yet: {names}; see: ata logs <service>")
+    return ok_all
+
+
+def http_get(url: str, headers: Optional[Dict[str, str]] = None, timeout: int = 10) -> Tuple[int, bytes, Dict[str, str]]:
+    req = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read(65536), dict(resp.headers)
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(65536), dict(exc.headers)
+
+
+def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def listening_ports() -> List[str]:
+    if not shutil.which("ss"):
+        return []
+    proc = run_cmd(["ss", "-ltn"], timeout=10)
+    if proc.returncode != 0:
+        return []
+    lines = proc.stdout.splitlines()[1:]
+    return [ln.strip() for ln in lines if ln.strip()]
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    supervisor = cfg.get("runtime", {}).get("active_supervisor") or cfg.get("runtime", {}).get("supervisor", "auto")
+    if supervisor == "auto":
+        supervisor = "systemd" if systemd_available() else "nohup"
+    specs = server_specs(cfg) + client_specs(cfg)
+    env_ok = zrok_bin().exists() and zrok_env_enabled()
+    gateways: Dict[str, Any] = {}
+    if cfg["role"] == "server":
+        for service, _svc in ollama_services(cfg):
+            port = gateway_port(cfg, service)
+            gw_ok = False
+            with contextlib.suppress(Exception):
+                status, body, _ = http_get(f"http://127.0.0.1:{port}/healthz", timeout=2)
+                gw_ok = status == 200 and b'"service": "ata-gateway"' in body
+            gateways[service] = {"port": port, "ok": gw_ok}
+
+    data: Dict[str, Any] = {
+        "role": cfg["role"],
+        "prefix": cfg["prefix"],
+        "config": str(config_path()),
+        "supervisor": supervisor,
+        "zrok_environment": env_ok,
+        "gateways": gateways,
+        "services": {},
+        "processes": {},
+    }
+    for spec in specs:
+        running = spec_running(spec, supervisor) if supervisor != "auto" else (systemd_active(spec) or pid_matches(spec, read_pid(spec)))
+        data["processes"][spec.key] = running
+    for name, svc in cfg_services(cfg):
+        if cfg["role"] == "server":
+            data["services"][name] = {
+                "enabled": True,
+                "kind": svc.get("kind"),
+                "upstream": service_upstream(svc),
+                "share": svc["share"],
+                "target": service_target(svc),
+                "upstream_open": port_open(svc.get("upstream_host", "127.0.0.1"), int(svc["upstream_port"])),
+                "process": f"server-share-{name}",
+            }
+        else:
+            data["services"][name] = {
+                "enabled": True,
+                "kind": svc.get("kind"),
+                "share": svc["share"],
+                "local_port": service_client_port(svc),
+                "local_open": port_open("127.0.0.1", service_client_port(svc)),
+                "process": f"client-access-{name}",
+            }
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0
+
+    print("")
+    print(f"  role        : {data['role']}")
+    print(f"  prefix      : {data['prefix']}")
+    print(f"  config      : {data['config']}")
+    print(f"  supervisor  : {data['supervisor']}")
+    print(f"  zrok2       : {'environment active' if env_ok else 'environment NOT enabled'}")
+    for service, info in gateways.items():
+        label = service_label(service, cfg["services"][service])
+        state = "ok" if info["ok"] else "no response"
+        print(f"  gateway {label:<18}: {state} (http://127.0.0.1:{info['port']}/healthz)")
+    print("")
+    for name, svc in cfg_services(cfg):
+        proc = f"{'server-share' if cfg['role'] == 'server' else 'client-access'}-{name}"
+        running = data["processes"].get(proc, False)
+        label = service_label(name, svc)
+        if cfg["role"] == "server":
+            up = "ok" if data["services"][name]["upstream_open"] else "closed"
+            gateway_info = ""
+            if name in gateways:
+                gateway_info = f"  gateway=127.0.0.1:{gateways[name]['port']}"
+            print(
+                f"  {label:<18} {'UP' if running else 'DOWN':<5}  "
+                f"share={svc['share']}  upstream={service_upstream(svc)} ({up}){gateway_info}"
+            )
+        else:
+            local = "ok" if data["services"][name]["local_open"] else "closed"
+            if name == "ssh":
+                url = f"ssh -p {service_client_port(svc)} {getpass.getuser()}@127.0.0.1"
+            elif svc.get("auth") == "bearer":
+                url = f"http://127.0.0.1:{service_client_port(svc)}  (API: /v1)"
+            else:
+                url = f"http://127.0.0.1:{service_client_port(svc)}"
+            print(f"  {label:<18} {'UP' if running else 'DOWN':<5}  {url}  [{local}]")
+    if cfg["role"] == "server":
+        print("")
+        print(f"  client bundle: {script_path()} export --file bundle.json")
+    else:
+        print("")
+        print(f"  Ollama env: {script_path()} env")
+        print(f"  ssh: {script_path()} ssh")
+    print("")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    cfg = load_config(required=False)
+    failures = 0
+    warns = 0
+
+    def report(ok_flag: bool, label: str, detail: str = "", warning: bool = False) -> None:
+        nonlocal failures, warns
+        if ok_flag:
+            ok(label + (f" - {detail}" if detail else ""))
+        elif warning:
+            warn(label + (f" - {detail}" if detail else ""))
+            warns += 1
+        else:
+            error(label + (f" - {detail}" if detail else ""))
+            failures += 1
+
+    report(sys.version_info >= (3, 8), "Python >= 3.8", platform.python_version())
+    report(config_path().exists(), "configuration exists", str(config_path()))
+    if not config_path().exists():
+        return 1
+
+    report(cfg.get("role") in ("server", "client"), "valid role", str(cfg.get("role")))
+    report(zrok_bin().exists(), "zrok2 installed", str(zrok_bin()), warning=True)
+    if zrok_bin().exists():
+        proc = run_cmd([str(zrok_bin()), "version"], timeout=20)
+        report(proc.returncode == 0, "zrok2 runs", strip_ansi(proc.stdout).strip().splitlines()[-1] if proc.stdout else "")
+        report(zrok_env_enabled(), "zrok environment enabled", warning=True)
+    try:
+        status, _, _ = http_get(ZROK_API_URL, timeout=8)
+        report(200 <= status < 500, "api-v2.zrok.io reachable", f"HTTP {status}")
+    except Exception as exc:
+        report(False, "api-v2.zrok.io reachable", str(exc)[:120])
+
+    if cfg["role"] == "server":
+        for name, svc in cfg_services(cfg):
+            host = svc.get("upstream_host", "127.0.0.1")
+            port = int(svc["upstream_port"])
+            report(port_open(host, port), f"{service_label(name, svc)} upstream {host}:{port}", warning=True)
+        for service, svc in ollama_services(cfg):
+            label = service_label(service, svc)
+            port = gateway_port(cfg, service)
+            try:
+                status, body, _ = http_get(f"http://127.0.0.1:{port}/healthz", timeout=3)
+                healthy = status == 200 and b'"service": "ata-gateway"' in body
+                report(healthy, f"{label} gateway responds", f"HTTP {status}", warning=True)
+            except Exception:
+                report(False, f"{label} gateway responds", warning=True)
+            try:
+                key = read_ollama_key(cfg, service)
+                status, _, _ = http_get(f"http://127.0.0.1:{port}/api/tags", timeout=5)
+                report(status == 401, f"{label} gateway requires a key without Authorization", f"HTTP {status}")
+                status, _, _ = http_get(
+                    f"http://127.0.0.1:{port}/api/tags",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=10,
+                )
+                report(status == 200, f"{label} gateway accepts the key", f"HTTP {status}")
+                status, _, _ = http_get(
+                    f"http://127.0.0.1:{port}/api/delete",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=5,
+                )
+                report(status == 404, f"{label} gateway blocks /api/delete", f"HTTP {status}")
+            except Exception as exc:
+                report(False, f"{label} gateway authentication test", str(exc)[:120], warning=True)
+    else:
+        for name, svc in cfg_services(cfg):
+            port = service_client_port(svc)
+            report(
+                port_open("127.0.0.1", port),
+                f"{service_label(name, svc)} local 127.0.0.1:{port}",
+                warning=True,
+            )
+            if not zrok_share_exists(str(svc["share"])):
+                report(False, f"share {svc['share']} visible", "server may be down", warning=True)
+        for service, svc in ollama_services(cfg):
+            key_path_obj = ollama_key_file(cfg, service)
+            report(key_path_obj.exists(), f"key for '{service}' on the client", str(key_path_obj), warning=True)
+
+    # Permissions
+    key_files = [ollama_key_file(cfg, service) for service, _svc in ollama_services(cfg)]
+    for p, mode in [(config_path(), 0o600)] + [(p, 0o600) for p in key_files]:
+        if p.exists():
+            actual = p.stat().st_mode & 0o777
+            report(actual <= mode, f"permission {oct(actual)} on {p.name}", warning=True)
+
+    # Public ports (not caused by ata, but worth checking).
+    public = []
+    for line in listening_ports():
+        if "0.0.0.0:" in line or "[::]:" in line or " *:" in line:
+            public.append(line)
+    if not shutil.which("ss"):
+        report(False, "listening-port check", "ss not available on this OS", warning=True)
+    elif public:
+        report(False, "ports listening on all interfaces", f"{len(public)} found; review with ss -ltnp", warning=True)
+    else:
+        report(True, "no TCP port on 0.0.0.0/::")
+
+    if systemd_available():
+        linger = linger_enabled()
+        report(linger is True, "systemd linger", "services survive logout", warning=True)
+
+    print("")
+    if failures:
+        error(f"doctor: {failures} failure(s), {warns} warning(s)")
+        return 1
+    ok(f"doctor: no failures ({warns} warning(s))")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Key, bundle, logs, env, ssh
+# ---------------------------------------------------------------------------
+
+def cmd_key(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    if cfg["role"] != "server":
+        raise AtaError("the key command only applies to the server")
+    all_services = [service for service, _svc in ollama_services(cfg)]
+    if args.service:
+        if args.service not in all_services:
+            raise AtaError(f"unknown Ollama service: {args.service}")
+        services = [args.service]
+    else:
+        services = all_services
+    if not services:
+        raise AtaError("no Ollama services are enabled")
+    if args.key_command == "show":
+        if len(services) == 1:
+            print(read_ollama_key(cfg, services[0]))
+        else:
+            for service in services:
+                label = service_label(service, cfg["services"][service])
+                print(f"{label} ({service}): {read_ollama_key(cfg, service)}")
+        return 0
+    if args.key_command == "rotate":
+        sup = cfg.get("runtime", {}).get("active_supervisor") or cfg.get("runtime", {}).get("supervisor", "auto")
+        if sup == "auto":
+            sup = "systemd" if systemd_available() else "nohup"
+        restart = False
+        for service in services:
+            with contextlib.suppress(Exception):
+                read_ollama_key(cfg, service)
+            new = generate_ollama_key(cfg, service)
+            key_file = ollama_key_file(cfg, service)
+            ensure_secure_file(key_file)
+            ok(f"new key for '{service}' generated at {key_file}")
+            if spec_running(gateway_spec(cfg, service), sup):
+                restart = True
+            if len(services) == 1:
+                print(new)
+        save_config(cfg)
+        if restart:
+            info("restarting services so the gateways pick up the new key")
+            with contextlib.suppress(Exception):
+                cmd_restart(argparse.Namespace(quiet=True, supervisor=None))
+        if len(services) > 1:
+            for service in services:
+                label = service_label(service, cfg["services"][service])
+                print(f"{label} ({service}): {read_ollama_key(cfg, service)}")
+        return 0
+    raise AtaError("use: ata key show|rotate")
+
+
+def build_bundle(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    bundle: Dict[str, Any] = {
+        "ata_bundle": 1,
+        "created_at": now_iso(),
+        "prefix": cfg["prefix"],
+        "server_hostname": cfg.get("hostname", hostname_short()),
+        "services": {},
+    }
+    for name, svc in cfg_services(cfg):
+        bundle["services"][name] = {
+            "enabled": True,
+            "kind": svc.get("kind"),
+            "auth": svc.get("auth"),
+            "label": service_label(name, svc),
+            "env_prefix": service_env_prefix(name, svc),
+            "share": svc["share"],
+            "client_port": service_client_port(svc),
+            "description": svc.get("description", name),
+        }
+    keys: Dict[str, str] = {}
+    for service, _svc in ollama_services(cfg):
+        keys[service] = read_ollama_key(cfg, service)
+    if keys:
+        bundle["ollama_keys"] = keys
+        if "ollama" in keys:
+            bundle["ollama_key"] = keys["ollama"]  # backward compatibility
+    return bundle
+
+
+def load_bundle(path: Path) -> Dict[str, Any]:
+    try:
+        if str(path) == "-":
+            data = json.load(sys.stdin)
+        else:
+            data = read_json(path)
+    except json.JSONDecodeError as exc:
+        raise AtaError(f"invalid bundle: {exc}") from exc
+    if data.get("ata_bundle") != 1:
+        raise AtaError("file does not look like an ata bundle (missing ata_bundle field)")
+    return data
+
+
+def apply_bundle(cfg: Dict[str, Any], bundle: Dict[str, Any]) -> None:
+    cfg["role"] = "client"
+    cfg.setdefault("runtime", {})["active_supervisor"] = ""
+    cfg["prefix"] = sanitize_prefix(str(bundle.get("prefix", cfg["prefix"])))
+    cfg["hostname"] = bundle.get("server_hostname", cfg.get("hostname", ""))
+    services = bundle.get("services", {})
+
+    # The server may expose services this client does not know yet (e.g. ollama2).
+    for name, incoming in services.items():
+        if name in cfg["services"]:
+            continue
+        auth = str(incoming.get("auth") or ("bearer" if "ollama" in name else "app"))
+        client_port = int(incoming.get("client_port", 0))
+        cfg["services"][name] = {
+            "enabled": True,
+            "kind": incoming.get("kind", "http"),
+            "upstream_host": "127.0.0.1",
+            "upstream_port": 0,
+            "client_port": client_port,
+            "auth": auth,
+            "label": incoming.get("label", name),
+            "env_prefix": incoming.get("env_prefix", f"OLLAMA_{name.upper()}"),
+            "share": incoming.get("share", share_name(cfg["prefix"], name)),
+            "description": incoming.get("description", name),
+        }
+        if auth == "bearer":
+            cfg["services"][name]["gateway_port"] = client_port or 18080
+
+    for name, svc in cfg["services"].items():
+        incoming = services.get(name)
+        if not incoming:
+            svc["enabled"] = False
+            svc["share"] = share_name(cfg["prefix"], name)
+            continue
+        svc["enabled"] = bool(incoming.get("enabled", True))
+        svc["share"] = str(incoming.get("share", share_name(cfg["prefix"], name)))
+        svc["client_port"] = int(incoming.get("client_port", svc.get("client_port", 0)))
+        svc["kind"] = incoming.get("kind", svc.get("kind", "http"))
+        svc["description"] = incoming.get("description", svc.get("description", name))
+        if incoming.get("auth"):
+            svc["auth"] = incoming["auth"]
+        if incoming.get("label"):
+            svc["label"] = incoming["label"]
+        if incoming.get("env_prefix"):
+            svc["env_prefix"] = incoming["env_prefix"]
+
+    keys = dict(bundle.get("ollama_keys") or {})
+    if bundle.get("ollama_key") and "ollama" not in keys:
+        keys["ollama"] = bundle["ollama_key"]
+    key_map = cfg.setdefault("secrets", {}).setdefault("ollama_keys", {})
+    for service, key in keys.items():
+        path = ollama_key_file(cfg, service)
+        atomic_write(path, str(key).strip() + "\n", 0o600)
+        key_map[service] = str(path)
+        if service == "ollama":
+            cfg["secrets"]["ollama_key_file"] = str(path)
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    if cfg["role"] != "server":
+        raise AtaError("export only applies to the server")
+    bundle = build_bundle(cfg)
+    text = json.dumps(bundle, indent=2, ensure_ascii=False) + "\n"
+    if args.file:
+        path = Path(args.file).expanduser()
+        atomic_write(path, text, 0o600)
+        eprint("")
+        warn(f"bundle written to {path} (0600). It contains the Ollama key(s); treat it as a secret.")
+        return 0
+    warn("the bundle below contains the Ollama key(s); do not paste it into public chat/logs")
+    print(text, end="")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    cfg = load_config(required=False)
+    if not cfg:
+        cfg = default_config("client", default_prefix())
+    bundle = load_bundle(Path(args.bundle))
+    apply_bundle(cfg, bundle)
+    save_config(cfg)
+    ok(f"bundle imported; client configuration at {config_path()}")
+    if args.activate:
+        ensure_zrok2(cfg)
+        ensure_zrok_enabled(None)
+    info("next step: ./ata up")
+    return 0
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    role = cfg["role"]
+    service = args.service or ("gateway" if role == "server" else "ollama")
+    if service == "audit":
+        paths = sorted(logs_dir().glob("*-gateway.jsonl"))
+        if not paths:
+            raise AtaError(f"audit log does not exist yet in {logs_dir()}")
+        cmd = ["tail", "-n", str(args.lines)]
+        if args.follow:
+            cmd.append("-f")
+        cmd.extend(str(path) for path in paths)
+        return subprocess.call(cmd)
+    aliases = {
+        "gateway": "server-gateway",
+        "ollama": f"{'server-share' if role == 'server' else 'client-access'}-ollama",
+        "code": f"{'server-share' if role == 'server' else 'client-access'}-code",
+        "ssh": f"{'server-share' if role == 'server' else 'client-access'}-ssh",
+        "guacamole": f"{'server-share' if role == 'server' else 'client-access'}-guacamole",
+    }
+    key = aliases.get(service, service)
+    if service.startswith("gateway-"):
+        key = f"server-{service}"
+    spec = spec_for_key(cfg, key)
+    if not spec:
+        raise AtaError(f"unknown service: {service}")
+    supervisor = cfg.get("runtime", {}).get("active_supervisor") or cfg.get("runtime", {}).get("supervisor", "auto")
+    if supervisor == "auto":
+        supervisor = "systemd" if systemd_available() else "nohup"
+    if supervisor == "systemd" and systemd_available() and shutil.which("journalctl"):
+        cmd = ["journalctl", "--user", "-u", spec.unit, "-n", str(args.lines), "--no-pager"]
+        if args.follow:
+            cmd.append("-f")
+        return subprocess.call(cmd, env=systemd_env())
+    path = spec.log_path
+    if not path.exists():
+        raise AtaError(f"log does not exist yet: {path}")
+    cmd = ["tail", "-n", str(args.lines)]
+    if args.follow:
+        cmd.append("-f")
+    cmd.append(str(path))
+    return subprocess.call(cmd)
+
+
+def cmd_env(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    if cfg["role"] != "client":
+        raise AtaError("env only applies to the client")
+    services = ollama_services(cfg)
+    if args.service:
+        if args.service not in [name for name, _svc in services]:
+            raise AtaError(f"unknown Ollama service: {args.service}")
+        services = [(name, svc) for name, svc in services if name == args.service]
+    if not services:
+        warn("no Ollama services are enabled on this client")
+    keys = {service: read_ollama_key(cfg, service) for service, _svc in services}
+    if len(services) > 1:
+        for service, svc in services:
+            key = keys[service]
+            port = service_client_port(svc)
+            prefix = service_env_prefix(service, svc)
+            label = service_label(service, svc)
+            print(f"# {label} ({service}) -> http://127.0.0.1:{port}/v1")
+            print(f'export {prefix}_HOST="http://127.0.0.1:{port}"')
+            print(f'export {prefix}_API_KEY="{key}"')
+            print(f'export {prefix}_OPENAI_BASE_URL="http://127.0.0.1:{port}/v1"')
+            print(f'export {prefix}_OPENAI_API_KEY="{key}"')
+            print(f'export {prefix}_ANTHROPIC_BASE_URL="http://127.0.0.1:{port}"')
+            print(f'export {prefix}_ANTHROPIC_AUTH_TOKEN="{key}"')
+            print(f'export {prefix}_ANTHROPIC_API_KEY="{key}"')
+
+    if services:
+        service, svc = services[0]
+        key = keys[service]
+        port = service_client_port(svc)
+        if args.service:
+            print(f"# selected service: {service_label(service, svc)}")
+        else:
+            print(f"# default service: {service_label(service, svc)} ({service})")
+        print(f'export OLLAMA_HOST="http://127.0.0.1:{port}"')
+        print(f'export OLLAMA_API_KEY="{key}"')
+        print(f'export OLLAMA_AUTH_TOKEN="{key}"')
+        print(f'export OPENAI_BASE_URL="http://127.0.0.1:{port}/v1"')
+        print(f'export OPENAI_API_KEY="{key}"')
+        print(f'export ANTHROPIC_BASE_URL="http://127.0.0.1:{port}"')
+        print(f'export ANTHROPIC_AUTH_TOKEN="{key}"')
+        print(f'export ANTHROPIC_API_KEY="{key}"')
+
+    if cfg["services"].get("code", {}).get("enabled"):
+        port = service_client_port(cfg["services"]["code"])
+        print(f'# code-server: http://127.0.0.1:{port}')
+    if cfg["services"].get("ssh", {}).get("enabled"):
+        port = service_client_port(cfg["services"]["ssh"])
+        print(f'# ssh: ssh -p {port} {getpass.getuser()}@127.0.0.1')
+    return 0
+
+
+def cmd_ssh(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    if cfg["role"] != "client":
+        raise AtaError("ssh only applies to the client")
+    svc = cfg["services"].get("ssh", {})
+    if not svc.get("enabled"):
+        raise AtaError("ssh service is disabled on the client")
+    port = service_client_port(svc)
+    user = args.user or getpass.getuser()
+    if args.ssh_config:
+        print(f"Host ata-{cfg['prefix']}")
+        print("  HostName 127.0.0.1")
+        print(f"  Port {port}")
+        print(f"  User {user}")
+        print("  StrictHostKeyChecking accept-new")
+        return 0
+    print(f"ssh -p {port} {shlex.quote(user)}@127.0.0.1")
+    return 0
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    if not args.yes:
+        if not ask_bool("Remove ata services from this machine?", False):
+            info("cancelled")
+            return 0
+    with contextlib.suppress(Exception):
+        cmd_down(argparse.Namespace(quiet=True))
+    if args.delete_shares and zrok_bin().exists() and zrok_env_enabled():
+        cfg = load_config(required=False)
+        for name, svc in (cfg_services(cfg) if cfg else []):
+            with contextlib.suppress(Exception):
+                run_cmd([str(zrok_bin()), "delete", "share", str(svc["share"])], timeout=30)
+        ok("reserved zrok shares deleted")
+    if systemd_available():
+        for unit in unit_dir().glob("ata-*.service"):
+            with contextlib.suppress(Exception):
+                systemctl_user("disable", "--now", unit.name)
+            with contextlib.suppress(FileNotFoundError):
+                unit.unlink()
+        with contextlib.suppress(Exception):
+            systemctl_user("daemon-reload")
+    cron_remove_autostart()
+    if args.purge:
+        for path in (config_dir(), state_dir(), data_dir()):
+            with contextlib.suppress(FileNotFoundError):
+                shutil.rmtree(path)
+        ok("configuration, state, and binaries removed")
+    else:
+        ok("services removed; configuration and key kept")
+    if args.purge_zrok:
+        if zrok_bin().exists():
+            with contextlib.suppress(Exception):
+                run_cmd([str(zrok_bin()), "disable"], timeout=30)
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(base_home() / ".zrok2")
+        ok("local zrok environment removed")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def cmd_version(args: argparse.Namespace) -> int:
+    print(f"{APP} {VERSION}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=APP,
+        description="Private remote access through zrok2 private share, without root or open ports.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            f"  {APP} init\n"
+            f"  {APP} up\n"
+            f"  {APP} status\n"
+            f"  {APP} doctor\n"
+            f"  {APP} export --file bundle.json\n"
+            f"  {APP} import bundle.json\n"
+            f"  {APP} down\n"
+        ),
+    )
+    parser.add_argument("--home", help="alternative base directory (same as ATA_HOME)")
+    parser.add_argument("--config", help="alternative path to config.json")
+    parser.add_argument("--version", action="version", version=f"{APP} {VERSION}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_init = sub.add_parser("init", help="configure this machine")
+    p_init.add_argument("--role", choices=["server", "client"])
+    p_init.add_argument("--prefix")
+    p_init.add_argument("--account-token")
+    p_init.add_argument("--bundle")
+    p_init.add_argument("--non-interactive", action="store_true")
+    p_init.add_argument("--no-activate", action="store_true")
+    p_init.add_argument("--force", action="store_true")
+    p_init.add_argument("--ollama-port", type=int)
+    p_init.add_argument("--ollama2-port", type=int, help="server: local port of the second Ollama (e.g. 11435)")
+    p_init.add_argument("--ollama2-client-port", type=int, help="client: local port for the second Ollama")
+    p_init.add_argument("--ollama-label", help="label for the first Ollama (e.g. GPU 1)")
+    p_init.add_argument("--ollama2-label", help="label for the second Ollama (e.g. GPU 0)")
+    p_init.add_argument("--code-port", type=int)
+    p_init.add_argument("--ssh-port", type=int)
+    p_init.set_defaults(func=cmd_init)
+
+    p_up = sub.add_parser("up", help="start the gateway and shares/accesses")
+    p_up.add_argument("--supervisor", choices=["auto", "systemd", "nohup"])
+    p_up.add_argument("--quiet", action="store_true")
+    p_up.set_defaults(func=cmd_up)
+
+    p_down = sub.add_parser("down", help="stop everything")
+    p_down.add_argument("--quiet", action="store_true")
+    p_down.set_defaults(func=cmd_down)
+
+    p_restart = sub.add_parser("restart", help="restart everything")
+    p_restart.add_argument("--supervisor", choices=["auto", "systemd", "nohup"])
+    p_restart.add_argument("--quiet", action="store_true")
+    p_restart.set_defaults(func=cmd_restart)
+
+    p_status = sub.add_parser("status", help="show status")
+    p_status.add_argument("--json", action="store_true")
+    p_status.set_defaults(func=cmd_status)
+
+    p_doctor = sub.add_parser("doctor", help="diagnose network, ports, and security")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    p_logs = sub.add_parser("logs", help="show logs")
+    p_logs.add_argument("service", nargs="?")
+    p_logs.add_argument("-f", "--follow", action="store_true")
+    p_logs.add_argument("-n", "--lines", type=int, default=200)
+    p_logs.set_defaults(func=cmd_logs)
+
+    p_key = sub.add_parser("key", help="show or rotate the Ollama key")
+    key_sub = p_key.add_subparsers(dest="key_command", required=True)
+    p_key_show = key_sub.add_parser("show", help="show the current key")
+    p_key_show.add_argument("--service", help="Ollama service name (e.g. ollama, ollama2)")
+    p_key_rotate = key_sub.add_parser("rotate", help="generate a new key and restart the gateway")
+    p_key_rotate.add_argument("--service", help="Ollama service name (e.g. ollama, ollama2)")
+    p_key.set_defaults(func=cmd_key)
+
+    p_export = sub.add_parser("export", help="generate the client bundle (contains a secret)")
+    p_export.add_argument("--file")
+    p_export.set_defaults(func=cmd_export)
+
+    p_import = sub.add_parser("import", help="import the server bundle")
+    p_import.add_argument("bundle")
+    p_import.add_argument("--activate", action="store_true")
+    p_import.set_defaults(func=cmd_import)
+
+    p_env = sub.add_parser("env", help="print Ollama/OpenAI environment variables on the client")
+    p_env.add_argument("--service", help="Ollama service name (e.g. ollama, ollama2)")
+    p_env.set_defaults(func=cmd_env)
+
+    p_ssh = sub.add_parser("ssh", help="print the SSH command/config on the client")
+    p_ssh.add_argument("--config", dest="ssh_config", action="store_true")
+    p_ssh.add_argument("--user")
+    p_ssh.set_defaults(func=cmd_ssh)
+
+    p_gw = sub.add_parser("gateway", help="(internal) local Ollama gateway")
+    p_gw.add_argument("--service", default="ollama")
+    p_gw.add_argument("--listen-port", type=int)
+    p_gw.add_argument("--upstream")
+    p_gw.set_defaults(func=cmd_gateway)
+
+    p_un = sub.add_parser("uninstall", help="remove services (and optionally data)")
+    p_un.add_argument("--purge", action="store_true")
+    p_un.add_argument("--purge-zrok", action="store_true")
+    p_un.add_argument("--delete-shares", action="store_true")
+    p_un.add_argument("--yes", action="store_true")
+    p_un.set_defaults(func=cmd_uninstall)
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.home:
+        os.environ["ATA_HOME"] = str(Path(args.home).expanduser())
+    if args.config:
+        os.environ["ATA_CONFIG"] = str(Path(args.config).expanduser())
+    try:
+        return int(args.func(args))
+    except AtaError as exc:
+        error(str(exc))
+        return 1
+    except OSError as exc:
+        error(f"file/system operation failed: {exc}")
+        return 1
+    except KeyboardInterrupt:
+        eprint("")
+        warn("interrupted")
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

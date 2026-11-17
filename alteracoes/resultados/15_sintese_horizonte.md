@@ -10,14 +10,14 @@ A Figura~\ref{fig:erro-horizonte-smape} ilustra a evolução do SMAPE ao longo d
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{images/resultados_final/erro_horizonte_smape.png}
-    \caption{SMAPE médio por passo do horizonte, com intervalo de confiança de 95\% para a média, restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
+    \caption[SMAPE por passo do horizonte (oito primeiros passos).]{SMAPE médio por passo do horizonte, com intervalo de confiança de 95\% para a média, restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
     \label{fig:erro-horizonte-smape}
 \end{figure}
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.8\textwidth]{images/resultados_final/erro_horizonte_pocid.png}
-    \caption{POCID médio por passo do horizonte, com intervalo de confiança de 95\% para a média, restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
+    \caption[POCID por passo do horizonte (oito primeiros passos).]{POCID médio por passo do horizonte, com intervalo de confiança de 95\% para a média, restrito aos oito primeiros passos, em que as 680 séries dos sete conjuntos de dados contribuem igualmente.}
     \label{fig:erro-horizonte-pocid}
 \end{figure}
 

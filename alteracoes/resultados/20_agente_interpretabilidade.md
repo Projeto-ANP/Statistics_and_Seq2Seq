@@ -10,7 +10,7 @@ Para ilustrar como a estratégia final se traduz em previsões, esta subseção 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_sucesso.png}
-    \caption{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 206 do M4, um caso de sucesso. O painel inferior amplia a faixa das estratégias de combinação.}
+    \caption[Caso de sucesso na série 206 do M4.]{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 206 do M4, um caso de sucesso. O painel inferior amplia a faixa das estratégias de combinação.}
     \label{fig:caso-sucesso}
 \end{figure}
 
@@ -19,7 +19,7 @@ Na série 206 do M4 (Figura~\ref{fig:caso-sucesso}), o CARTE obtém SMAPE de 10,
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.85\textwidth]{images/resultados_final/caso_fracasso.png}
-    \caption{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 13 da ANP, um caso de fracasso. O painel inferior amplia a faixa das estratégias de combinação.}
+    \caption[Caso de fracasso na série 13 da ANP.]{Previsões individuais, valor real, combinação final do CARTE e demais métodos de combinação na série 13 da ANP, um caso de fracasso. O painel inferior amplia a faixa das estratégias de combinação.}
     \label{fig:caso-fracasso}
 \end{figure}
 

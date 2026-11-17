@@ -9,7 +9,7 @@ A Tabela~\ref{tab:sintese-vitorias} apresenta o número de séries, entre as 680
 
 \begin{table}[H]
 \centering
-\caption{Contagem de vitórias por método, entre as 680 séries dos sete conjuntos de dados. Empates entre CARTE e mediana são atribuídos à mediana.}
+\caption[Contagem de vitórias por método.]{Contagem de vitórias por método, entre as 680 séries dos sete conjuntos de dados. Empates entre CARTE e mediana são atribuídos à mediana.}
 \label{tab:sintese-vitorias}
 \begin{tabular}{@{}lrr@{}}
 \toprule

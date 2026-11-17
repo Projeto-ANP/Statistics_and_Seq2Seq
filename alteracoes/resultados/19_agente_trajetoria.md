@@ -36,7 +36,7 @@ A Tabela~\ref{tab:transcricao-validacao-teste} compara a primeira avaliação e 
 
 \begin{table}[H]
 \centering
-\caption{Métricas de teste da primeira avaliação e da estratégia final, na série 87 do M4. A pontuação de validação aparece entre parênteses na primeira coluna.}
+\caption[Métricas de teste na série 87 do M4.]{Métricas de teste da primeira avaliação e da estratégia final, na série 87 do M4. A pontuação de validação aparece entre parênteses na primeira coluna.}
 \label{tab:transcricao-validacao-teste}
 \small
 \setlength{\tabcolsep}{4pt}
